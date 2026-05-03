@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DV Hub | Gateway Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            background: #0a0e14; 
+            color: #e5e5e5; 
+            font-family: "JetBrains Mono", monospace; 
+            font-size: 11px;
+            overflow-x: hidden;
+        }
+        
+        .orbitron { font-family: "Orbitron", sans-serif; }
+        
+        /* Cyberpunk grid background */
+        .grid-bg {
+            background-image: 
+                linear-gradient(rgba(0, 255, 157, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 157, 0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+        
+        .section-card {
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+            border: 1px solid #1f2937;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .section-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00ff9d, transparent);
+            opacity: 0.5;
+        }
+        
+        .section-header {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
+            padding: 8px 12px;
+            border-bottom: 1px solid #1f2937;
+            font-weight: 700;
+            color: #00ff9d;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        
+        .status-ok { background: #00ff9d; box-shadow: 0 0 8px #00ff9d; }
+        .status-warn { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; }
+        .status-err { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+        .status-idle { background: #6b7280; box-shadow: 0 0 8px #6b7280; }
+        
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .data-table th {
+            text-align: left;
+            padding: 6px 8px;
+            color: #6b7280;
+            border-bottom: 1px solid #1f2937;
+            font-weight: 500;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .data-table td {
+            padding: 6px 8px;
+            border-bottom: 1px dotted #1f2937;
+            font-size: 10px;
+        }
+        
+        .data-table tr:hover {
+            background: rgba(0, 255, 157, 0.05);
+        }
+        
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 12px;
+            border-bottom: 1px dotted #1f2937;
+        }
+        
+        .data-row:last-child {
+            border-bottom: none;
+        }
+        
+        .data-label {
+            color: #6b7280;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .data-value {
+            color: #00ff9d;
+            font-weight: 600;
+            font-size: 10px;
+        }
+        
+        .btn-cyber {
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
+            border: 1px solid #00ff9d;
+            color: #00ff9d;
+            padding: 8px 16px;
+            font-weight: 700;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn-cyber::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(0, 255, 157, 0.3), transparent);
+            transition: left 0.5s ease;
+        }
+        
+        .btn-cyber:hover::before {
+            left: 100%;
+        }
+        
+        .btn-cyber:hover {
+            box-shadow: 0 0 20px rgba(0, 255, 157, 0.5);
+            transform: translateY(-2px);
+        }
+        
+        .btn-cyber.active {
+            background: #00ff9d;
+            color: #0a0e14;
+            box-shadow: 0 0 20px rgba(0, 255, 157, 0.8);
+        }
+        
+        .btn-cyber.danger {
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+        
+        .btn-cyber.danger:hover {
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.5);
+        }
+        
+        .input-cyber {
+            background: #0a0e14;
+            border: 1px solid #1f2937;
+            color: #00ff9d;
+            padding: 8px 12px;
+            font-size: 10px;
+            width: 100%;
+            font-family: "JetBrains Mono", monospace;
+            transition: all 0.3s ease;
+        }
+        
+        .input-cyber:focus {
+            outline: none;
+            border-color: #00ff9d;
+            box-shadow: 0 0 10px rgba(0, 255, 157, 0.3);
+        }
+        
+        .input-cyber:disabled {
+            color: #6b7280;
+            border-color: #1f2937;
+            cursor: not-allowed;
+        }
+        
+        .tab-nav {
+            display: flex;
+            gap: 4px;
+            background: #0f1419;
+            padding: 8px;
+            border-bottom: 2px solid #1f2937;
+        }
+        
+        .tab-btn {
+            padding: 10px 20px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            cursor: pointer;
+            background: transparent;
+            border: 1px solid transparent;
+            color: #6b7280;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .tab-btn::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: #00ff9d;
+            transition: width 0.3s ease;
+        }
+        
+        .tab-btn:hover {
+            color: #00ff9d;
+        }
+        
+        .tab-btn.active {
+            color: #00ff9d;
+            border-color: #1f2937;
+            background: rgba(0, 255, 157, 0.05);
+        }
+        
+        .tab-btn.active::after {
+            width: 100%;
+        }
+        
+        .activity-row {
+            display: grid;
+            grid-template-columns: 80px 60px 120px 100px 60px 60px 50px 50px;
+            gap: 8px;
+            padding: 6px 8px;
+            border-bottom: 1px solid #1f2937;
+            font-size: 10px;
+            align-items: center;
+        }
+        
+        .activity-row.active {
+            background: rgba(0, 255, 157, 0.1);
+            border-left: 3px solid #00ff9d;
+        }
+        
+        .chip {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 8px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        .chip-ok { background: rgba(0, 255, 157, 0.2); color: #00ff9d; }
+        .chip-warn { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+        .chip-err { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .chip-idle { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+        
+        .glow-text {
+            text-shadow: 0 0 10px rgba(0, 255, 157, 0.5);
+        }
+        
+        .mode-badge {
+            padding: 4px 10px;
+            background: rgba(0, 255, 157, 0.1);
+            border: 1px solid #00ff9d;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        }
+        
+        .view-hidden { display: none !important; }
+        .view-visible { display: block !important; }
+    </style>
+</head>
+<body class="grid-bg">
+
+    <!-- Header -->
+    <header class="section-card" style="border-bottom-width: 2px;">
+        <div class="p-4">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div>
+                    <h1 class="orbitron text-2xl font-black text-white glow-text">DV HUB GATEWAY</h1>
+                    <p class="text-[9px] text-gray-500 uppercase tracking-wider mt-1">Digital Voice Network Bridge v2.0</p>
+                </div>
+                
+                <div class="flex gap-3 items-center flex-wrap justify-center">
+                    <div class="flex items-center gap-2">
+                        <span class="status-indicator status-idle" id="ws-indicator"></span>
+                        <span class="text-[9px] text-gray-400">WEBSOCKET</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="status-indicator status-idle" id="audio-indicator"></span>
+                        <span class="text-[9px] text-gray-400" id="mic-status-text">AUDIO</span>
+                    </div>
+                    <div class="mode-badge" id="vocoder-mode">SW VOCODER</div>
+                    <button id="btn-ptt" class="btn-cyber" style="padding: 12px 24px; font-size: 11px;">PTT [DISABLED]</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+        <button class="tab-btn active" onclick="switchTab('dashboard')" id="tab-dashboard">Dashboard</button>
+        <button class="tab-btn" onclick="switchTab('admin')" id="tab-admin">Administration</button>
+    </nav>
+
+    <!-- Main Container -->
+    <div class="p-2 md:p-4">
+        
+        <!-- DASHBOARD VIEW -->
+        <div id="view-dashboard" class="space-y-3 view-visible">
+            
+            <!-- Top Row: Hardware Info & Service Status -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                
+                <!-- Hardware Information -->
+                <div class="section-card">
+                    <div class="section-header">
+                        <span>Gateway Hardware Information</span>
+                    </div>
+                    <div class="p-3 space-y-2">
+                        <div class="data-row">
+                            <span class="data-label">Hostname</span>
+                            <span class="data-value" id="hw-hostname">dvhub-gateway</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Kernel</span>
+                            <span class="data-value" id="hw-kernel">Linux 6.1.0</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Platform</span>
+                            <span class="data-value" id="hw-platform">AMD64</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">CPU Load</span>
+                            <span class="data-value" id="hw-cpu">2.4%</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">CPU Temp</span>
+                            <span class="data-value" id="hw-temp">48°C</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Service Status -->
+                <div class="section-card">
+                    <div class="section-header">
+                        <span>Service Status</span>
+                    </div>
+                    <div class="p-3 space-y-2">
+                        <div class="data-row">
+                            <span class="data-label">DVGateway Service</span>
+                            <span class="chip chip-ok" id="svc-gateway">RUNNING</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Network Link</span>
+                            <span class="chip chip-idle" id="svc-link">DISCONNECTED</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Audio Pipeline</span>
+                            <span class="chip chip-idle" id="svc-audio">IDLE</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Vocoder Engine</span>
+                            <span class="chip chip-ok" id="svc-vocoder">SOFTWARE</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">TX State</span>
+                            <span class="chip chip-idle" id="svc-tx">IDLE</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Gateway Activity -->
+            <div class="section-card">
+                <div class="section-header">
+                    <span>Gateway Activity</span>
+                    <span class="text-[8px] text-gray-500" id="clock">00:00:00 UTC</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <div class="activity-row" style="font-weight: 700; background: #0f1419; position: sticky; top: 0;">
+                        <div>Time (EST)</div>
+                        <div>Mode</div>
+                        <div>Callsign</div>
+                        <div>Target</div>
+                        <div>Src</div>
+                        <div>Dur(s)</div>
+                        <div>Loss</div>
+                        <div>BER</div>
+                    </div>
+                    <div id="activity-log" style="max-height: 300px; overflow-y: auto;">
+                        <!-- Live traffic will appear here -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Bottom Row: Network Status & Radio Info -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                
+                <!-- Network Status (Info Only) -->
+                <div class="section-card">
+                    <div class="section-header">
+                        <span>Network Status</span>
+                    </div>
+                    <div class="p-3 space-y-2">
+                        <div class="data-row">
+                            <span class="data-label">Connection State</span>
+                            <span class="chip chip-idle" id="net-status-display">DISCONNECTED</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Active Network</span>
+                            <span class="data-value" id="net-active-network">-</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Protocol</span>
+                            <span class="data-value" id="net-active-proto">-</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Target TG/REF</span>
+                            <span class="data-value" id="net-active-tg">-</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Last Activity</span>
+                            <span class="data-value" id="net-last-activity">Never</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Radio Info -->
+                <div class="section-card">
+                    <div class="section-header">
+                        <span>Radio Info</span>
+                    </div>
+                    <div class="p-3 space-y-2">
+                        <div class="data-row">
+                            <span class="data-label">TX Frequency</span>
+                            <span class="data-value" id="radio-tx">430.2000 MHz</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">RX Frequency</span>
+                            <span class="data-value" id="radio-rx">430.2000 MHz</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Callsign</span>
+                            <span class="data-value" id="radio-call">M0ABC</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">DMR ID</span>
+                            <span class="data-value" id="radio-dmrid">2350000</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Mode</span>
+                            <span class="data-value" id="radio-mode">DMR</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </div>
+        
+        <!-- ADMIN VIEW -->
+        <div id="view-admin" class="space-y-3 view-hidden">
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                
+                <!-- Gateway Control -->
+                <div class="section-card">
+                    <div class="section-header">Gateway Control Parameters</div>
+                    <div class="p-4 space-y-4">
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Time-Out Timer (ToT)</label>
+                            <select class="input-cyber" id="sel-tot" onchange="updateAdminParams()">
+                                <option value="60">60 Seconds</option>
+                                <option value="90" selected>90 Seconds</option>
+                                <option value="120">120 Seconds</option>
+                                <option value="180">180 Seconds</option>
+                                <option value="0">Disabled (Server DMS at 1.5s)</option>
+                            </select>
+                            <p class="text-[8px] text-gray-600 mt-1">Client-side TX timeout protection</p>
+                        </div>
+                        
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">DV30 Hardware Vocoder</label>
+                            <input type="text" class="input-cyber" id="inp-dv30" placeholder="192.168.1.100:2460" onchange="updateAdminParams()">
+                            <p class="text-[8px] text-gray-600 mt-1">IP:Port of remote ThumbDV/AMBE server</p>
+                        </div>
+                        
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Vocoder Mode</label>
+                            <div class="flex gap-2">
+                                <button id="btn-voc-sw" onclick="setVocoder('sw')" class="btn-cyber active flex-1">SOFTWARE</button>
+                                <button id="btn-voc-hw" onclick="setVocoder('hw')" class="btn-cyber flex-1">HARDWARE</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Audio Pipeline -->
+                <div class="section-card">
+                    <div class="section-header">Audio Pipeline Analytics</div>
+                    <div class="p-4">
+                        <div class="bg-black border border-gray-800 p-3 rounded space-y-1 font-mono text-[9px]">
+                            <div class="text-green-400 font-bold">WORKLET KERNEL TRACE:</div>
+                            <div>Module: <span class="text-green-400">dv-processor</span></div>
+                            <div>TX Path: 48kHz → 8kHz Decimation (1:6)</div>
+                            <div>RX Path: 8kHz → 48kHz Interpolation</div>
+                            <div>Buffer: <span id="buf-depth" class="font-bold text-white">0</span> / 20 frames (400ms cap)</div>
+                            <div class="mt-2 pt-2 border-t border-gray-800">
+                                <div>Vocoder: <span class="text-green-400">AMBE+2</span></div>
+                                <div>Quality: <span class="text-green-400">85-90%</span></div>
+                                <div>Latency: <span class="text-green-400">&lt;30ms TX</span> / <span class="text-green-400">&lt;100ms RX</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Network Configuration -->
+                <div class="section-card">
+                    <div class="section-header">Network Configuration</div>
+                    <div class="p-4 space-y-3">
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
+                            <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection()">
+                                <option value="1" data-proto="DMR" data-net="FreeStarX" data-deftg="9" data-req-pass="false">DMR - FreeStar UK</option>
+                                <option value="2" data-proto="DMR" data-net="BrandMeister" data-deftg="235" data-req-pass="true">DMR - BrandMeister</option>
+                                <option value="4" data-proto="DMR" data-net="FreeDMR" data-deftg="2350" data-req-pass="true">DMR - FreeDMR UK</option>
+                                <option value="3" data-proto="YSF" data-net="81.187.165.132:42000" data-deftg="0" data-req-pass="false">YSF - Network Reflector</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2" id="lbl-tg-input">Talkgroup (TG)</label>
+                            <div class="flex gap-2">
+                                <input type="number" list="dmr-tgs" class="input-cyber" id="inp-tg" value="9" placeholder="Target ID...">
+                                <button onclick="setTG()" class="btn-cyber" style="white-space: nowrap;">SET</button>
+                            </div>
+                        </div>
+                        
+                        <div id="container-password" style="display: none;">
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Network Password</label>
+                            <input type="password" class="input-cyber" id="inp-net-pass" placeholder="Required for BM/FreeDMR" onchange="syncNetworkSelection()">
+                        </div>
+                        
+                        <button id="btn-toggle-link" onclick="toggleConnection()" class="btn-cyber w-full">CONNECT LINK</button>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+        
+    </div>
+
+    <datalist id="dmr-tgs">
+        <option value="9">Local / Echo Test</option>
+        <option value="91">Worldwide</option>
+        <option value="235">UK Wide</option>
+        <option value="2350">UK Calling</option>
+        <option value="4000">Disconnect</option>
+    </datalist>
+
+    <datalist id="ysf-refs">
+        <option value="00000">Disconnect</option>
+        <option value="23526">GB HubNet</option>
+        <option value="98765">Parrot</option>
+    </datalist>
+
+    <script>
+        // Configuration (can be set via localStorage or API)
+        const config = {
+            callsign: localStorage.getItem('dv_hub_callsign') || 'M0ABC',
+            dmrID: parseInt(localStorage.getItem('dv_hub_dmrid')) || 2350000,
+            txFreq: localStorage.getItem('dv_hub_tx_freq') || '430.2000',
+            rxFreq: localStorage.getItem('dv_hub_rx_freq') || '430.2000'
+        };
+        
+        let linkState = { active: false, id: 1, proto: 'DMR', net: 'FreeStarX', tg: 9, pwd: '' };
+        let ws, audioCtx, micSource, workletNode;
+        let isTransmitting = false;
+        let totSeconds = 90;
+        let totTimerObj = null;
+        let activeVocoder = 'sw';
+        let dv30Addr = '';
+        let trafficBuffer = [];
+        
+        // System info
+        function updateSystemInfo() {
+            // Hostname
+            document.getElementById('hw-hostname').innerText = window.location.hostname || 'localhost';
+            
+            // Platform detection
+            const platform = navigator.platform || 'Unknown';
+            const userAgent = navigator.userAgent;
+            let platformStr = 'Unknown';
+            
+            if (platform.includes('Win')) platformStr = 'Windows x64';
+            else if (platform.includes('Mac')) platformStr = 'macOS ARM64';
+            else if (platform.includes('Linux')) {
+                if (userAgent.includes('aarch64') || userAgent.includes('ARM64')) platformStr = 'Linux ARM64';
+                else if (userAgent.includes('arm')) platformStr = 'Linux ARM';
+                else platformStr = 'Linux AMD64';
+            }
+            
+            document.getElementById('hw-platform').innerText = platformStr;
+            
+            // Kernel (browser version as proxy)
+            const match = userAgent.match(/(Chrome|Firefox|Safari)\/(\d+\.\d+)/);
+            if (match) {
+                document.getElementById('hw-kernel').innerText = match[1] + ' ' + match[2];
+            }
+            
+            // CPU/Temp updated periodically
+            updateCPUStats();
+        }
+        
+        function updateCPUStats() {
+            // CPU Load (rough estimate from performance API)
+            if (window.performance && window.performance.memory) {
+                const used = window.performance.memory.usedJSHeapSize / 1048576;
+                const total = window.performance.memory.totalJSHeapSize / 1048576;
+                const percent = ((used / total) * 100).toFixed(1);
+                document.getElementById('hw-cpu').innerText = percent + '%';
+            } else {
+                document.getElementById('hw-cpu').innerText = '-';
+            }
+            
+            // Temperature not available from browser
+            document.getElementById('hw-temp').innerText = '-';
+        }
+        
+        function updateRadioInfo() {
+            document.getElementById('radio-call').innerText = config.callsign;
+            document.getElementById('radio-dmrid').innerText = config.dmrID;
+            document.getElementById('radio-tx').innerText = config.txFreq + ' MHz';
+            document.getElementById('radio-rx').innerText = config.rxFreq + ' MHz';
+            document.getElementById('radio-mode').innerText = linkState.proto;
+        }
+
+        const workletCode = `
+            class DVProcessor extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this.txBuffer = new Int16Array(160); 
+                    this.txIdx = 0;
+                    this.ratio = 48000 / 8000;
+                    this.sampleCounter = 0;
+                    this.rxQueue = [];
+                    this.rxCurrentFrame = null;
+                    this.rxIdx = 0;
+                    this.port.onmessage = (e) => {
+                        if (e.data.type === 'rx_audio') {
+                            if (this.rxQueue.length > 20) this.rxQueue.shift();
+                            this.rxQueue.push(new Int16Array(e.data.payload));
+                            this.port.postMessage({ type: 'depth', val: this.rxQueue.length });
+                        }
+                    };
+                }
+                process(inputs, outputs, parameters) {
+                    const input = inputs[0];
+                    const output = outputs[0];
+                    if (input.length > 0 && input[0].length > 0) {
+                        const channelData = input[0];
+                        for (let i = 0; i < channelData.length; i++) {
+                            this.sampleCounter++;
+                            if (this.sampleCounter >= this.ratio) {
+                                this.sampleCounter -= this.ratio;
+                                let s = Math.max(-1, Math.min(1, channelData[i]));
+                                this.txBuffer[this.txIdx++] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                                if (this.txIdx >= 160) {
+                                    this.port.postMessage({ type: 'tx_audio', payload: this.txBuffer.buffer }, [this.txBuffer.buffer]);
+                                    this.txBuffer = new Int16Array(160);
+                                    this.txIdx = 0;
+                                }
+                            }
+                        }
+                    }
+                    const outChannel = output[0];
+                    for (let i = 0; i < outChannel.length; i++) {
+                        if (!this.rxCurrentFrame || this.rxIdx >= 160) {
+                            if (this.rxQueue.length > 0) {
+                                this.rxCurrentFrame = this.rxQueue.shift();
+                                this.rxIdx = 0;
+                            } else {
+                                this.rxCurrentFrame = null;
+                            }
+                        }
+                        if (this.rxCurrentFrame) {
+                            const sample = this.rxCurrentFrame[Math.floor(this.rxIdx)];
+                            outChannel[i] = sample / 32768.0;
+                            this.rxIdx += (1 / this.ratio);
+                        } else {
+                            outChannel[i] = 0;
+                        }
+                    }
+                    return true;
+                }
+            }
+            registerProcessor('dv-processor', DVProcessor);
+        `;
+
+        function switchTab(tab) {
+            const dashView = document.getElementById('view-dashboard');
+            const adminView = document.getElementById('view-admin');
+            const dashTab = document.getElementById('tab-dashboard');
+            const adminTab = document.getElementById('tab-admin');
+            
+            if (tab === 'dashboard') {
+                dashView.classList.remove('view-hidden');
+                dashView.classList.add('view-visible');
+                adminView.classList.remove('view-visible');
+                adminView.classList.add('view-hidden');
+                dashTab.classList.add('active');
+                adminTab.classList.remove('active');
+            } else if (tab === 'admin') {
+                dashView.classList.remove('view-visible');
+                dashView.classList.add('view-hidden');
+                adminView.classList.remove('view-hidden');
+                adminView.classList.add('view-visible');
+                dashTab.classList.remove('active');
+                adminTab.classList.add('active');
+            }
+        }
+
+        function setVocoder(mode) {
+            activeVocoder = mode;
+            localStorage.setItem('dv_hub_voc', mode);
+            
+            document.getElementById('btn-voc-sw').classList.toggle('active', mode === 'sw');
+            document.getElementById('btn-voc-hw').classList.toggle('active', mode === 'hw');
+            document.getElementById('vocoder-mode').innerText = mode === 'sw' ? 'SW VOCODER' : 'HW VOCODER';
+            document.getElementById('svc-vocoder').innerText = mode === 'sw' ? 'SOFTWARE' : 'HARDWARE';
+            
+            if(ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: 'set_vocoder', type: mode }));
+        }
+
+        function syncNetworkSelection() {
+            const sel = document.getElementById('sel-network');
+            const opt = sel.options[sel.selectedIndex];
+            linkState.id = parseInt(opt.value, 10);
+            linkState.proto = opt.getAttribute('data-proto');
+            linkState.net = opt.getAttribute('data-net');
+            
+            const reqPass = opt.getAttribute('data-req-pass') === 'true';
+            const passContainer = document.getElementById('container-password');
+            const passInput = document.getElementById('inp-net-pass');
+            
+            if (reqPass) {
+                passContainer.style.display = 'block';
+                linkState.pwd = passInput.value;
+            } else {
+                passContainer.style.display = 'none';
+                linkState.pwd = '';
+            }
+            
+            document.getElementById('lbl-tg-input').innerText = linkState.proto === 'DMR' ? 'Talkgroup (TG)' : 'Reflector ID (YSF)';
+            document.getElementById('inp-tg').setAttribute('list', linkState.proto === 'DMR' ? 'dmr-tgs' : 'ysf-refs');
+            
+            const tgInput = document.getElementById('inp-tg');
+            if (!tgInput.value) {
+                const defTG = parseInt(opt.getAttribute('data-deftg'), 10);
+                tgInput.value = defTG;
+                linkState.tg = defTG;
+            } else {
+                linkState.tg = parseInt(tgInput.value, 10) || 0;
+            }
+            
+            saveLinkState();
+        }
+
+        function updateAdminParams() {
+            totSeconds = parseInt(document.getElementById('sel-tot').value, 10);
+            localStorage.setItem('dv_hub_tot', totSeconds);
+            dv30Addr = document.getElementById('inp-dv30').value;
+            localStorage.setItem('dv_hub_dv30', dv30Addr);
+            if(ws && ws.readyState === 1 && dv30Addr) {
+                ws.send(JSON.stringify({ cmd: 'set_dv30', addr: dv30Addr }));
+            }
+        }
+
+        function saveLinkState() {
+            localStorage.setItem('dv_hub_link', JSON.stringify(linkState));
+        }
+
+        async function toggleConnection() {
+            linkState.active = !linkState.active;
+            const btn = document.getElementById('btn-toggle-link');
+            const status = document.getElementById('svc-link');
+            const pttBtn = document.getElementById('btn-ptt');
+            
+            // Dashboard info displays
+            const netStatusDisplay = document.getElementById('net-status-display');
+            const netActiveNetwork = document.getElementById('net-active-network');
+            const netActiveProto = document.getElementById('net-active-proto');
+            const netActiveTG = document.getElementById('net-active-tg');
+            
+            if (linkState.active) {
+                linkState.tg = parseInt(document.getElementById('inp-tg').value, 10) || 9;
+                
+                btn.innerText = 'DISCONNECT LINK';
+                btn.classList.add('danger');
+                status.className = 'chip chip-ok';
+                status.innerText = 'CONNECTED';
+                
+                // Update dashboard displays
+                netStatusDisplay.className = 'chip chip-ok';
+                netStatusDisplay.innerText = 'CONNECTED';
+                netActiveNetwork.innerText = linkState.net;
+                netActiveProto.innerText = linkState.proto;
+                netActiveTG.innerText = linkState.proto === 'DMR' ? 'TG ' + linkState.tg : 'REF ' + linkState.tg;
+                
+                // Update radio mode
+                document.getElementById('radio-mode').innerText = linkState.proto;
+                
+                document.getElementById('sel-network').disabled = true;
+                document.getElementById('inp-tg').disabled = true;
+                document.getElementById('inp-net-pass').disabled = true;
+                
+                pttBtn.innerText = 'PTT [' + linkState.proto + ' - TG' + linkState.tg + ']';
+                pttBtn.classList.remove('btn-cyber');
+                pttBtn.className = 'btn-cyber';
+                
+                await initAudio();
+            } else {
+                btn.innerText = 'CONNECT LINK';
+                btn.classList.remove('danger');
+                status.className = 'chip chip-idle';
+                status.innerText = 'DISCONNECTED';
+                
+                // Update dashboard displays
+                netStatusDisplay.className = 'chip chip-idle';
+                netStatusDisplay.innerText = 'DISCONNECTED';
+                netActiveNetwork.innerText = '-';
+                netActiveProto.innerText = '-';
+                netActiveTG.innerText = '-';
+                
+                document.getElementById('sel-network').disabled = false;
+                document.getElementById('inp-tg').disabled = false;
+                document.getElementById('inp-net-pass').disabled = false;
+                
+                pttBtn.innerText = 'PTT [DISABLED]';
+                
+                if(isTransmitting) stopTX();
+            }
+            
+            saveLinkState();
+            if(ws && ws.readyState === 1) {
+                ws.send(JSON.stringify({ 
+                    cmd: 'node_state', node_id: linkState.id, active: linkState.active, 
+                    mode: linkState.proto, target: linkState.net, tg: linkState.tg, password: linkState.pwd
+                }));
+            }
+        }
+
+        function setTG() {
+            const tgInput = document.getElementById('inp-tg');
+            const newTG = parseInt(tgInput.value, 10);
+            
+            if (isNaN(newTG) || newTG < 0) {
+                alert('Invalid TG/REF value');
+                return;
+            }
+            
+            if (!linkState.active) {
+                linkState.tg = newTG;
+                saveLinkState();
+                return;
+            }
+            
+            const unlinkVal = linkState.proto === 'DMR' ? 4000 : 0;
+            linkState.tg = newTG;
+            saveLinkState();
+            
+            if (ws && ws.readyState === 1) {
+                console.log('[TG] Changing to', newTG);
+                
+                // Send disconnect
+                ws.send(JSON.stringify({ 
+                    cmd: 'node_state', 
+                    node_id: linkState.id, 
+                    active: true, 
+                    mode: linkState.proto, 
+                    target: linkState.net, 
+                    tg: unlinkVal, 
+                    password: linkState.pwd 
+                }));
+                
+                // Wait 800ms then send new TG
+                setTimeout(() => {
+                    ws.send(JSON.stringify({ 
+                        cmd: 'node_state', 
+                        node_id: linkState.id, 
+                        active: true, 
+                        mode: linkState.proto, 
+                        target: linkState.net, 
+                        tg: newTG, 
+                        password: linkState.pwd 
+                    }));
+                    
+                    // Update displays
+                    document.getElementById('net-active-tg').innerText = 
+                        linkState.proto === 'DMR' ? 'TG ' + newTG : 'REF ' + newTG;
+                    
+                    console.log('[TG] Changed to', newTG);
+                }, 800);
+            }
+        }
+
+        function connectWS() {
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            
+            try {
+                ws = new WebSocket(proto + '//' + window.location.host + '/ws');
+                ws.binaryType = "arraybuffer";
+                
+                ws.onopen = () => {
+                    console.log('[WS] Connected');
+                    document.getElementById('ws-indicator').className = 'status-indicator status-ok';
+                    
+                    if (linkState.active) {
+                        ws.send(JSON.stringify({ 
+                            cmd: 'node_state', 
+                            node_id: linkState.id, 
+                            active: true, 
+                            mode: linkState.proto, 
+                            target: linkState.net, 
+                            tg: linkState.tg, 
+                            password: linkState.pwd 
+                        }));
+                    }
+                    ws.send(JSON.stringify({ cmd: 'set_vocoder', type: activeVocoder }));
+                    if (dv30Addr) ws.send(JSON.stringify({ cmd: 'set_dv30', addr: dv30Addr }));
+                };
+                
+                ws.onclose = () => {
+                    console.log('[WS] Disconnected, reconnecting...');
+                    document.getElementById('ws-indicator').className = 'status-indicator status-err';
+                    
+                    if(isTransmitting) stopTX();
+                    setTimeout(connectWS, 2000);
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('[WS] Error:', error);
+                    document.getElementById('ws-indicator').className = 'status-indicator status-err';
+                };
+                
+                ws.onmessage = (e) => {
+                    try {
+                        if(typeof e.data === "string") {
+                            const msg = JSON.parse(e.data);
+                            
+                            if (msg.type === 'traffic') {
+                                trafficBuffer.unshift(msg.data);
+                                if (trafficBuffer.length > 50) trafficBuffer.pop();
+                                renderTraffic();
+                            } else if (msg.type === 'state_sync') {
+                                if (!msg.active && isTransmitting) {
+                                    stopTX();
+                                }
+                            }
+                        } else if (workletNode) {
+                            workletNode.port.postMessage({ type: 'rx_audio', payload: e.data }, [e.data]);
+                        }
+                    } catch(err) {
+                        console.error('[WS] Message parse error:', err);
+                    }
+                };
+            } catch(err) {
+                console.error('[WS] Connection error:', err);
+                document.getElementById('ws-indicator').className = 'status-indicator status-err';
+                setTimeout(connectWS, 2000);
+            }
+        }
+        
+        function renderTraffic() {
+            const log = document.getElementById('activity-log');
+            log.innerHTML = trafficBuffer.map((t, i) => {
+                const modeChip = t.mode === 'DMR' ? 'chip-ok' : 'chip-warn';
+                return `
+                    <div class="activity-row ${i === 0 ? 'active' : ''}">
+                        <div class="text-gray-400">${t.time}</div>
+                        <div><span class="chip ${modeChip}" style="font-size: 9px;">${t.mode}</span></div>
+                        <div class="text-white font-bold">${t.callsign || t.raw_id || 'UNKNOWN'}</div>
+                        <div class="text-green-400">${t.target}</div>
+                        <div class="text-gray-400">-</div>
+                        <div class="text-gray-400">-</div>
+                        <div class="text-green-400">-</div>
+                        <div class="text-green-400">-</div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Update last activity on dashboard
+            if (trafficBuffer.length > 0) {
+                document.getElementById('net-last-activity').innerText = trafficBuffer[0].time;
+            }
+        }
+
+        async function initAudio() {
+            if (audioCtx) {
+                if (audioCtx.state === 'suspended') await audioCtx.resume();
+                return;
+            }
+            
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+                const blob = new Blob([workletCode], { type: 'application/javascript' });
+                await audioCtx.audioWorklet.addModule(URL.createObjectURL(blob));
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: false, 
+                        noiseSuppression: false, 
+                        autoGainControl: false, 
+                        channelCount: 1,
+                        sampleRate: 48000
+                    } 
+                });
+                
+                micSource = audioCtx.createMediaStreamSource(stream);
+                workletNode = new AudioWorkletNode(audioCtx, 'dv-processor');
+                
+                workletNode.port.onmessage = (e) => {
+                    if (e.data.type === 'tx_audio' && isTransmitting && ws && ws.readyState === 1) {
+                        ws.send(e.data.payload);
+                    } else if (e.data.type === 'depth') {
+                        document.getElementById('buf-depth').innerText = e.data.val;
+                    }
+                };
+                
+                micSource.connect(workletNode);
+                workletNode.connect(audioCtx.destination);
+                
+                // Update audio status indicators
+                document.getElementById('svc-audio').className = 'chip chip-ok';
+                document.getElementById('svc-audio').innerText = 'ACTIVE';
+                document.getElementById('mic-status-text').innerText = 'AUDIO';
+                document.getElementById('audio-indicator').className = 'status-indicator status-ok';
+                
+                console.log('[AUDIO] Pipeline initialized');
+            } catch(err) {
+                console.error('[AUDIO] Initialization error:', err);
+                document.getElementById('svc-audio').className = 'chip chip-err';
+                document.getElementById('svc-audio').innerText = 'ERROR';
+                document.getElementById('audio-indicator').className = 'status-indicator status-err';
+                alert('Microphone access denied or audio initialization failed.\n\nError: ' + err.message);
+            }
+        }
+
+        function startTX() {
+            if(!linkState.active || isTransmitting) return;
+            if(!ws || ws.readyState !== 1) {
+                console.warn('[PTT] WebSocket not connected');
+                return;
+            }
+            if(!audioCtx || !workletNode) {
+                console.warn('[PTT] Audio not initialized');
+                return;
+            }
+            
+            isTransmitting = true;
+            document.getElementById('btn-ptt').innerText = 'TX: ' + linkState.net;
+            document.getElementById('btn-ptt').classList.add('active');
+            document.getElementById('svc-tx').className = 'chip chip-ok';
+            document.getElementById('svc-tx').innerText = 'TRANSMIT';
+            
+            ws.send(JSON.stringify({ cmd: 'tx_start', node_id: linkState.id }));
+            
+            if (totSeconds > 0) {
+                totTimerObj = setTimeout(() => {
+                    console.log('[PTT] Timeout triggered');
+                    stopTX();
+                }, totSeconds * 1000);
+            }
+            
+            console.log('[PTT] TX started');
+        }
+
+        function stopTX() {
+            if(!isTransmitting) return;
+            
+            isTransmitting = false;
+            
+            if (totTimerObj) { 
+                clearTimeout(totTimerObj); 
+                totTimerObj = null; 
+            }
+            
+            document.getElementById('btn-ptt').innerText = 'PTT [' + linkState.proto + ' - TG' + linkState.tg + ']';
+            document.getElementById('btn-ptt').classList.remove('active');
+            document.getElementById('svc-tx').className = 'chip chip-idle';
+            document.getElementById('svc-tx').innerText = 'IDLE';
+            
+            if(ws && ws.readyState === 1) {
+                ws.send(JSON.stringify({ cmd: 'tx_stop' }));
+            }
+            
+            console.log('[PTT] TX stopped');
+        }
+
+        document.getElementById('btn-ptt').addEventListener('mousedown', startTX);
+        document.getElementById('btn-ptt').addEventListener('mouseup', stopTX);
+        document.getElementById('btn-ptt').addEventListener('mouseleave', stopTX);
+        document.getElementById('btn-ptt').addEventListener('touchstart', startTX);
+        document.getElementById('btn-ptt').addEventListener('touchend', stopTX);
+
+        document.addEventListener('keydown', (e) => { if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'INPUT') { e.preventDefault(); startTX(); } });
+        document.addEventListener('keyup', (e) => { if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); stopTX(); } });
+
+        window.onload = () => {
+            // Initialize system info
+            updateSystemInfo();
+            updateRadioInfo();
+            
+            // Update CPU stats every 5 seconds
+            setInterval(updateCPUStats, 5000);
+            
+            // Restore saved state
+            const saved = localStorage.getItem('dv_hub_link');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    linkState = { ...parsed, active: false };
+                    
+                    // Restore network selection
+                    const sel = document.getElementById('sel-network');
+                    for(let i = 0; i < sel.options.length; i++) {
+                        if(parseInt(sel.options[i].value, 10) === linkState.id) {
+                            sel.selectedIndex = i;
+                            break;
+                        }
+                    }
+                    
+                    // Restore TG
+                    document.getElementById('inp-tg').value = linkState.tg;
+                    
+                    // Restore password if exists
+                    if (linkState.pwd) {
+                        document.getElementById('inp-net-pass').value = linkState.pwd;
+                    }
+                } catch(e) {
+                    console.error('Failed to restore link state:', e);
+                }
+            }
+            
+            syncNetworkSelection();
+            
+            const savedVoc = localStorage.getItem('dv_hub_voc');
+            if (savedVoc) setVocoder(savedVoc);
+            
+            const savedToT = localStorage.getItem('dv_hub_tot');
+            if (savedToT) {
+                totSeconds = parseInt(savedToT, 10);
+                document.getElementById('sel-tot').value = savedToT;
+            }
+            
+            const savedDV30 = localStorage.getItem('dv_hub_dv30');
+            if (savedDV30) {
+                dv30Addr = savedDV30;
+                document.getElementById('inp-dv30').value = savedDV30;
+            }
+            
+            // Connect WebSocket
+            connectWS();
+            
+            // Update clock every second
+            setInterval(() => { 
+                const now = new Date();
+                document.getElementById('clock').innerText = now.toISOString().split('T')[1].split('.')[0] + ' UTC'; 
+            }, 1000);
+        };
+    </script>
+</body>
+</html>

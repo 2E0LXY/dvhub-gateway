@@ -1,0 +1,39 @@
+# Binaries
+dvhub-gateway
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace file
+go.work
+
+# Dependencies
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime data
+/var/lib/dvgateway/
+*.dat
+*.tmp
+
+# Environment
+.env
+.env.local

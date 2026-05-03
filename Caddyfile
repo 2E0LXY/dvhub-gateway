@@ -1,0 +1,102 @@
+# Caddyfile for DV Hub Gateway
+
+# Basic HTTP (development)
+:8080 {
+    # Serve static files
+    root * /var/www/dvhub
+    file_server
+    
+    # WebSocket proxy
+    @websocket {
+        path /ws
+    }
+    reverse_proxy @websocket localhost:8080 {
+        header_up Upgrade {http.request.header.Upgrade}
+        header_up Connection {http.request.header.Connection}
+    }
+    
+    # API endpoints
+    reverse_proxy /api/* localhost:8080
+}
+
+# Production HTTPS with automatic TLS
+dvhub.yourdomain.com {
+    # Automatic HTTPS via Let's Encrypt
+    # Caddy handles certificates automatically
+    
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+    
+    # Logging
+    log {
+        output file /var/log/caddy/dvhub-access.log
+        format json
+    }
+    
+    # Serve static files
+    root * /var/www/dvhub
+    file_server
+    
+    # WebSocket proxy
+    @websocket {
+        path /ws
+    }
+    reverse_proxy @websocket localhost:8080 {
+        # WebSocket specific settings
+        header_up Upgrade {http.request.header.Upgrade}
+        header_up Connection {http.request.header.Connection}
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+        
+        # No buffering for real-time
+        flush_interval -1
+    }
+    
+    # API endpoints
+    reverse_proxy /api/* localhost:8080 {
+        header_up Host {http.request.host}
+        header_up X-Real-IP {http.request.remote.host}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Proto {http.request.scheme}
+    }
+}
+
+# Alternative: Multiple domains/subdomains
+# dvhub.example.com {
+#     import dvhub-common
+# }
+# 
+# dvhub-beta.example.com {
+#     import dvhub-common
+# }
+
+# Reusable config snippet
+(dvhub-common) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+    }
+    
+    root * /var/www/dvhub
+    file_server
+    
+    @websocket {
+        path /ws
+    }
+    reverse_proxy @websocket localhost:8080 {
+        header_up Upgrade {http.request.header.Upgrade}
+        header_up Connection {http.request.header.Connection}
+        flush_interval -1
+    }
+    
+    reverse_proxy /api/* localhost:8080
+}
