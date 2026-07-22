@@ -872,6 +872,7 @@
         let activeVocoder = 'hw';
         let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
+        const TRAFFIC_RETENTION_MS = 5 * 60 * 1000;
         let callsignLookupTimer = null;
         let bridgeConnected = false;
 
@@ -1000,7 +1001,9 @@
                 document.getElementById('ysfd-heard').innerHTML = heard.length ? `
                     <div class="grid grid-cols-[1.2fr_1fr_1fr_.5fr] gap-2 text-gray-500 uppercase border-b border-gray-800 pb-2 mb-1"><span>Source</span><span>Destination</span><span>Gateway</span><span>Dur</span></div>
                     ${heard.map(item => `<div class="grid grid-cols-[1.2fr_1fr_1fr_.5fr] gap-2 py-2 border-b border-gray-900"><span class="text-green-400">${escapeHTML(item.source)}</span><span>${escapeHTML(item.destination)}</span><span>${escapeHTML(item.gateway)}</span><span>${Number(item.duration_seconds) || 0}s</span><span class="col-span-4 text-[8px] text-gray-600">${escapeHTML(formatYSFTime(item.time))}</span></div>`).join('')}
-                ` : 'No YSF transmissions logged yet.';
+                ` : data.bridge_online
+                    ? `Bridge online on TG ${Number(data.bridge_talkgroup) || 23530}; waiting for matching traffic.`
+                    : 'YSF bridge offline; reflector is not currently linked to DMR.';
 
                 const activity = (data.activity || []).slice(0, 30);
                 document.getElementById('ysfd-activity').innerHTML = activity.length ? activity.map(item => {
@@ -2000,6 +2003,7 @@
         
         function ingestTraffic(data) {
             const now = Date.now();
+            trafficBuffer = trafficBuffer.filter(item => now - (item._lastSeenAt || item._startedAt || now) < TRAFFIC_RETENTION_MS);
             const streamKey = data.stream_id
                 ? `${data.mode}-${data.node}-${data.stream_id}`
                 : `${data.mode}-${data.node}-${data.callsign || 'unknown'}-${data.time}`;
@@ -2015,18 +2019,21 @@
                 }
                 Object.assign(existing, data);
                 existing._lastSequence = currentSequence;
+                existing._lastSeenAt = now;
                 existing.duration = (now - existing._startedAt) / 1000;
                 existing.loss_pct = existing._missing > 0
                     ? (existing._missing / (existing._received + existing._missing)) * 100
                     : 0;
                 trafficBuffer.unshift(existing);
             } else {
-                trafficBuffer.unshift({ ...data, _key: streamKey, _startedAt: now, _lastSequence: Number(data.sequence), _received: 1, _missing: 0, duration: 0, loss_pct: 0 });
+                trafficBuffer.unshift({ ...data, _key: streamKey, _startedAt: now, _lastSeenAt: now, _lastSequence: Number(data.sequence), _received: 1, _missing: 0, duration: 0, loss_pct: 0 });
             }
             if (trafficBuffer.length > 50) trafficBuffer.length = 50;
         }
 
         function renderTraffic() {
+            const now = Date.now();
+            trafficBuffer = trafficBuffer.filter(item => now - (item._lastSeenAt || item._startedAt || now) < TRAFFIC_RETENTION_MS);
             const log = document.getElementById('activity-log');
             log.innerHTML = trafficBuffer.map((t, i) => {
                 const modeChip = t.mode === 'DMR' ? 'chip-ok' : 'chip-warn';
@@ -2058,6 +2065,8 @@
                 document.getElementById('net-last-activity').innerText = trafficBuffer[0].time;
             }
         }
+
+        setInterval(renderTraffic, 5000);
 
         async function initAudio() {
             if (audioCtx) {

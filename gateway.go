@@ -1455,8 +1455,17 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 					udpPool.Put(bufPtr)
 					continue
 				}
-				g.forwardBridgeFrame(s, buf[:n])
 				dmrMeta = parseDMRTrafficMeta(buf[:n])
+				s.mu.RLock()
+				selectedTG := s.TG
+				s.mu.RUnlock()
+				// Homebrew masters may send traffic for talkgroups other than the
+				// one selected by this session. Do not play, log, or bridge it.
+				if selectedTG > 0 && dmrMeta.DestinationID > 0 && dmrMeta.DestinationID != selectedTG {
+					udpPool.Put(bufPtr)
+					continue
+				}
+				g.forwardBridgeFrame(s, buf[:n])
 			} else if mode == "YSF" {
 				pcmData, sourceName = parseYSFFrame(buf[:n])
 			}
@@ -2958,6 +2967,7 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 		"status": status, "name": identity.Name, "reflector_id": identity.ID, "host": identity.Host, "port": identity.Port,
 		"uptime_seconds": ysfServiceUptime(), "connected_count": len(gateways), "connected_gateways": gateways,
 		"last_heard": heard, "activity": activity, "transmissions_today": transmissionsToday, "unique_callsigns": len(uniqueCallsigns),
+		"bridge_online": serviceActive("ysf2dmr.service"), "bridge_talkgroup": 23530,
 	}
 }
 
