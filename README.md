@@ -255,6 +255,10 @@ AMBE Frame (9 bytes = 72 bits)
 
 ## 🔧 API Reference
 
+### AMBE Link Heartbeat
+
+`GET /api/vocoder/health` performs a live UDP probe of the configured DV30 server. It reports link state, round-trip time, hardware-active state, device product and firmware, uptime, encode/decode totals, and errors. The configured address is intentionally omitted from the response.
+
 ### WebSocket Commands (JSON)
 
 #### Connect to Network

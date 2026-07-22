@@ -252,6 +252,7 @@ func main() {
 	http.HandleFunc("/ws", gw.handleWS)
 	http.HandleFunc("/api/state", gw.handleState)
 	http.HandleFunc("/api/system", handleSystemStats)
+	http.HandleFunc("/api/vocoder/health", gw.handleVocoderHealth)
 	http.HandleFunc("/api/ysf_hosts", gw.handleYSFHosts)
 	http.HandleFunc("/api/dmr_hosts", gw.handleDMRHosts)
 	http.HandleFunc("/api/xlx_hosts", gw.handleXLXHosts)
@@ -371,6 +372,75 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"cpu_load": readCPULoad(),
 		"temp_c":   readCPUTemperature(),
 	})
+}
+
+type dv30HealthPayload struct {
+	Status        string  `json:"status"`
+	Product       string  `json:"product"`
+	Version       string  `json:"version"`
+	UptimeSeconds int64   `json:"uptime_seconds"`
+	Encoded       int64   `json:"encoded"`
+	Decoded       int64   `json:"decoded"`
+	Errors        int64   `json:"errors"`
+	LastLatencyMS float64 `json:"last_latency_ms"`
+}
+
+func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	response := map[string]any{
+		"online":           false,
+		"state":            "offline",
+		"hardware_enabled": g.sessions[0].UseHWVocoder.Load(),
+		"message":          "No heartbeat reply",
+	}
+	target, _ := g.sessions[0].DV30Addr.Load().(*net.UDPAddr)
+	if target == nil {
+		response["message"] = "AMBE device is not configured"
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	if err != nil {
+		response["message"] = "Heartbeat probe unavailable"
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
+	defer conn.Close()
+
+	started := time.Now()
+	if _, err = conn.WriteToUDP([]byte{0x70}, target); err == nil {
+		_ = conn.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
+		packet := make([]byte, 2048)
+		var n int
+		var peer *net.UDPAddr
+		n, peer, err = conn.ReadFromUDP(packet)
+		if err == nil && peer != nil && peer.IP.Equal(target.IP) && peer.Port == target.Port && n > 1 && packet[0] == 0x71 {
+			var health dv30HealthPayload
+			if json.Unmarshal(packet[1:n], &health) == nil && health.Status == "ok" {
+				response = map[string]any{
+					"online":           true,
+					"state":            "online",
+					"hardware_enabled": g.sessions[0].UseHWVocoder.Load(),
+					"round_trip_ms":    math.Round(float64(time.Since(started).Microseconds())/10) / 100,
+					"product":          health.Product,
+					"version":          health.Version,
+					"uptime_seconds":   health.UptimeSeconds,
+					"encoded":          health.Encoded,
+					"decoded":          health.Decoded,
+					"errors":           health.Errors,
+					"last_latency_ms":  health.LastLatencyMS,
+				}
+			}
+		}
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (g *Gateway) txWatchdog() {

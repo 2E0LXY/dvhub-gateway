@@ -273,6 +273,13 @@
         .chip-warn { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
         .chip-err { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
         .chip-idle { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+
+        @keyframes heartbeat-pulse {
+            0%, 100% { box-shadow: 0 0 4px rgba(0, 255, 157, 0.25); }
+            50% { box-shadow: 0 0 13px rgba(0, 255, 157, 0.9); }
+        }
+
+        .heartbeat-live { animation: heartbeat-pulse 1.2s ease-in-out infinite; }
         
         .glow-text {
             text-shadow: 0 0 10px rgba(0, 255, 157, 0.5);
@@ -386,6 +393,11 @@
                             <span class="data-label">Vocoder Engine</span>
                             <span class="chip chip-ok" id="svc-vocoder">SOFTWARE</span>
                         </div>
+                        <div class="data-row">
+                            <span class="data-label">AMBE Link Heartbeat</span>
+                            <span class="chip chip-idle" id="svc-ambe-heartbeat">CHECKING</span>
+                        </div>
+                        <div class="px-3 pb-2 text-right text-[8px] text-gray-500" id="ambe-heartbeat-detail">Waiting for live probe…</div>
                         <div class="data-row">
                             <span class="data-label">TX State</span>
                             <span class="chip chip-idle" id="svc-tx">IDLE</span>
@@ -1060,6 +1072,35 @@
             } catch (err) {
                 console.error('[SYS] Telemetry update failed:', err);
                 document.getElementById('hw-cpu').innerText = '-';
+            }
+        }
+
+        async function updateAMBEHeartbeat() {
+            const chip = document.getElementById('svc-ambe-heartbeat');
+            const detail = document.getElementById('ambe-heartbeat-detail');
+            try {
+                const response = await fetch('/api/vocoder/health', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const health = await response.json();
+                if (!health.online) {
+                    chip.className = 'chip chip-err';
+                    chip.textContent = '♥ OFFLINE';
+                    detail.textContent = health.message || 'No heartbeat reply';
+                    return;
+                }
+
+                chip.className = 'chip chip-ok heartbeat-live';
+                chip.textContent = '♥ ONLINE';
+                const product = health.product || 'AMBE';
+                const version = health.version ? ` ${health.version}` : '';
+                const rtt = Number(health.round_trip_ms).toFixed(1);
+                const engine = health.hardware_enabled ? 'HW ACTIVE' : 'HW STANDBY';
+                detail.textContent = `${product}${version} · ${rtt} ms RTT · ${engine} · ENC ${health.encoded || 0} / DEC ${health.decoded || 0} · ERR ${health.errors || 0}`;
+            } catch (err) {
+                chip.className = 'chip chip-err';
+                chip.textContent = '♥ OFFLINE';
+                detail.textContent = 'Heartbeat check failed';
+                console.error('[AMBE] Heartbeat update failed:', err);
             }
         }
         
@@ -1957,6 +1998,7 @@
         window.onload = () => {
             // Initialize system info
             updateSystemInfo();
+            updateAMBEHeartbeat();
             updateYSFStatus();
             updateYSFDashboard();
             updateYSFIdentity();
@@ -1971,6 +2013,7 @@
             
             // Update server telemetry every 5 seconds
             setInterval(updateSystemStats, 5000);
+            setInterval(updateAMBEHeartbeat, 5000);
             setInterval(updateYSFStatus, 15000);
             setInterval(updateYSFDashboard, 10000);
             setInterval(refreshYorkshireStatus, 5000);
