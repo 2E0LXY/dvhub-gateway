@@ -309,7 +309,7 @@
                     <h1 class="orbitron text-2xl font-black text-white glow-text">YORKSHIRE LINK HUB</h1>
                     <p class="text-[9px] text-gray-500 uppercase tracking-wider mt-1">Digital Voice Network Bridge v2.0</p>
                 </div>
-                
+
                 <div class="flex gap-3 items-center flex-wrap justify-center">
                     <div class="flex items-center gap-2">
                         <span class="status-indicator status-idle" id="ws-indicator"></span>
@@ -566,6 +566,58 @@
                     </div>
                 </div>
                 
+                <!-- Per-network live overview -->
+                <div class="section-card md:col-span-3">
+                    <div class="section-header">
+                        <span>Network Connections</span>
+                        <span class="text-[8px] text-gray-500">LIVE STATUS · CLICK CONFIGURE FOR CONTROLS</span>
+                    </div>
+                    <div class="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="freestar">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeSTAR System X UK</span><span id="network-led-7" class="status-indicator status-err"></span></div>
+                            <div class="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[8px]"><span id="network-led-1" class="status-indicator status-err"></span><span class="text-gray-500">Permanent conference</span><span id="network-state-1" class="text-gray-300">CHECKING</span></div>
+                            <div class="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[8px]"><span id="network-led-manual-7" class="status-indicator status-err"></span><span class="text-gray-500">Manual connection</span><span id="network-state-7" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Manual target: <span id="network-tg-7" class="text-white">—</span></div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(7)">CONFIGURE MANUAL LINK</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="brandmeister">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">BrandMeister UK 2341</span><span id="network-led-2" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-2" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-2" class="text-white">—</span></div>
+                            <div id="network-role-2" class="text-[8px] text-amber-400">Permanent conference leg</div>
+                            <button id="network-configure-2" class="btn-cyber w-full" onclick="selectNetworkCard(2)">VIEW CONFIGURATION</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="dmrplus">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">DMR+ IPSC2 FreeSTAR</span><span id="network-led-3" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-3" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-3" class="text-white">—</span></div>
+                            <div class="text-[8px] text-gray-600">Independent manual connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(3)">CONFIGURE</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="tgif">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">TGIF Network</span><span id="network-led-4" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-4" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-4" class="text-white">—</span></div>
+                            <div id="network-role-4" class="text-[8px] text-amber-400">Permanent conference leg</div>
+                            <button id="network-configure-4" class="btn-cyber w-full" onclick="selectNetworkCard(4)">VIEW CONFIGURATION</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="freedmr">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeDMR UK</span><span id="network-led-5" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-5" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-5" class="text-white">—</span></div>
+                            <div class="text-[8px] text-gray-600">Independent manual connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(5)">CONFIGURE</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="ysf">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">Yorkshire Link HUB YSF</span><span id="network-led-ysf" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">Reflector service: <span id="network-state-ysf" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Reflector: <span class="text-white">23530 · UDP 42000</span></div>
+                            <div class="text-[8px] text-gray-600">Local YSF client connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(6)">CONFIGURE</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Gateway Control -->
                 <div class="section-card">
                     <div class="section-header">Gateway Control Parameters</div>
@@ -639,9 +691,9 @@
                     </div>
                 </div>
                 
-                <!-- Network Configuration -->
-                <div class="section-card">
-                    <div class="section-header">Network Configuration</div>
+                <!-- Selected network controls -->
+                <div class="section-card" id="selected-network-controls">
+                    <div class="section-header"><span>Selected Network Controls</span><span id="selected-network-title" class="text-green-400">FreeSTAR</span></div>
                     <div class="p-4 space-y-3">
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
@@ -810,6 +862,8 @@
         };
         
         let linkState = { active: false, id: 7, proto: 'DMR', net: 'FreeSTAR-SystemX-UK', tg: 23426, pwd: '', options: 'TS2_1=23426;' };
+        let liveNodeStates = {};
+        let conferencePermanent = false;
         const networkPasswords = {};
         let ws, audioCtx, micSource, workletNode;
         let isTransmitting = false;
@@ -1237,6 +1291,7 @@
             linkState.id = parseInt(opt.value, 10);
             linkState.proto = opt.getAttribute('data-proto');
             linkState.net = opt.getAttribute('data-net');
+            document.getElementById('selected-network-title').textContent = opt.textContent.replace(/^DMR\+?\s*-\s*|^YSF\s*-\s*/, '');
             
             const reqPass = opt.getAttribute('data-req-pass') === 'true';
             const passContainer = document.getElementById('container-password');
@@ -1278,6 +1333,86 @@
             });
             syncManualDMROptions();
             saveLinkState();
+            updateSelectedNetworkManagement();
+        }
+
+        function selectNetworkCard(nodeID) {
+            const select = document.getElementById('sel-network');
+            if (![...select.options].some(option => Number(option.value) === Number(nodeID))) return;
+            select.value = String(nodeID);
+            linkState.active = false;
+            syncNetworkSelection(true);
+            document.getElementById('selected-network-controls').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function networkStateClass(state) {
+            if (state === 'connected') return 'status-indicator status-ok';
+            if (state === 'connecting') return 'status-indicator status-warn';
+            if (state === 'rejected') return 'status-indicator status-err';
+            return 'status-indicator status-idle';
+        }
+
+        function renderNetworkNode(nodeID) {
+            const node = liveNodeStates[nodeID] || { state: 'disconnected', talkgroup: 0, conference_managed: false };
+            const state = String(node.state || 'disconnected').toLowerCase();
+            const stateElement = document.getElementById(`network-state-${nodeID}`);
+            const ledElement = document.getElementById(nodeID === 7 ? 'network-led-manual-7' : `network-led-${nodeID}`);
+            const tgElement = document.getElementById(`network-tg-${nodeID}`);
+            if (stateElement) stateElement.textContent = state.toUpperCase();
+            if (ledElement) ledElement.className = networkStateClass(state);
+            if (tgElement) tgElement.textContent = Number(node.talkgroup) > 0 ? `TG ${node.talkgroup}` : '—';
+        }
+
+        function renderNetworkOverview(data) {
+            conferencePermanent = data.conference_permanent === true;
+            liveNodeStates = {};
+            (data.nodes || []).forEach(node => { liveNodeStates[Number(node.id)] = node; });
+            [1, 2, 3, 4, 5, 7].forEach(renderNetworkNode);
+
+            const freeSTARState = liveNodeStates[1]?.state === 'connected' || liveNodeStates[7]?.state === 'connected'
+                ? 'connected' : (liveNodeStates[1]?.state === 'connecting' || liveNodeStates[7]?.state === 'connecting' ? 'connecting' : 'disconnected');
+            document.getElementById('network-led-7').className = networkStateClass(freeSTARState);
+
+            const ysfState = data.ysf_reflector === true ? 'connected' : 'disconnected';
+            document.getElementById('network-led-ysf').className = networkStateClass(ysfState);
+            document.getElementById('network-state-ysf').textContent = ysfState.toUpperCase();
+            [2, 4].forEach(nodeID => {
+                const managed = liveNodeStates[nodeID]?.conference_managed === true;
+                const role = document.getElementById(`network-role-${nodeID}`);
+                const button = document.getElementById(`network-configure-${nodeID}`);
+                role.textContent = managed ? 'Permanent conference leg · protected' : 'Available for manual connection';
+                role.className = managed ? 'text-[8px] text-amber-400' : 'text-[8px] text-gray-600';
+                button.textContent = managed ? 'VIEW MANAGED CONFIGURATION' : 'CONFIGURE';
+            });
+            updateSelectedNetworkManagement();
+        }
+
+        async function refreshNetworkOverview() {
+            try {
+                const response = await fetch('/api/state', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('Network state unavailable');
+                renderNetworkOverview(await response.json());
+            } catch (error) {
+                console.warn('[NET] Network overview unavailable:', error);
+            }
+        }
+
+        function updateSelectedNetworkManagement() {
+            const node = liveNodeStates[linkState.id];
+            const managed = node?.conference_managed === true;
+            const button = document.getElementById('btn-toggle-link');
+            if (managed) {
+                ['inp-tg', 'inp-net-pass', 'inp-callsign', 'inp-dmr-id', 'inp-essid', 'inp-dmr-options'].forEach(id => document.getElementById(id).disabled = true);
+                button.disabled = true;
+                button.textContent = 'CONFERENCE MANAGED';
+                button.classList.remove('danger');
+                document.getElementById('network-login-message').textContent = 'This leg is controlled by the permanent TG23530 conference. Pause the conference before changing it manually.';
+            } else if (!linkState.active) {
+                setNetworkControlsDisabled(false);
+                document.getElementById('inp-tg').disabled = false;
+                button.disabled = false;
+                button.textContent = 'CONNECT LINK';
+            }
         }
 
         function syncManualDMROptions() {
@@ -1745,6 +1880,8 @@
         }
 
         function handleNetworkStatus(msg) {
+			liveNodeStates[Number(msg.node_id)] = { ...(liveNodeStates[Number(msg.node_id)] || {}), state: msg.state, network: msg.network };
+			renderNetworkNode(Number(msg.node_id));
             if (msg.node_id !== linkState.id) return;
             const serviceStatus = document.getElementById('svc-link');
             const networkStatus = document.getElementById('net-status-display');
@@ -2060,6 +2197,7 @@
             updateYSFDashboard();
             updateYSFIdentity();
             refreshYorkshireStatus();
+            refreshNetworkOverview();
             updateRadioInfo();
             document.getElementById('inp-callsign').value = config.callsign;
             document.getElementById('inp-dmr-id').value = config.dmrID;
@@ -2075,6 +2213,7 @@
             setInterval(updateYSFIdentity, 15000);
             setInterval(updateYSFDashboard, 10000);
             setInterval(refreshYorkshireStatus, 5000);
+            setInterval(refreshNetworkOverview, 5000);
             
             // Restore saved state
             const saved = localStorage.getItem('dv_hub_link');

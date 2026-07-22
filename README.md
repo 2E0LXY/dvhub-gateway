@@ -174,6 +174,9 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
    - Vocoder Mode Toggle (SW/HW)
 
 2. **Network Configuration**
+   - Separate live-status card and indicator light for every configured network
+   - Green/amber/red/grey connection states with the active target TG
+   - Conference-managed FreeSTAR, BrandMeister and TGIF legs are visibly protected from accidental manual retuning
    - Target Network Selection
    - Talkgroup/Reflector Input
    - Password (for BrandMeister/FreeDMR)

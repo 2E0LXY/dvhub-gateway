@@ -675,6 +675,22 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				nodeID := int(nodeValue)
+				if g.conferencePermanent.Load() && (nodeID == 1 || nodeID == 2 || nodeID == 4) {
+					if session := g.sessionByID(nodeID); session != nil {
+						session.mu.RLock()
+						state := "disconnected"
+						if session.AuthStage == authRunning {
+							state = "connected"
+						} else if session.LinkActive {
+							state = "connecting"
+						} else if !session.LastRejected.IsZero() {
+							state = "rejected"
+						}
+						session.mu.RUnlock()
+						g.sendNetworkStatus(session, state, "This network leg is managed by the permanent TG23530 conference")
+					}
+					continue
+				}
 				for _, s := range g.sessions {
 					if s.ID == nodeID {
 						if !active {
@@ -3235,8 +3251,33 @@ func (g *Gateway) watchdog(host string, port int) {
 }
 
 func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	nodes := make([]map[string]any, 0, len(g.sessions))
+	permanent := g.conferencePermanent.Load()
+	for _, session := range g.sessions {
+		session.mu.RLock()
+		state := "disconnected"
+		if session.Mode != "DMR" && session.LinkActive {
+			state = "connected"
+		} else if session.AuthStage == authRunning {
+			state = "connected"
+		} else if session.LinkActive {
+			state = "connecting"
+		} else if !session.LastRejected.IsZero() && time.Since(session.LastRejected) < 5*time.Minute {
+			state = "rejected"
+		}
+		nodes = append(nodes, map[string]any{
+			"id": session.ID, "state": state, "active": session.LinkActive,
+			"mode": session.Mode, "network": session.Target, "talkgroup": session.TG,
+			"dmr_id": session.DMRID, "repeater_id": session.RepeaterID,
+			"conference_managed": permanent && (session.ID == 1 || session.ID == 2 || session.ID == 4),
+		})
+		session.mu.RUnlock()
+	}
 	json.NewEncoder(w).Encode(map[string]any{
-		"ip": g.HomeAddr.Load().(*net.UDPAddr).IP.String(),
+		"ip": g.HomeAddr.Load().(*net.UDPAddr).IP.String(), "nodes": nodes,
+		"conference_permanent": permanent, "ysf_reflector": serviceActive("ysfreflector.service"),
 	})
 }
 
