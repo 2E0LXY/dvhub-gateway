@@ -1008,7 +1008,9 @@
                 chip.className = data.locked ? 'chip chip-ok' : 'chip chip-warn';
                 chip.textContent = data.locked ? `LOCKED ${data.id}` : 'NOT SET';
                 document.getElementById('ysf-id-help').textContent = data.locked
-                    ? 'This reflector identity is fixed locally. DVRef registration has not been submitted.'
+                    ? (data.dvref_registered
+                        ? 'This reflector identity is fixed locally and registered with DVRef.'
+                        : 'This reflector identity is fixed locally. DVRef registration has not been submitted.')
                     : 'Choose carefully. After confirmation this number cannot be changed from the dashboard.';
                 document.getElementById('ysf-identity-name').textContent = data.name || 'YORKSHIRELINK';
                 document.getElementById('ysf-identity-description').textContent = data.description || 'YORKSHIRE HUB';

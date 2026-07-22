@@ -32,14 +32,15 @@ const BasePort = 62031
 const MaxUsers = 8
 
 const (
-	ysfConfigPath         = "/etc/ysfreflector/YSFReflector.ini"
-	ysfIdentityLockPath   = "/var/lib/dvgateway/ysf-identity.lock"
-	dvrefTokenPath        = "/etc/dvhub/dvref.token"
-	ysf2dmrConfigPath     = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
-	dmrHostsPath          = "/var/lib/dvgateway/DMR_Hosts.txt"
-	brandMeisterTokenPath = "/etc/dvhub/brandmeister-api.token"
-	ysfNetworkName        = "YORKSHIRELINK"
-	ysfDescription        = "YORKSHIRE HUB"
+	ysfConfigPath          = "/etc/ysfreflector/YSFReflector.ini"
+	ysfIdentityLockPath    = "/var/lib/dvgateway/ysf-identity.lock"
+	ysfDVRefRegisteredPath = "/var/lib/dvgateway/ysf-dvref-registration"
+	dvrefTokenPath         = "/etc/dvhub/dvref.token"
+	ysf2dmrConfigPath      = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
+	dmrHostsPath           = "/var/lib/dvgateway/DMR_Hosts.txt"
+	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
+	ysfNetworkName         = "YORKSHIRELINK"
+	ysfDescription         = "YORKSHIRE HUB"
 )
 
 const (
@@ -2261,10 +2262,12 @@ func currentYSFIdentity() YSFIdentity {
 	_, lockErr := os.Stat(ysfIdentityLockPath)
 	_, tokenErr := os.Stat(dvrefTokenPath)
 	locked := lockErr == nil && regexp.MustCompile(`^[0-9]{5}$`).MatchString(id)
+	registrationData, registrationErr := os.ReadFile(ysfDVRefRegisteredPath)
+	registered := locked && registrationErr == nil && strings.TrimSpace(string(registrationData)) == id
 	return YSFIdentity{
 		ID: id, SuggestedID: suggested, Name: name, Description: description,
 		Host: "194.146.49.25", Port: 42000, Country: "GB", Locked: locked,
-		DVRefReady: locked, DVRefRegistered: false, RegistrySource: ysfRegistrySource(),
+		DVRefReady: locked, DVRefRegistered: registered, RegistrySource: ysfRegistrySource(),
 		APITokenConfigured: tokenErr == nil, PublicDashboardPath: "/ysf-status.html",
 	}
 }
