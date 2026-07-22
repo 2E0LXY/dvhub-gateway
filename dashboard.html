@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DV Hub | Gateway Dashboard</title>
+    <title>Yorkshire Link HUB | Gateway Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -246,7 +246,7 @@
         
         .activity-row {
             display: grid;
-            grid-template-columns: 80px 60px 120px 100px 60px 60px 50px 50px;
+            grid-template-columns: 70px 55px minmax(230px, 1.7fr) minmax(120px, 1fr) 80px 55px 60px 105px;
             gap: 8px;
             padding: 6px 8px;
             border-bottom: 1px solid #1f2937;
@@ -273,6 +273,13 @@
         .chip-warn { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
         .chip-err { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
         .chip-idle { background: rgba(107, 114, 128, 0.2); color: #6b7280; }
+
+        @keyframes heartbeat-pulse {
+            0%, 100% { box-shadow: 0 0 4px rgba(0, 255, 157, 0.25); }
+            50% { box-shadow: 0 0 13px rgba(0, 255, 157, 0.9); }
+        }
+
+        .heartbeat-live { animation: heartbeat-pulse 1.2s ease-in-out infinite; }
         
         .glow-text {
             text-shadow: 0 0 10px rgba(0, 255, 157, 0.5);
@@ -299,10 +306,10 @@
         <div class="p-4">
             <div class="flex flex-col md:flex-row justify-between items-center gap-4">
                 <div>
-                    <h1 class="orbitron text-2xl font-black text-white glow-text">DV HUB GATEWAY</h1>
+                    <h1 class="orbitron text-2xl font-black text-white glow-text">YORKSHIRE LINK HUB</h1>
                     <p class="text-[9px] text-gray-500 uppercase tracking-wider mt-1">Digital Voice Network Bridge v2.0</p>
                 </div>
-                
+
                 <div class="flex gap-3 items-center flex-wrap justify-center">
                     <div class="flex items-center gap-2">
                         <span class="status-indicator status-idle" id="ws-indicator"></span>
@@ -322,6 +329,7 @@
     <!-- Tab Navigation -->
     <nav class="tab-nav">
         <button class="tab-btn active" onclick="switchTab('dashboard')" id="tab-dashboard">Dashboard</button>
+        <button class="tab-btn" onclick="switchTab('ysf')" id="tab-ysf">YSF Dashboard</button>
         <button class="tab-btn" onclick="switchTab('admin')" id="tab-admin">Administration</button>
     </nav>
 
@@ -358,7 +366,11 @@
                         </div>
                         <div class="data-row">
                             <span class="data-label">CPU Temp</span>
-                            <span class="data-value" id="hw-temp">48°C</span>
+                            <span class="data-value" id="hw-temp">CHECKING</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Telemetry Updated</span>
+                            <span class="data-value" id="hw-updated">WAITING</span>
                         </div>
                     </div>
                 </div>
@@ -374,8 +386,8 @@
                             <span class="chip chip-ok" id="svc-gateway">RUNNING</span>
                         </div>
                         <div class="data-row">
-                            <span class="data-label">Network Link</span>
-                            <span class="chip chip-idle" id="svc-link">DISCONNECTED</span>
+                            <span class="data-label">TG23530 Conference</span>
+                            <span class="chip chip-idle" id="svc-link">CHECKING</span>
                         </div>
                         <div class="data-row">
                             <span class="data-label">Audio Pipeline</span>
@@ -385,6 +397,11 @@
                             <span class="data-label">Vocoder Engine</span>
                             <span class="chip chip-ok" id="svc-vocoder">SOFTWARE</span>
                         </div>
+                        <div class="data-row">
+                            <span class="data-label">AMBE Link Heartbeat</span>
+                            <span class="chip chip-idle" id="svc-ambe-heartbeat">CHECKING</span>
+                        </div>
+                        <div class="px-3 pb-2 text-right text-[8px] text-gray-500" id="ambe-heartbeat-detail">Waiting for live probe…</div>
                         <div class="data-row">
                             <span class="data-label">TX State</span>
                             <span class="chip chip-idle" id="svc-tx">IDLE</span>
@@ -401,14 +418,14 @@
                 </div>
                 <div class="overflow-x-auto">
                     <div class="activity-row" style="font-weight: 700; background: #0f1419; position: sticky; top: 0;">
-                        <div>Time (EST)</div>
+                        <div>Time (UTC)</div>
                         <div>Mode</div>
-                        <div>Callsign</div>
+                        <div>Identity</div>
                         <div>Target</div>
-                        <div>Src</div>
+                        <div>Slot / Type</div>
                         <div>Dur(s)</div>
                         <div>Loss</div>
-                        <div>BER</div>
+                        <div>BER / RSSI</div>
                     </div>
                     <div id="activity-log" style="max-height: 300px; overflow-y: auto;">
                         <!-- Live traffic will appear here -->
@@ -416,75 +433,170 @@
                 </div>
             </div>
             
-            <!-- Bottom Row: Network Status & Radio Info -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                
-                <!-- Network Status (Info Only) -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <span>Network Status</span>
-                    </div>
-                    <div class="p-3 space-y-2">
-                        <div class="data-row">
-                            <span class="data-label">Connection State</span>
-                            <span class="chip chip-idle" id="net-status-display">DISCONNECTED</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Active Network</span>
-                            <span class="data-value" id="net-active-network">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Protocol</span>
-                            <span class="data-value" id="net-active-proto">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Target TG/REF</span>
-                            <span class="data-value" id="net-active-tg">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Last Activity</span>
-                            <span class="data-value" id="net-last-activity">Never</span>
-                        </div>
-                    </div>
+            <!-- Named network status overview -->
+            <div class="section-card">
+                <div class="section-header">
+                    <span>Network Connections</span>
+                    <span class="chip chip-idle" id="network-summary">CHECKING</span>
                 </div>
-                
-                <!-- Radio Info -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <span>Radio Info</span>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 p-3">
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeSTAR</span><span id="dash-freestar-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-freestar-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">System X UK · TG 23530</div>
                     </div>
-                    <div class="p-3 space-y-2">
-                        <div class="data-row">
-                            <span class="data-label">TX Frequency</span>
-                            <span class="data-value" id="radio-tx">430.2000 MHz</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">RX Frequency</span>
-                            <span class="data-value" id="radio-rx">430.2000 MHz</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Callsign</span>
-                            <span class="data-value" id="radio-call">M0ABC</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">DMR ID</span>
-                            <span class="data-value" id="radio-dmrid">2350000</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Mode</span>
-                            <span class="data-value" id="radio-mode">DMR</span>
-                        </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">BrandMeister</span><span id="dash-brandmeister-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-brandmeister-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">UK 2341 · TG 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">TGIF</span><span id="dash-tgif-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-tgif-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">TGIF Network · TG 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">YSF Bridge</span><span id="dash-ysf-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-ysf-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">Yorkshire Link · REF 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">Manual / App</span><span id="dash-manual-led" class="status-indicator status-idle"></span></div>
+                        <span id="svc-manual-link" class="chip chip-idle">DISCONNECTED</span>
+                        <div class="text-[8px] text-gray-500"><span id="net-active-network">No manual link</span> · <span id="net-active-proto">—</span> · <span id="net-active-tg">—</span></div>
+                        <span id="net-status-display" class="hidden">DISCONNECTED</span>
+                        <span id="net-last-activity" class="hidden">Never</span>
                     </div>
                 </div>
             </div>
             
+        </div>
+
+        <!-- YSF DASHBOARD VIEW -->
+        <div id="view-ysf" class="space-y-3 view-hidden">
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div class="section-card"><div class="section-header">Reflector Status</div><div class="p-4"><span id="ysfd-status" class="chip chip-idle">CHECKING</span><div class="text-[9px] text-gray-500 mt-2">Yorkshire Link HUB</div></div></div>
+                <div class="section-card"><div class="section-header">Uptime</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-uptime">-</div></div>
+                <div class="section-card"><div class="section-header">Connected Gateways</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-connected">0</div></div>
+                <div class="section-card"><div class="section-header">Transmissions Today</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-transmissions">0</div></div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header"><span>YSF Reflector Control</span><span class="text-gray-500">194.146.49.25:42000</span></div>
+                <div class="p-3 flex flex-wrap gap-2">
+                    <button class="btn-cyber" onclick="controlYSF('start')">START</button>
+                    <button class="btn-cyber" onclick="controlYSF('restart')">RESTART</button>
+                    <button class="btn-cyber danger" onclick="controlYSF('stop')">STOP</button>
+                    <button class="btn-cyber" onclick="updateYSFDashboard()">REFRESH</button>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                <div class="section-card">
+                    <div class="section-header">Connected YSF Gateways</div>
+                    <div class="p-3 overflow-x-auto"><div id="ysfd-gateways" class="text-[10px] text-gray-500">No gateways connected.</div></div>
+                </div>
+                <div class="section-card">
+                    <div class="section-header">Last Heard</div>
+                    <div class="p-3 overflow-x-auto"><div id="ysfd-heard" class="text-[10px] text-gray-500">No YSF transmissions logged yet.</div></div>
+                </div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header"><span>YSF Activity</span><span id="ysfd-unique" class="text-gray-500">0 unique callsigns</span></div>
+                <div id="ysfd-activity" class="p-3 text-[10px] text-gray-500">Waiting for activity.</div>
+            </div>
         </div>
         
         <!-- ADMIN VIEW -->
         <div id="view-admin" class="space-y-3 view-hidden">
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+
+                <!-- YSF Reflector Identity -->
+                <div class="section-card md:col-span-3">
+                    <div class="section-header">
+                        <span>YSF Reflector Identity &amp; DVRef Readiness</span>
+                        <span id="ysf-id-lock-chip" class="chip chip-warn">NOT SET</span>
+                    </div>
+                    <div class="p-4 grid grid-cols-1 md:grid-cols-[1.1fr_1fr_1fr] gap-4">
+                        <div class="space-y-2">
+                            <label class="text-[9px] text-gray-400 uppercase block">Reflector Number (five digits)</label>
+                            <div class="flex gap-2">
+                                <input type="text" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" class="input-cyber" id="inp-ysf-reflector-id" placeholder="30144">
+                                <button class="btn-cyber" id="btn-lock-ysf-id" onclick="lockYSFIdentity()">SET &amp; LOCK</button>
+                            </div>
+                            <p class="text-[8px] text-amber-400" id="ysf-id-help">Choose carefully. After confirmation this number cannot be changed from the dashboard.</p>
+                        </div>
+                        <div class="bg-black border border-gray-800 p-3 rounded text-[9px] space-y-2">
+                            <div class="data-row"><span class="data-label">Advertised Name</span><span class="data-value" id="ysf-identity-name">YORKSHIRELINK</span></div>
+                            <div class="data-row"><span class="data-label">Description</span><span class="data-value" id="ysf-identity-description">YORKSHIRE HUB</span></div>
+                            <div class="data-row"><span class="data-label">Endpoint</span><span class="data-value">194.146.49.25:42000 UDP</span></div>
+                            <div class="data-row"><span class="data-label">Country Prefix</span><span class="data-value">GB- (added by DVRef)</span></div>
+                        </div>
+                        <div class="bg-black border border-gray-800 p-3 rounded text-[9px] space-y-2">
+                            <div class="data-row"><span class="data-label">DVRef Registration</span><span class="data-value" id="ysf-dvref-status">NOT SUBMITTED</span></div>
+                            <div class="data-row"><span class="data-label">Registry Feed</span><span class="data-value" id="ysf-registry-source">CHECKING</span></div>
+                            <div class="data-row"><span class="data-label">API Token</span><span class="data-value" id="ysf-api-token">NOT CONFIGURED</span></div>
+                            <div class="pt-2 border-t border-gray-800">
+                                <a class="text-green-400 hover:underline" href="/ysf-status.html" target="_blank" rel="noopener">Open public read-only YSF dashboard</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
+                <!-- Per-network live overview -->
+                <div class="section-card md:col-span-3">
+                    <div class="section-header">
+                        <span>Network Connections</span>
+                        <span class="text-[8px] text-gray-500">LIVE STATUS · CLICK CONFIGURE FOR CONTROLS</span>
+                    </div>
+                    <div class="p-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="freestar">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeSTAR System X UK</span><span id="network-led-7" class="status-indicator status-err"></span></div>
+                            <div class="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[8px]"><span id="network-led-1" class="status-indicator status-err"></span><span class="text-gray-500">Permanent conference</span><span id="network-state-1" class="text-gray-300">CHECKING</span></div>
+                            <div class="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[8px]"><span id="network-led-manual-7" class="status-indicator status-err"></span><span class="text-gray-500">Manual connection</span><span id="network-state-7" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Manual target: <span id="network-tg-7" class="text-white">—</span></div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(7)">CONFIGURE MANUAL LINK</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="brandmeister">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">BrandMeister UK 2341</span><span id="network-led-2" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-2" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-2" class="text-white">—</span></div>
+                            <div id="network-role-2" class="text-[8px] text-amber-400">Permanent conference leg</div>
+                            <button id="network-configure-2" class="btn-cyber w-full" onclick="selectNetworkCard(2)">VIEW CONFIGURATION</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="dmrplus">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">DMR+ IPSC2 FreeSTAR</span><span id="network-led-3" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-3" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-3" class="text-white">—</span></div>
+                            <div class="text-[8px] text-gray-600">Independent manual connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(3)">CONFIGURE</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="tgif">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">TGIF Network</span><span id="network-led-4" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-4" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-4" class="text-white">—</span></div>
+                            <div id="network-role-4" class="text-[8px] text-amber-400">Permanent conference leg</div>
+                            <button id="network-configure-4" class="btn-cyber w-full" onclick="selectNetworkCard(4)">VIEW CONFIGURATION</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="freedmr">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeDMR UK</span><span id="network-led-5" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">State: <span id="network-state-5" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Target: <span id="network-tg-5" class="text-white">—</span></div>
+                            <div class="text-[8px] text-gray-600">Independent manual connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(5)">CONFIGURE</button>
+                        </div>
+                        <div class="border border-green-900/60 bg-black/40 p-3 space-y-3" data-network-card="ysf">
+                            <div class="flex items-center justify-between"><span class="text-green-400 font-bold">Yorkshire Link HUB YSF</span><span id="network-led-ysf" class="status-indicator status-err"></span></div>
+                            <div class="text-[8px] text-gray-500">Reflector service: <span id="network-state-ysf" class="text-gray-300">CHECKING</span></div>
+                            <div class="text-[8px] text-gray-500">Reflector: <span class="text-white">23530 · UDP 42000</span></div>
+                            <div class="text-[8px] text-gray-600">Local YSF client connection</div>
+                            <button class="btn-cyber w-full" onclick="selectNetworkCard(6)">CONFIGURE</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Gateway Control -->
                 <div class="section-card">
                     <div class="section-header">Gateway Control Parameters</div>
@@ -502,9 +614,31 @@
                         </div>
                         
                         <div>
-                            <label class="text-[9px] text-gray-400 uppercase block mb-2">DV30 Hardware Vocoder</label>
-                            <input type="text" class="input-cyber" id="inp-dv30" placeholder="192.168.1.100:2460" onchange="updateAdminParams()">
-                            <p class="text-[8px] text-gray-600 mt-1">IP:Port of remote ThumbDV/AMBE server</p>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">AMBE Hardware Topology</label>
+                            <select class="input-cyber" id="sel-dv30-count" onchange="updateVocoderTopology()">
+                                <option value="1">One DV30 / DV3000</option>
+                                <option value="2">Two DV30 / DV3000</option>
+                            </select>
+                            <p class="text-[8px] text-gray-600 mt-1" id="dv30-capability">Single AMBE channel for client/native use. Full D-Star↔DMR transcoding remains disabled.</p>
+                        </div>
+
+                        <div>
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Device 1 — DMR → D-Star / Client</label>
+                            <select class="input-cyber mb-2" id="sel-dv30-type-a" onchange="updateAdminParams()">
+                                <option value="DVStick30">DVStick30 / DV30</option>
+                                <option value="DV3000">DV3000 / ThumbDV</option>
+                            </select>
+                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="zx3de49.glddns.com:2468" onchange="updateAdminParams()">
+                        </div>
+
+                        <div id="dv30-device-b" class="hidden">
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Device 2 — D-Star → DMR</label>
+                            <select class="input-cyber mb-2" id="sel-dv30-type-b" onchange="updateAdminParams()">
+                                <option value="DVStick30">DVStick30 / DV30</option>
+                                <option value="DV3000">DV3000 / ThumbDV</option>
+                            </select>
+                            <input type="text" class="input-cyber" id="inp-dv30-b" placeholder="192.168.1.101:2460" onchange="updateAdminParams()">
+                            <p class="text-[8px] text-green-500 mt-1">Two valid devices enable the hardware requirement for bidirectional D-Star↔DMR.</p>
                         </div>
                         
                         <div>
@@ -536,34 +670,139 @@
                     </div>
                 </div>
                 
-                <!-- Network Configuration -->
-                <div class="section-card">
-                    <div class="section-header">Network Configuration</div>
+                <!-- Selected network controls -->
+                <div class="section-card" id="selected-network-controls">
+                    <div class="section-header"><span>Selected Network Controls</span><span id="selected-network-title" class="text-green-400">FreeSTAR</span></div>
                     <div class="p-4 space-y-3">
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
-                            <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection()">
-                                <option value="1" data-proto="DMR" data-net="FreeStarX" data-deftg="9" data-req-pass="false">DMR - FreeStar UK</option>
-                                <option value="2" data-proto="DMR" data-net="BrandMeister" data-deftg="235" data-req-pass="true">DMR - BrandMeister</option>
-                                <option value="4" data-proto="DMR" data-net="FreeDMR" data-deftg="2350" data-req-pass="true">DMR - FreeDMR UK</option>
-                                <option value="3" data-proto="YSF" data-net="81.187.165.132:42000" data-deftg="0" data-req-pass="false">YSF - Network Reflector</option>
+                            <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection(true)">
+                                <option value="7" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false" data-manual-dmrid="2351633">DMR - FreeSTAR System X UK (manual)</option>
+                                <option value="2" data-proto="DMR" data-net="BrandMeister-UK-2341" data-deftg="235" data-req-pass="true">DMR - BrandMeister UK 2341</option>
+                                <option value="3" data-proto="DMR" data-net="DMRPlus-FreeSTAR" data-deftg="23426" data-req-pass="true">DMR+ - IPSC2 FreeSTAR</option>
+                                <option value="4" data-proto="DMR" data-net="TGIF" data-deftg="116" data-req-pass="true">DMR - TGIF Network</option>
+                                <option value="5" data-proto="DMR" data-net="FreeDMR-UK" data-deftg="2350" data-req-pass="false">DMR - FreeDMR UK</option>
+                                <option value="6" data-proto="YSF" data-net="127.0.0.1:42000" data-deftg="0" data-req-pass="false">YSF - Yorkshire Link HUB</option>
                             </select>
+                        </div>
+
+                        <div id="container-dmr-identity" class="space-y-3">
+                            <div>
+                                <label class="text-[9px] text-gray-400 uppercase block mb-2">Callsign</label>
+                                <input type="text" class="input-cyber" id="inp-callsign" maxlength="10" placeholder="e.g. 2E0LXY" oninput="updateDMRIdentity(); scheduleCallsignLookup()">
+                                <div id="dmr-lookup-results" class="mt-2 text-[9px] text-gray-400">Enter a callsign to find its registered DMR ID.</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="text-[9px] text-gray-400 uppercase block mb-2">DMR ID</label>
+                                    <input type="number" class="input-cyber" id="inp-dmr-id" min="1000000" max="9999999" placeholder="7-digit ID" oninput="updateDMRIdentity()">
+                                </div>
+                                <div>
+                                    <label class="text-[9px] text-gray-400 uppercase block mb-2">ESSID</label>
+                                    <input type="number" class="input-cyber" id="inp-essid" min="0" max="99" value="0" placeholder="0-99" oninput="updateDMRIdentity()">
+                                </div>
+                            </div>
                         </div>
                         
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2" id="lbl-tg-input">Talkgroup (TG)</label>
                             <div class="flex gap-2">
-                                <input type="number" list="dmr-tgs" class="input-cyber" id="inp-tg" value="9" placeholder="Target ID...">
+                                <select class="input-cyber" id="inp-tg" onchange="syncManualDMROptions()"></select>
                                 <button onclick="setTG()" class="btn-cyber" style="white-space: nowrap;">SET</button>
                             </div>
                         </div>
                         
                         <div id="container-password" style="display: none;">
-                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Network Password</label>
-                            <input type="password" class="input-cyber" id="inp-net-pass" placeholder="Required for BM/FreeDMR" onchange="syncNetworkSelection()">
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">User / Hotspot Credential</label>
+                            <input type="password" class="input-cyber" id="inp-net-pass" placeholder="Required by this network" autocomplete="new-password" oninput="updateNetworkPassword()">
+                            <div class="text-[8px] text-gray-500 mt-1">Kept only in this browser tab; never saved to local storage.</div>
                         </div>
+
+                        <div id="brandmeister-api-status" class="text-[9px] text-gray-500" style="display:none;">BrandMeister API: checking secure server credential…</div>
+
+                        <div id="container-dmr-options">
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">DMR Options (optional)</label>
+                            <input type="text" class="input-cyber" id="inp-dmr-options" placeholder="e.g. TS1=235;TS2=2350;" oninput="updateDMRIdentity()">
+                        </div>
+
+                        <div class="text-[9px] text-gray-400" id="network-login-message">Master-server password is loaded securely from DMR_Hosts.txt.</div>
                         
                         <button id="btn-toggle-link" onclick="toggleConnection()" class="btn-cyber w-full">CONNECT LINK</button>
+                    </div>
+                </div>
+
+                <div class="section-card lg:col-span-3">
+                    <div class="section-header">Bidirectional DMR Network Bridge Matrix</div>
+                    <div class="p-4 space-y-3">
+                        <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-3 items-end">
+                            <div class="space-y-2">
+                                <div class="text-[9px] text-green-400 uppercase">Endpoint A</div>
+                                <select class="input-cyber" id="bridge-a-net" onchange="populateBridgeTalkgroups('a')">
+                                    <option value="1">FreeSTAR System X UK</option><option value="2">BrandMeister UK 2341</option>
+                                    <option value="3">DMR+ IPSC2 FreeSTAR</option><option value="4">TGIF Network</option><option value="5">FreeDMR UK</option>
+                                </select>
+                                <select class="input-cyber" id="bridge-a-tg"></select>
+                                <input type="password" class="input-cyber" id="bridge-a-pass" placeholder="Endpoint A user credential" autocomplete="new-password">
+                            </div>
+                            <div class="text-center text-green-400 text-xl pb-8">⇄</div>
+                            <div class="space-y-2">
+                                <div class="text-[9px] text-green-400 uppercase">Endpoint B</div>
+                                <select class="input-cyber" id="bridge-b-net" onchange="populateBridgeTalkgroups('b')">
+                                    <option value="1">FreeSTAR System X UK</option><option value="2" selected>BrandMeister UK 2341</option>
+                                    <option value="3">DMR+ IPSC2 FreeSTAR</option><option value="4">TGIF Network</option><option value="5">FreeDMR UK</option>
+                                </select>
+                                <select class="input-cyber" id="bridge-b-tg"></select>
+                                <input type="password" class="input-cyber" id="bridge-b-pass" placeholder="Endpoint B user credential" autocomplete="new-password">
+                            </div>
+                        </div>
+                        <div id="bridge-message" class="text-[9px] text-gray-400">Select two networks and talkgroups. User credentials appear only where required.</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button id="btn-bridge-connect" onclick="connectBridge()" class="btn-cyber">CONNECT BRIDGE</button>
+                            <button id="btn-bridge-disconnect" onclick="disconnectBridge()" class="btn-cyber danger" disabled>DISCONNECT BRIDGE</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-card lg:col-span-3">
+                    <div class="section-header">Yorkshire TG23530 Conference Preset</div>
+                    <div class="p-4 space-y-3 text-[9px]">
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
+                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">Yorkshire Link HUB YSF</div><div class="text-green-400">YSF2DMR → TG23530</div></div>
+                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">FreeSTAR System X</div><div id="yorkshire-freestar-state" class="text-gray-300">Disconnected</div></div>
+                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">TGIF TG23530</div><div id="yorkshire-tgif-state" class="text-gray-300">Disconnected</div></div>
+                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">BrandMeister UK</div><div id="yorkshire-bm-state" class="text-gray-300">Disconnected</div></div>
+                        </div>
+                        <div class="text-yellow-400">FreeSTAR and TGIF are separate direct legs. Payload fingerprinting, stream suppression and one-talker locking protect the conference from loops and collisions.</div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <div><label class="text-gray-500 uppercase block mb-1">YSF leg DMR ID</label><input class="input-cyber" id="yorkshire-ysf-id" inputmode="numeric" value="2351633" maxlength="7"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">DMR bridge DMR ID</label><input class="input-cyber" id="yorkshire-bridge-id" inputmode="numeric" value="2344399" maxlength="7"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">Bridge ESSID</label><input class="input-cyber" id="yorkshire-essid" inputmode="numeric" value="01" maxlength="2"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">FreeSTAR master credential</label><div class="input-cyber text-green-400">Loaded from DMR_Hosts.txt</div></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">BrandMeister hotspot password</label><input type="password" class="input-cyber" id="yorkshire-bm-pass" autocomplete="new-password" placeholder="Required"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">TGIF hotspot key / legacy password</label><input type="password" class="input-cyber" id="yorkshire-tgif-pass" autocomplete="new-password" placeholder="Security key or legacy password"></div>
+                        </div>
+                        <div id="yorkshire-message" class="text-gray-400">Idle. Permanent-mode credentials are encrypted in transit and stored only in the protected server configuration.</div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <button id="btn-yorkshire-test" class="btn-cyber" onclick="startYorkshireConference(true)">TEST FOR 60 SECONDS</button>
+                            <button id="btn-yorkshire-start" class="btn-cyber" onclick="startYorkshireConference(false)">CONNECT PERMANENTLY</button>
+                            <button id="btn-yorkshire-stop" class="btn-cyber danger" onclick="stopYorkshireConference()">DISCONNECT / PAUSE</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section-card lg:col-span-3">
+                    <div class="section-header">YSF Client Access</div>
+                    <div class="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[9px]">
+                        <div><div class="text-gray-500 uppercase mb-1">Server</div><div class="text-green-400">194.146.49.25</div></div>
+                        <div><div class="text-gray-500 uppercase mb-1">UDP Port</div><div class="text-green-400">42000</div></div>
+                        <div><div class="text-gray-500 uppercase mb-1">Reflector</div><div class="text-green-400">Yorkshire Link HUB</div></div>
+                        <div class="md:col-span-3 text-gray-400">Pi-Star: add a custom YSF reflector with this host and port. Windows/Android: use DroidStar in YSF mode and enter the same host and port.</div>
+                        <div class="md:col-span-3 flex flex-wrap items-center gap-2">
+                            <span id="ysf-service-status" class="chip chip-idle">CHECKING</span>
+                            <button class="btn-cyber" onclick="controlYSF('start')">START</button>
+                            <button class="btn-cyber" onclick="controlYSF('restart')">RESTART</button>
+                            <button class="btn-cyber danger" onclick="controlYSF('stop')">STOP</button>
+                        </div>
                     </div>
                 </div>
                 
@@ -577,6 +816,10 @@
         <option value="91">Worldwide</option>
         <option value="235">UK Wide</option>
         <option value="2350">UK Calling</option>
+        <option value="23426">FreeSTAR UK</option>
+        <option value="2351">UK Chat 1</option>
+        <option value="2352">UK Chat 2</option>
+        <option value="9990">Parrot / Echo</option>
         <option value="4000">Disconnect</option>
     </datalist>
 
@@ -586,77 +829,339 @@
         <option value="98765">Parrot</option>
     </datalist>
 
+    <script src="/talkgroups.js"></script>
     <script>
         // Configuration (can be set via localStorage or API)
-        const config = {
-            callsign: localStorage.getItem('dv_hub_callsign') || 'M0ABC',
-            dmrID: parseInt(localStorage.getItem('dv_hub_dmrid')) || 2350000,
+        let config = {
+            callsign: localStorage.getItem('dv_hub_callsign') || '2E0LXY',
+            dmrID: parseInt(localStorage.getItem('dv_hub_dmrid')) || 0,
+            essid: parseInt(localStorage.getItem('dv_hub_essid')) || 0,
             txFreq: localStorage.getItem('dv_hub_tx_freq') || '430.2000',
             rxFreq: localStorage.getItem('dv_hub_rx_freq') || '430.2000'
         };
         
-        let linkState = { active: false, id: 1, proto: 'DMR', net: 'FreeStarX', tg: 9, pwd: '' };
+        let linkState = { active: false, id: 7, proto: 'DMR', net: 'FreeSTAR-SystemX-UK', tg: 23426, pwd: '', options: 'TS2_1=23426;' };
+        let liveNodeStates = {};
+        let conferencePermanent = false;
+        const networkPasswords = {};
         let ws, audioCtx, micSource, workletNode;
         let isTransmitting = false;
         let totSeconds = 90;
         let totTimerObj = null;
-        let activeVocoder = 'sw';
-        let dv30Addr = '';
+        let activeVocoder = 'hw';
+        let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
+        const TRAFFIC_RETENTION_MS = 5 * 60 * 1000;
+        let callsignLookupTimer = null;
+        let bridgeConnected = false;
+
+        const networkByNode = {
+            1: { key: 'FreeSTAR-SystemX-UK', label: 'FreeSTAR System X UK', requiresUserPassword: false },
+            2: { key: 'BrandMeister-UK-2341', label: 'BrandMeister UK 2341', requiresUserPassword: true },
+            3: { key: 'DMRPlus-FreeSTAR', label: 'DMR+ IPSC2 FreeSTAR', requiresUserPassword: true },
+            4: { key: 'TGIF', label: 'TGIF Network', requiresUserPassword: true },
+            5: { key: 'FreeDMR-UK', label: 'FreeDMR UK', requiresUserPassword: false }
+        };
+
+        const networkTalkgroups = {
+            'FreeSTAR-SystemX-UK': [[23426, 'FreeSTAR UK'], [235, 'UK Wide'], [2351, 'UK Chat 1'], [2352, 'UK Chat 2'], [91, 'Worldwide'], [9, 'Local'], [9990, 'Parrot'], [4000, 'Disconnect']],
+            'BrandMeister-UK-2341': [[235, 'UK Call'], [2350, 'United Kingdom'], [2351, 'Chat 1'], [2352, 'Chat 2'], [2353, 'Chat 3'], [2354, 'Ireland'], [2355, 'Scotland'], [2356, 'Wales'], [2357, 'Isle of Man'], [2358, 'London'], [2359, 'Kernow'], [91, 'Worldwide'], [92, 'Europe'], [9990, 'Private-call Parrot'], [4000, 'Disconnect']],
+            'DMRPlus-FreeSTAR': [[23426, 'FreeSTAR UK'], [2350, 'UK ChatterBOX'], [2351, 'CQ-UK'], [2352, 'UK ChatterBOX 2'], [2355, 'Scotland'], [2356, 'Wales'], [23530, 'Yorkshire Link'], [9990, 'Echo'], [4000, 'Disconnect']],
+            'TGIF': [[116, 'United Kingdom'], [121, 'UK 1 to 1 Chats'], [111, 'Europe'], [113, 'Worldwide English'], [124, 'BlueDV / DudeStar'], [4000, 'Disconnect']],
+            'FreeDMR-UK': [[2350, 'UK Central'], [2351, 'Chat 1'], [2352, 'Chat 2'], [2353, 'Chat 3'], [2354, 'Chat 4'], [2355, 'Chat 5'], [2356, 'Chat 6'], [2357, 'Isle of Man'], [2358, 'London'], [2359, 'Kernow & Jersey'], [23530, 'Yorkshire Link'], [91, 'Worldwide'], [4000, 'Disconnect']],
+            '127.0.0.1:42000': [[0, 'YSF Reflector']]
+        };
+        const embeddedTalkgroupNetworks = new Set(Object.keys(window.DVHUB_TALKGROUPS || {}));
+        Object.entries(window.DVHUB_TALKGROUPS || {}).forEach(([network, groups]) => {
+            networkTalkgroups[network] = groups.map(item => [item.id, item.name]);
+        });
+        const talkgroupLoads = {};
+
+        function populateTalkgroupSelect(select, networkKey, preferred) {
+            const groups = networkTalkgroups[networkKey] || [];
+            select.replaceChildren();
+            groups.forEach(([id, label]) => {
+                const option = document.createElement('option');
+                option.value = String(id);
+                option.textContent = `${id} — ${label}`;
+                select.appendChild(option);
+            });
+            if (preferred !== undefined && !groups.some(([id]) => Number(id) === Number(preferred))) {
+                const custom = document.createElement('option');
+                custom.value = String(preferred);
+                custom.textContent = `${preferred} — Saved/custom`;
+                select.appendChild(custom);
+            }
+            if (preferred !== undefined) select.value = String(preferred);
+        }
+
+        function populateBridgeTalkgroups(side) {
+            const node = Number(document.getElementById(`bridge-${side}-net`).value);
+            const network = networkByNode[node];
+            const select = document.getElementById(`bridge-${side}-tg`);
+            const password = document.getElementById(`bridge-${side}-pass`);
+            password.style.display = network.requiresUserPassword ? 'block' : 'none';
+            if (!network.requiresUserPassword) password.value = '';
+            populateTalkgroupSelect(select, network.key);
+            loadNetworkTalkgroups(network.key, () => {
+                const currentNode = Number(document.getElementById(`bridge-${side}-net`).value);
+                if (networkByNode[currentNode]?.key === network.key) populateTalkgroupSelect(select, network.key);
+            });
+        }
+
+        async function loadNetworkTalkgroups(networkKey, onLoaded) {
+            if (!Object.values(networkByNode).some(network => network.key === networkKey)) return;
+            if (embeddedTalkgroupNetworks.has(networkKey)) {
+                if (onLoaded) onLoaded();
+                return;
+            }
+            if (!talkgroupLoads[networkKey]) {
+                talkgroupLoads[networkKey] = fetch('/api/talkgroups?network=' + encodeURIComponent(networkKey), { cache: 'default', credentials: 'include' })
+                    .then(response => {
+                        if (!response.ok) throw new Error('Talkgroup source unavailable');
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (Array.isArray(data.talkgroups) && data.talkgroups.length) {
+                            networkTalkgroups[networkKey] = data.talkgroups.map(item => [item.id, item.name]);
+                        }
+                    })
+                    .catch(error => console.warn('[TG] Using built-in fallback list:', error));
+            }
+            await talkgroupLoads[networkKey];
+            if (onLoaded) onLoaded();
+        }
         
         // System info
         function updateSystemInfo() {
-            // Hostname
-            document.getElementById('hw-hostname').innerText = window.location.hostname || 'localhost';
-            
-            // Platform detection
-            const platform = navigator.platform || 'Unknown';
-            const userAgent = navigator.userAgent;
-            let platformStr = 'Unknown';
-            
-            if (platform.includes('Win')) platformStr = 'Windows x64';
-            else if (platform.includes('Mac')) platformStr = 'macOS ARM64';
-            else if (platform.includes('Linux')) {
-                if (userAgent.includes('aarch64') || userAgent.includes('ARM64')) platformStr = 'Linux ARM64';
-                else if (userAgent.includes('arm')) platformStr = 'Linux ARM';
-                else platformStr = 'Linux AMD64';
-            }
-            
-            document.getElementById('hw-platform').innerText = platformStr;
-            
-            // Kernel (browser version as proxy)
-            const match = userAgent.match(/(Chrome|Firefox|Safari)\/(\d+\.\d+)/);
-            if (match) {
-                document.getElementById('hw-kernel').innerText = match[1] + ' ' + match[2];
-            }
-            
-            // CPU/Temp updated periodically
-            updateCPUStats();
-        }
-        
-        function updateCPUStats() {
-            // CPU Load (rough estimate from performance API)
-            if (window.performance && window.performance.memory) {
-                const used = window.performance.memory.usedJSHeapSize / 1048576;
-                const total = window.performance.memory.totalJSHeapSize / 1048576;
-                const percent = ((used / total) * 100).toFixed(1);
-                document.getElementById('hw-cpu').innerText = percent + '%';
-            } else {
-                document.getElementById('hw-cpu').innerText = '-';
-            }
-            
-            // Temperature not available from browser
-            document.getElementById('hw-temp').innerText = '-';
-        }
-        
-        function updateRadioInfo() {
-            document.getElementById('radio-call').innerText = config.callsign;
-            document.getElementById('radio-dmrid').innerText = config.dmrID;
-            document.getElementById('radio-tx').innerText = config.txFreq + ' MHz';
-            document.getElementById('radio-rx').innerText = config.rxFreq + ' MHz';
-            document.getElementById('radio-mode').innerText = linkState.proto;
+            updateSystemStats();
         }
 
+        function escapeHTML(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]);
+        }
+
+        function formatYSFUptime(totalSeconds) {
+            const seconds = Math.max(0, Number(totalSeconds) || 0);
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return days ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
+        }
+
+        function formatYSFTime(value) {
+            if (!value) return '-';
+            return new Date(value).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        async function updateYSFDashboard(dataOverride = null) {
+            try {
+                let data = dataOverride;
+                if (!data) {
+                    const response = await fetch('/api/ysf_dashboard', { cache: 'no-store', credentials: 'include' });
+                    if (!response.ok) throw new Error('YSF dashboard unavailable');
+                    data = await response.json();
+                }
+                const status = document.getElementById('ysfd-status');
+                status.className = data.status === 'running' ? 'chip chip-ok' : 'chip chip-err';
+                status.textContent = data.status.toUpperCase();
+                document.getElementById('ysfd-uptime').textContent = formatYSFUptime(data.uptime_seconds);
+                document.getElementById('ysfd-connected').textContent = data.connected_count ?? 0;
+                document.getElementById('ysfd-transmissions').textContent = data.transmissions_today ?? 0;
+                document.getElementById('ysfd-unique').textContent = `${data.unique_callsigns ?? 0} unique callsigns`;
+
+                const gateways = data.connected_gateways || [];
+                document.getElementById('ysfd-gateways').innerHTML = gateways.length ? `
+                    <div class="grid grid-cols-[1fr_1.4fr_1fr] gap-2 text-gray-500 uppercase border-b border-gray-800 pb-2 mb-1"><span>Callsign</span><span>Address</span><span>Connected</span></div>
+                    ${gateways.map(item => `<div class="grid grid-cols-[1fr_1.4fr_1fr] gap-2 py-2 border-b border-gray-900"><span class="text-green-400">${escapeHTML(item.callsign)}</span><span>${escapeHTML(item.address)}</span><span>${escapeHTML(formatYSFTime(item.connected_at))}</span></div>`).join('')}
+                ` : 'No gateways connected.';
+
+                const heard = data.last_heard || [];
+                document.getElementById('ysfd-heard').innerHTML = heard.length ? `
+                    <div class="grid grid-cols-[1.2fr_1fr_1fr_.5fr] gap-2 text-gray-500 uppercase border-b border-gray-800 pb-2 mb-1"><span>Source</span><span>Destination</span><span>Gateway</span><span>Dur</span></div>
+                    ${heard.map(item => `<div class="grid grid-cols-[1.2fr_1fr_1fr_.5fr] gap-2 py-2 border-b border-gray-900"><span class="text-green-400">${escapeHTML(item.source)}</span><span>${escapeHTML(item.destination)}</span><span>${escapeHTML(item.gateway)}</span><span>${Number(item.duration_seconds) || 0}s</span><span class="col-span-4 text-[8px] text-gray-600">${escapeHTML(formatYSFTime(item.time))}</span></div>`).join('')}
+                ` : data.bridge_online
+                    ? `Bridge online on TG ${Number(data.bridge_talkgroup) || 23530}; waiting for matching traffic.`
+                    : 'YSF bridge offline; reflector is not currently linked to DMR.';
+
+                const activity = (data.activity || []).slice(0, 30);
+                document.getElementById('ysfd-activity').innerHTML = activity.length ? activity.map(item => {
+                    const chip = item.type === 'connected' ? 'chip-ok' : item.type === 'transmission' ? 'chip-warn' : 'chip-idle';
+                    return `<div class="grid grid-cols-[110px_90px_1fr] gap-2 py-2 border-b border-gray-900"><span>${escapeHTML(formatYSFTime(item.time))}</span><span><span class="chip ${chip}">${escapeHTML(item.type)}</span></span><span>${escapeHTML(item.message)}</span></div>`;
+                }).join('') : 'Waiting for activity.';
+            } catch (error) {
+                const status = document.getElementById('ysfd-status');
+                status.className = 'chip chip-err';
+                status.textContent = 'UNAVAILABLE';
+            }
+        }
+
+        async function updateYSFStatus() {
+            const chip = document.getElementById('ysf-service-status');
+            try {
+                const response = await fetch('/api/ysf_control', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('Status unavailable');
+                const data = await response.json();
+                chip.className = data.status === 'running' ? 'chip chip-ok' : 'chip chip-err';
+                chip.textContent = data.status.toUpperCase();
+            } catch (error) {
+                chip.className = 'chip chip-err';
+                chip.textContent = 'UNAVAILABLE';
+            }
+        }
+
+        async function controlYSF(action) {
+            const chip = document.getElementById('ysf-service-status');
+            chip.className = 'chip chip-warn';
+            chip.textContent = action.toUpperCase() + '…';
+            try {
+                const response = await fetch('/api/ysf_control', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify({ action })
+                });
+                if (!response.ok) throw new Error('Control request failed');
+                await updateYSFStatus();
+                await updateYSFDashboard();
+            } catch (error) {
+                chip.className = 'chip chip-err';
+                chip.textContent = 'CONTROL FAILED';
+            }
+        }
+
+        async function updateYSFIdentity() {
+            const chip = document.getElementById('ysf-id-lock-chip');
+            try {
+                const response = await fetch('/api/ysf_identity', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('Identity status unavailable');
+                const data = await response.json();
+                const input = document.getElementById('inp-ysf-reflector-id');
+                const button = document.getElementById('btn-lock-ysf-id');
+                input.value = data.id || data.suggested_id || '30144';
+                input.disabled = Boolean(data.locked);
+                button.disabled = Boolean(data.locked);
+                button.textContent = data.locked ? 'LOCKED' : 'SET & LOCK';
+                chip.className = data.locked ? 'chip chip-ok' : 'chip chip-warn';
+                chip.textContent = data.locked ? `LOCKED ${data.id}` : 'NOT SET';
+                document.getElementById('ysf-id-help').textContent = data.locked
+                    ? (data.dvref_registered
+                        ? 'This reflector identity is fixed locally and registered with DVRef.'
+                        : 'This reflector identity is fixed locally. DVRef registration has not been submitted.')
+                    : 'Choose carefully. After confirmation this number cannot be changed from the dashboard.';
+                document.getElementById('ysf-identity-name').textContent = data.name || 'YORKSHIRELINK';
+                document.getElementById('ysf-identity-description').textContent = data.description || 'YORKSHIRE HUB';
+                document.getElementById('ysf-dvref-status').textContent = data.dvref_registered ? 'REGISTERED' : (data.dvref_ready ? 'READY — NOT SUBMITTED' : 'IDENTITY REQUIRED');
+                document.getElementById('ysf-registry-source').textContent = data.registry_source || 'UNKNOWN';
+                document.getElementById('ysf-api-token').textContent = data.api_token_configured ? 'SERVER-SIDE' : 'NOT CONFIGURED';
+            } catch (error) {
+                chip.className = 'chip chip-err';
+                chip.textContent = 'UNAVAILABLE';
+            }
+        }
+
+        async function lockYSFIdentity() {
+            const input = document.getElementById('inp-ysf-reflector-id');
+            const id = input.value.trim();
+            if (!/^\d{5}$/.test(id) || Number(id) <= 5 || id === '99999') {
+                alert('Enter exactly five digits. 00000–00005 and 99999 are reserved.');
+                return;
+            }
+            const confirmed = confirm(`Permanently set this YSF reflector to ${id}?\n\nThe dashboard will not allow this number to be changed after it is locked. This does not submit anything to DVRef.`);
+            if (!confirmed) return;
+            const typed = prompt(`Type the reflector number ${id} again to confirm:`);
+            if (typed !== id) {
+                alert('The confirmation number did not match. Nothing was changed.');
+                return;
+            }
+            const button = document.getElementById('btn-lock-ysf-id');
+            button.disabled = true;
+            button.textContent = 'LOCKING…';
+            try {
+                const response = await fetch('/api/ysf_identity', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify({ id })
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || 'Unable to lock reflector identity');
+                await updateYSFIdentity();
+                await updateYSFDashboard();
+                alert(`YSF reflector ${id} is now configured and locked. No DVRef registration was submitted.`);
+            } catch (error) {
+                button.disabled = false;
+                button.textContent = 'SET & LOCK';
+                alert(error.message);
+            }
+        }
+        
+        let systemStatsBusy = false;
+        let systemStatsTimer = null;
+
+        async function updateSystemStats() {
+            if (systemStatsBusy) return;
+            systemStatsBusy = true;
+            try {
+                // The timestamp also defeats intermediary/browser caches which do not
+                // consistently honour cache: no-store for repeated authenticated GETs.
+                const response = await fetch('/api/system?_=' + Date.now(), {
+                    cache: 'no-store',
+                    credentials: 'include'
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const stats = await response.json();
+
+                document.getElementById('hw-hostname').innerText = stats.hostname || '-';
+                document.getElementById('hw-kernel').innerText = stats.kernel || '-';
+                document.getElementById('hw-platform').innerText = stats.platform || '-';
+                document.getElementById('hw-cpu').innerText = Number(stats.cpu_load).toFixed(1) + '%';
+                document.getElementById('hw-temp').innerText = Number.isFinite(stats.temp_c)
+                    ? Number(stats.temp_c).toFixed(1) + '°C'
+                    : 'NOT EXPOSED BY VPS';
+                document.getElementById('hw-updated').innerText = new Date().toLocaleTimeString();
+            } catch (err) {
+                console.error('[SYS] Telemetry update failed:', err);
+                document.getElementById('hw-cpu').innerText = '-';
+                document.getElementById('hw-updated').innerText = 'UPDATE FAILED';
+            } finally {
+                systemStatsBusy = false;
+            }
+        }
+
+        async function pollSystemStats() {
+            await updateSystemStats();
+            clearTimeout(systemStatsTimer);
+            systemStatsTimer = setTimeout(pollSystemStats, 5000);
+        }
+
+        async function updateAMBEHeartbeat() {
+            const chip = document.getElementById('svc-ambe-heartbeat');
+            const detail = document.getElementById('ambe-heartbeat-detail');
+            try {
+                const response = await fetch('/api/vocoder/health', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const health = await response.json();
+                if (!health.online) {
+                    chip.className = 'chip chip-err';
+                    chip.textContent = '♥ OFFLINE';
+                    detail.textContent = health.message || 'No heartbeat reply';
+                    return;
+                }
+
+                chip.className = 'chip chip-ok heartbeat-live';
+                chip.textContent = '♥ ONLINE';
+                const product = health.product || 'AMBE';
+                const version = health.version ? ` ${health.version}` : '';
+                const rtt = Number(health.round_trip_ms).toFixed(1);
+                const engine = health.hardware_enabled ? 'HW ACTIVE' : 'HW STANDBY';
+                detail.textContent = `${product}${version} · ${rtt} ms RTT · ${engine} · ENC ${health.encoded || 0} / DEC ${health.decoded || 0} · ERR ${health.errors || 0}`;
+            } catch (err) {
+                chip.className = 'chip chip-err';
+                chip.textContent = '♥ OFFLINE';
+                detail.textContent = 'Heartbeat check failed';
+                console.error('[AMBE] Heartbeat update failed:', err);
+            }
+        }
+        
         const workletCode = `
             class DVProcessor extends AudioWorkletProcessor {
                 constructor() {
@@ -720,29 +1225,30 @@
         `;
 
         function switchTab(tab) {
-            const dashView = document.getElementById('view-dashboard');
-            const adminView = document.getElementById('view-admin');
-            const dashTab = document.getElementById('tab-dashboard');
-            const adminTab = document.getElementById('tab-admin');
-            
-            if (tab === 'dashboard') {
-                dashView.classList.remove('view-hidden');
-                dashView.classList.add('view-visible');
-                adminView.classList.remove('view-visible');
-                adminView.classList.add('view-hidden');
-                dashTab.classList.add('active');
-                adminTab.classList.remove('active');
-            } else if (tab === 'admin') {
-                dashView.classList.remove('view-visible');
-                dashView.classList.add('view-hidden');
-                adminView.classList.remove('view-hidden');
-                adminView.classList.add('view-visible');
-                dashTab.classList.remove('active');
-                adminTab.classList.add('active');
-            }
+            ['dashboard', 'ysf', 'admin'].forEach(name => {
+                const view = document.getElementById(`view-${name}`);
+                const button = document.getElementById(`tab-${name}`);
+                const selected = name === tab;
+                view.classList.toggle('view-hidden', !selected);
+                view.classList.toggle('view-visible', selected);
+                button.classList.toggle('active', selected);
+            });
+            if (tab === 'ysf') updateYSFDashboard();
+            if (tab === 'admin') updateYSFIdentity();
         }
 
         function setVocoder(mode) {
+            if (mode === 'hw') {
+                updateAdminParams();
+                if (!validVocoderAddress(dv30Config.addrA)) {
+                    alert('Enter a valid Device 1 hostname/address and optional UDP port before enabling hardware vocoding.');
+                    return;
+                }
+                if (dv30Config.count === 2 && !validVocoderAddress(dv30Config.addrB)) {
+                    alert('Two-device mode requires a valid address for Device 2.');
+                    return;
+                }
+            }
             activeVocoder = mode;
             localStorage.setItem('dv_hub_voc', mode);
             
@@ -754,12 +1260,32 @@
             if(ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: 'set_vocoder', type: mode }));
         }
 
-        function syncNetworkSelection() {
+        function validVocoderAddress(value) {
+            let text = String(value || '').trim();
+            if (!text) return false;
+            try { if (/^[a-z]+:\/\//i.test(text)) text = new URL(text).host; } catch (_) { return false; }
+            const match = text.match(/^([a-z0-9.-]+)(?::(\d{1,5}))?$/i);
+            if (!match || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(match[1])) return false;
+            const port = match[2] ? Number(match[2]) : 2468;
+            return port >= 1 && port <= 65535;
+        }
+
+        function updateVocoderTopology(save = true) {
+            const count = Number(document.getElementById('sel-dv30-count').value) === 2 ? 2 : 1;
+            document.getElementById('dv30-device-b').classList.toggle('hidden', count !== 2);
+            document.getElementById('dv30-capability').textContent = count === 2
+                ? 'Two AMBE channels: Device 1 handles DMR → D-Star and Device 2 handles D-Star → DMR.'
+                : 'Single AMBE channel for client/native use. Full D-Star↔DMR transcoding remains disabled.';
+            if (save) updateAdminParams();
+        }
+
+        function syncNetworkSelection(useNetworkDefault = false) {
             const sel = document.getElementById('sel-network');
             const opt = sel.options[sel.selectedIndex];
             linkState.id = parseInt(opt.value, 10);
             linkState.proto = opt.getAttribute('data-proto');
             linkState.net = opt.getAttribute('data-net');
+            document.getElementById('selected-network-title').textContent = opt.textContent.replace(/^DMR\+?\s*-\s*|^YSF\s*-\s*/, '');
             
             const reqPass = opt.getAttribute('data-req-pass') === 'true';
             const passContainer = document.getElementById('container-password');
@@ -767,46 +1293,506 @@
             
             if (reqPass) {
                 passContainer.style.display = 'block';
+                passInput.value = networkPasswords[linkState.net] || '';
                 linkState.pwd = passInput.value;
             } else {
                 passContainer.style.display = 'none';
+                passInput.value = '';
                 linkState.pwd = '';
             }
+
+            document.getElementById('network-login-message').textContent = reqPass
+                ? 'This network requires your user/hotspot credential; the master entry is selected from DMR_Hosts.txt.'
+                : (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK'
+                    ? 'Manual FreeSTAR uses registered DMR ID 2351633 with ESSID 02; the selected TG is applied as the only static talkgroup.'
+                    : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.'));
+            updateBrandMeisterAPIStatus(linkState.net === 'BrandMeister-UK-2341');
+
+            const isDMR = linkState.proto === 'DMR';
+            document.getElementById('container-dmr-identity').style.display = isDMR ? 'block' : 'none';
+            document.getElementById('container-dmr-options').style.display = isDMR ? 'block' : 'none';
             
             document.getElementById('lbl-tg-input').innerText = linkState.proto === 'DMR' ? 'Talkgroup (TG)' : 'Reflector ID (YSF)';
-            document.getElementById('inp-tg').setAttribute('list', linkState.proto === 'DMR' ? 'dmr-tgs' : 'ysf-refs');
-            
             const tgInput = document.getElementById('inp-tg');
-            if (!tgInput.value) {
-                const defTG = parseInt(opt.getAttribute('data-deftg'), 10);
-                tgInput.value = defTG;
-                linkState.tg = defTG;
-            } else {
-                linkState.tg = parseInt(tgInput.value, 10) || 0;
-            }
-            
+            const defTG = parseInt(opt.getAttribute('data-deftg'), 10);
+            const desiredTG = useNetworkDefault ? defTG : (linkState.tg ?? defTG);
+            populateTalkgroupSelect(tgInput, linkState.net, desiredTG);
+            linkState.tg = parseInt(tgInput.value, 10) || 0;
+            const selectedNetwork = linkState.net;
+            loadNetworkTalkgroups(selectedNetwork, () => {
+                if (linkState.net === selectedNetwork) {
+                    populateTalkgroupSelect(tgInput, selectedNetwork, linkState.tg);
+                    syncManualDMROptions();
+                }
+            });
+            syncManualDMROptions();
             saveLinkState();
+            updateSelectedNetworkManagement();
+        }
+
+        function selectNetworkCard(nodeID) {
+            const select = document.getElementById('sel-network');
+            if (![...select.options].some(option => Number(option.value) === Number(nodeID))) return;
+            select.value = String(nodeID);
+            linkState.active = false;
+            syncNetworkSelection(true);
+            document.getElementById('selected-network-controls').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function networkStateClass(state) {
+            if (state === 'connected') return 'status-indicator status-ok';
+            if (state === 'connecting') return 'status-indicator status-warn';
+            if (state === 'rejected' || state === 'error') return 'status-indicator status-err';
+            return 'status-indicator status-idle';
+        }
+
+        function networkChipClass(state) {
+            if (state === 'connected') return 'chip chip-ok';
+            if (state === 'connecting') return 'chip chip-warn';
+            if (state === 'rejected' || state === 'error') return 'chip chip-err';
+            return 'chip chip-idle';
+        }
+
+        function setDashboardNetworkState(name, state) {
+            const normalized = String(state || 'disconnected').toLowerCase();
+            const led = document.getElementById(`dash-${name}-led`);
+            const chip = document.getElementById(`dash-${name}-state`);
+            if (led) led.className = networkStateClass(normalized);
+            if (chip) {
+                chip.className = networkChipClass(normalized);
+                chip.textContent = normalized.toUpperCase();
+            }
+        }
+
+        function renderNetworkNode(nodeID) {
+            const node = liveNodeStates[nodeID] || { state: 'disconnected', talkgroup: 0, conference_managed: false };
+            const state = String(node.state || 'disconnected').toLowerCase();
+            const stateElement = document.getElementById(`network-state-${nodeID}`);
+            const ledElement = document.getElementById(nodeID === 7 ? 'network-led-manual-7' : `network-led-${nodeID}`);
+            const tgElement = document.getElementById(`network-tg-${nodeID}`);
+            if (stateElement) stateElement.textContent = state.toUpperCase();
+            if (ledElement) ledElement.className = networkStateClass(state);
+            if (tgElement) tgElement.textContent = Number(node.talkgroup) > 0 ? `TG ${node.talkgroup}` : '—';
+        }
+
+        function renderNetworkOverview(data) {
+            conferencePermanent = data.conference_permanent === true;
+            liveNodeStates = {};
+            (data.nodes || []).forEach(node => { liveNodeStates[Number(node.id)] = node; });
+            [1, 2, 3, 4, 5, 7].forEach(renderNetworkNode);
+
+            setDashboardNetworkState('freestar', liveNodeStates[1]?.state);
+            setDashboardNetworkState('brandmeister', liveNodeStates[2]?.state);
+            setDashboardNetworkState('tgif', liveNodeStates[4]?.state);
+
+            const manualNodes = Object.values(liveNodeStates).filter(node => !node.conference_managed);
+            const selectedNode = manualNodes.find(node => node.state === 'connected')
+                || manualNodes.find(node => node.state === 'connecting')
+                || manualNodes.find(node => node.state === 'rejected')
+                || null;
+            const selectedState = String(selectedNode?.state || 'disconnected').toLowerCase();
+            const manualChip = document.getElementById('svc-manual-link');
+            document.getElementById('dash-manual-led').className = networkStateClass(selectedState);
+            manualChip.className = networkChipClass(selectedState);
+            manualChip.textContent = selectedState.toUpperCase();
+            document.getElementById('net-status-display').textContent = selectedState.toUpperCase();
+            document.getElementById('net-active-network').textContent = selectedNode?.network || 'No manual link';
+            document.getElementById('net-active-proto').textContent = selectedNode?.mode || '—';
+            document.getElementById('net-active-tg').textContent = Number(selectedNode?.talkgroup) > 0 ? `TG ${selectedNode.talkgroup}` : '—';
+
+            const freeSTARState = liveNodeStates[1]?.state === 'connected' || liveNodeStates[7]?.state === 'connected'
+                ? 'connected' : (liveNodeStates[1]?.state === 'connecting' || liveNodeStates[7]?.state === 'connecting' ? 'connecting' : 'disconnected');
+            document.getElementById('network-led-7').className = networkStateClass(freeSTARState);
+
+            const ysfState = data.ysf_reflector === true ? 'connected' : 'disconnected';
+            document.getElementById('network-led-ysf').className = networkStateClass(ysfState);
+            document.getElementById('network-state-ysf').textContent = ysfState.toUpperCase();
+            [2, 4].forEach(nodeID => {
+                const managed = liveNodeStates[nodeID]?.conference_managed === true;
+                const role = document.getElementById(`network-role-${nodeID}`);
+                const button = document.getElementById(`network-configure-${nodeID}`);
+                role.textContent = managed ? 'Permanent conference leg · protected' : 'Available for manual connection';
+                role.className = managed ? 'text-[8px] text-amber-400' : 'text-[8px] text-gray-600';
+                button.textContent = managed ? 'VIEW MANAGED CONFIGURATION' : 'CONFIGURE';
+            });
+            updateSelectedNetworkManagement();
+        }
+
+        async function refreshNetworkOverview() {
+            try {
+                const response = await fetch('/api/state', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('Network state unavailable');
+                renderNetworkOverview(await response.json());
+            } catch (error) {
+                console.warn('[NET] Network overview unavailable:', error);
+            }
+        }
+
+        function updateSelectedNetworkManagement() {
+            const node = liveNodeStates[linkState.id];
+            const managed = node?.conference_managed === true;
+            const button = document.getElementById('btn-toggle-link');
+            if (managed) {
+                ['inp-tg', 'inp-net-pass', 'inp-callsign', 'inp-dmr-id', 'inp-essid', 'inp-dmr-options'].forEach(id => document.getElementById(id).disabled = true);
+                button.disabled = true;
+                button.textContent = 'CONFERENCE MANAGED';
+                button.classList.remove('danger');
+                document.getElementById('network-login-message').textContent = 'This leg is controlled by the permanent TG23530 conference. Pause the conference before changing it manually.';
+            } else if (!linkState.active) {
+                setNetworkControlsDisabled(false);
+                document.getElementById('inp-tg').disabled = false;
+                button.disabled = false;
+                button.textContent = 'CONNECT LINK';
+            }
+        }
+
+        function syncManualDMROptions() {
+            const input = document.getElementById('inp-dmr-options');
+            const tg = Number(document.getElementById('inp-tg').value);
+            if (linkState.net === 'FreeSTAR-SystemX-UK') {
+                linkState.options = tg > 0 && tg !== 4000 ? `TS2_1=${tg};` : 'TS2_1=0;';
+                input.value = linkState.options;
+                input.readOnly = true;
+                input.title = 'Automatically restricted to the selected FreeSTAR talkgroup';
+            } else {
+                input.readOnly = false;
+                input.title = '';
+                linkState.options = input.value.trim();
+            }
+        }
+
+        function selectedDMRID() {
+            const option = document.getElementById('sel-network').selectedOptions[0];
+            return Number(option?.getAttribute('data-manual-dmrid')) || config.dmrID;
+        }
+
+        function selectedRepeaterID() {
+            if (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK') return selectedDMRID() * 100 + 2;
+            return config.essid ? (config.dmrID * 100 + config.essid) : config.dmrID;
+        }
+
+        async function updateBrandMeisterAPIStatus(visible) {
+            const element = document.getElementById('brandmeister-api-status');
+            element.style.display = visible ? 'block' : 'none';
+            if (!visible) return;
+            element.className = 'text-[9px] text-gray-500';
+            element.textContent = 'BrandMeister API: checking secure server credential…';
+            try {
+                const response = await fetch('/api/brandmeister/status', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                element.textContent = data.verified ? 'BrandMeister API: configured and verified (key hidden)' : `BrandMeister API: ${data.status || 'unavailable'} (key hidden)`;
+                element.className = data.verified ? 'text-[9px] text-green-400' : 'text-[9px] text-yellow-400';
+            } catch (_) {
+                element.textContent = 'BrandMeister API: status unavailable (key hidden)';
+                element.className = 'text-[9px] text-yellow-400';
+            }
+        }
+
+        function updateNetworkPassword() {
+            const value = document.getElementById('inp-net-pass').value;
+            networkPasswords[linkState.net] = value;
+            linkState.pwd = value;
+        }
+
+        function updateDMRIdentity() {
+            config.callsign = document.getElementById('inp-callsign').value.trim().toUpperCase();
+            config.dmrID = parseInt(document.getElementById('inp-dmr-id').value, 10) || 0;
+            config.essid = Math.max(0, Math.min(99, parseInt(document.getElementById('inp-essid').value, 10) || 0));
+            linkState.options = document.getElementById('inp-dmr-options').value.trim();
+            localStorage.setItem('dv_hub_callsign', config.callsign);
+            localStorage.setItem('dv_hub_dmrid', config.dmrID);
+            localStorage.setItem('dv_hub_essid', config.essid);
+            saveLinkState();
+        }
+
+        function scheduleCallsignLookup() {
+            clearTimeout(callsignLookupTimer);
+            const callsign = document.getElementById('inp-callsign').value.trim().toUpperCase();
+            if (!/^[A-Z0-9]{3,10}$/.test(callsign)) {
+                document.getElementById('dmr-lookup-results').textContent = 'Enter a complete callsign to search.';
+                return;
+            }
+            callsignLookupTimer = setTimeout(() => lookupCallsign(callsign), 350);
+        }
+
+        async function lookupCallsign(callsign) {
+            const resultBox = document.getElementById('dmr-lookup-results');
+            resultBox.textContent = 'Looking up RadioID…';
+            try {
+                const response = await fetch('/api/dmr_lookup?callsign=' + encodeURIComponent(callsign), { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('Lookup failed');
+                const data = await response.json();
+                resultBox.replaceChildren();
+                if (!data.results?.length) {
+                    resultBox.textContent = 'No registered DMR IDs found.';
+                    return;
+                }
+                const intro = document.createElement('div');
+                intro.textContent = data.results.length > 1 ? 'Multiple IDs found — choose the correct registration:' : 'Registered identity found:';
+                resultBox.appendChild(intro);
+                data.results.forEach(result => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'btn-cyber w-full mt-1 text-left';
+                    const location = [result.city, result.state, result.country].filter(Boolean).join(', ');
+                    button.textContent = `${result.radio_id} — ${result.name || result.callsign}${location ? ' — ' + location : ''}`;
+                    button.onclick = () => {
+                        document.getElementById('inp-dmr-id').value = result.radio_id;
+                        updateDMRIdentity();
+                        Array.from(resultBox.querySelectorAll('button')).forEach(item => item.classList.remove('active'));
+                        button.classList.add('active');
+                    };
+                    resultBox.appendChild(button);
+                });
+                if (data.results.length === 1) resultBox.querySelector('button').click();
+            } catch (error) {
+                resultBox.textContent = 'RadioID lookup is temporarily unavailable; enter the ID manually.';
+            }
+        }
+
+        function setBridgeControls(connected) {
+            bridgeConnected = connected;
+            ['bridge-a-net', 'bridge-a-tg', 'bridge-a-pass', 'bridge-b-net', 'bridge-b-tg', 'bridge-b-pass']
+                .forEach(id => document.getElementById(id).disabled = connected);
+            document.getElementById('btn-bridge-connect').disabled = connected;
+            document.getElementById('btn-bridge-disconnect').disabled = !connected;
+        }
+
+        function sendBridgeEndpoint(side, active) {
+            const node = Number(document.getElementById(`bridge-${side}-net`).value);
+            const network = networkByNode[node];
+            ws.send(JSON.stringify({
+                cmd: 'node_state', node_id: node, active, mode: 'DMR', target: network.key,
+                tg: Number(document.getElementById(`bridge-${side}-tg`).value),
+                password: active ? document.getElementById(`bridge-${side}-pass`).value : '',
+                callsign: config.callsign, dmr_id: config.dmrID,
+                repeater_id: config.essid ? (config.dmrID * 100 + config.essid) : config.dmrID,
+                options: ''
+            }));
+        }
+
+        function connectBridge() {
+            updateDMRIdentity();
+            const aNode = Number(document.getElementById('bridge-a-net').value);
+            const bNode = Number(document.getElementById('bridge-b-net').value);
+            const message = document.getElementById('bridge-message');
+            if (!ws || ws.readyState !== WebSocket.OPEN) { message.textContent = 'Control connection is offline.'; return; }
+            if (aNode === bNode) { message.textContent = 'Choose two different networks.'; return; }
+            if (!/^[A-Z0-9]{3,10}$/.test(config.callsign) || config.dmrID < 1000000 || config.dmrID > 9999999) { message.textContent = 'Enter and confirm a registered callsign and DMR ID first.'; return; }
+            if ((networkByNode[aNode].requiresUserPassword && !document.getElementById('bridge-a-pass').value) || (networkByNode[bNode].requiresUserPassword && !document.getElementById('bridge-b-pass').value)) { message.textContent = 'Enter the user credential for each network that requires one.'; return; }
+            sendBridgeEndpoint('a', true);
+            sendBridgeEndpoint('b', true);
+            ws.send(JSON.stringify({ cmd: 'bridge_state', active: true, a_node: aNode, a_tg: Number(document.getElementById('bridge-a-tg').value), b_node: bNode, b_tg: Number(document.getElementById('bridge-b-tg').value) }));
+            message.textContent = 'Authenticating both DMR masters…';
+            setBridgeControls(true);
+        }
+
+        function disconnectBridge() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ cmd: 'bridge_state', active: false }));
+                sendBridgeEndpoint('a', false);
+                sendBridgeEndpoint('b', false);
+            }
+            document.getElementById('bridge-a-pass').value = '';
+            document.getElementById('bridge-b-pass').value = '';
+            document.getElementById('bridge-message').textContent = 'Bridge disconnected.';
+            setBridgeControls(false);
+        }
+
+        function handleBridgeStatus(msg) {
+            const message = document.getElementById('bridge-message');
+            message.textContent = msg.message || msg.state;
+            if (msg.state === 'connected') {
+                message.className = 'text-[9px] text-green-400';
+                setBridgeControls(true);
+            } else if (msg.state === 'connecting') {
+                message.className = 'text-[9px] text-yellow-400';
+            } else {
+                message.className = msg.state === 'error' ? 'text-[9px] text-red-400' : 'text-[9px] text-gray-400';
+                setBridgeControls(false);
+            }
+        }
+
+        function setYorkshireMessage(text, tone = 'text-gray-400') {
+            const message = document.getElementById('yorkshire-message');
+            message.textContent = text;
+            message.className = tone;
+        }
+
+        function clearYorkshirePasswords() {
+            document.getElementById('yorkshire-bm-pass').value = '';
+            document.getElementById('yorkshire-tgif-pass').value = '';
+        }
+
+        function sendYorkshireEndpoint(node, network, password, dmrID, repeaterID, active) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+                cmd: 'node_state', node_id: node, active, mode: 'DMR', target: network,
+                tg: 23530, password: active ? password : '', callsign: config.callsign,
+                dmr_id: dmrID, repeater_id: repeaterID || dmrID, options: ''
+            }));
+        }
+
+        async function refreshYorkshireStatus() {
+            try {
+                const response = await fetch('/api/yorkshire_conference', { cache: 'no-store' });
+                const data = await response.json();
+                document.getElementById('yorkshire-freestar-state').textContent = data.freestar || 'Disconnected';
+                document.getElementById('yorkshire-bm-state').textContent = data.brandmeister || 'Disconnected';
+                document.getElementById('yorkshire-tgif-state').textContent = data.tgif || 'Disconnected';
+                setDashboardNetworkState('freestar', data.freestar);
+                setDashboardNetworkState('brandmeister', data.brandmeister);
+                setDashboardNetworkState('tgif', data.tgif);
+                setDashboardNetworkState('ysf', data.ysf2dmr ? 'connected' : 'disconnected');
+                const conferenceChip = document.getElementById('svc-link');
+                const summaryChip = document.getElementById('network-summary');
+                if (data.ready) {
+                    conferenceChip.className = 'chip chip-ok';
+                    conferenceChip.textContent = 'ALL ONLINE';
+                    summaryChip.className = 'chip chip-ok';
+                    summaryChip.textContent = '4 / 4 CONNECTED';
+                    if (data.permanent) {
+                        setYorkshireMessage('Permanent TG23530 conference is online. YSF, FreeSTAR, BrandMeister and TGIF are linked bidirectionally with automatic recovery.', 'text-green-400');
+                    } else {
+                        const expiry = data.expires_at ? new Date(data.expires_at).toLocaleTimeString() : 'safety timer';
+                        setYorkshireMessage(`All TG23530 conference legs are ready; automatic disconnect at ${expiry}.`, 'text-green-400');
+                    }
+                } else if (data.active || data.ysf2dmr) {
+                    const missing = [];
+                    if (data.freestar !== 'connected') missing.push('FreeSTAR');
+                    if (data.brandmeister !== 'connected') missing.push('BrandMeister');
+                    if (data.tgif !== 'connected') missing.push('TGIF');
+                    if (!data.ysf2dmr) missing.push('YSF converter');
+                    conferenceChip.className = 'chip chip-warn';
+                    conferenceChip.textContent = 'PARTIAL';
+                    summaryChip.className = 'chip chip-warn';
+                    summaryChip.textContent = `${4 - missing.length} / 4 CONNECTED`;
+                    setYorkshireMessage(`Partial connection: ${missing.join(', ')} not ready. No complete conference path is available.`, 'text-yellow-400');
+                } else if (!data.ysf2dmr && data.freestar === 'disconnected' && data.brandmeister === 'disconnected' && data.tgif === 'disconnected') {
+                    conferenceChip.className = 'chip chip-idle';
+                    conferenceChip.textContent = 'OFFLINE';
+                    summaryChip.className = 'chip chip-idle';
+                    summaryChip.textContent = '0 / 4 CONNECTED';
+                    setYorkshireMessage('Idle. No Yorkshire conference connections are active.', 'text-gray-400');
+                }
+            } catch (_) {
+                document.getElementById('svc-link').className = 'chip chip-err';
+                document.getElementById('svc-link').textContent = 'STATUS ERROR';
+                document.getElementById('network-summary').className = 'chip chip-err';
+                document.getElementById('network-summary').textContent = 'UNAVAILABLE';
+                setYorkshireMessage('Unable to read conference status.', 'text-red-400');
+            }
+        }
+
+        async function startYorkshireConference(testOnly) {
+            if (!testOnly) {
+                setYorkshireMessage('Starting the permanent TG23530 conference…', 'text-yellow-400');
+                try {
+                    const response = await fetch('/api/yorkshire_conference', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                        body: JSON.stringify({ action: 'permanent' })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Unable to start permanent conference');
+                    clearYorkshirePasswords();
+                    await refreshYorkshireStatus();
+                    setTimeout(refreshYorkshireStatus, 2500);
+                } catch (error) {
+                    setYorkshireMessage(error.message, 'text-red-400');
+                }
+                return;
+            }
+            updateDMRIdentity();
+            const ysfID = Number(document.getElementById('yorkshire-ysf-id').value);
+            const bridgeID = Number(document.getElementById('yorkshire-bridge-id').value);
+            const essid = Number(document.getElementById('yorkshire-essid').value);
+            const bmPassword = document.getElementById('yorkshire-bm-pass').value;
+            const tgifPassword = document.getElementById('yorkshire-tgif-pass').value;
+            if (!ws || ws.readyState !== WebSocket.OPEN) { setYorkshireMessage('Control connection is offline.', 'text-red-400'); return; }
+            if (!/^[A-Z0-9]{3,10}$/.test(config.callsign)) { setYorkshireMessage('Enter and confirm your callsign first.', 'text-red-400'); return; }
+            if (ysfID < 1000000 || ysfID > 9999999 || bridgeID < 1000000 || bridgeID > 9999999 || ysfID === bridgeID) { setYorkshireMessage('Choose two different registered 7-digit DMR IDs.', 'text-red-400'); return; }
+            if (!Number.isInteger(essid) || essid < 0 || essid > 99) { setYorkshireMessage('ESSID must be 00 to 99.', 'text-red-400'); return; }
+            if (!bmPassword || !tgifPassword) { setYorkshireMessage('Enter the BrandMeister and TGIF user credentials.', 'text-red-400'); return; }
+            setYorkshireMessage('Starting the local YSF converter…', 'text-yellow-400');
+            try {
+                const response = await fetch('/api/yorkshire_conference', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify({ action: 'test', callsign: config.callsign, dmr_id: ysfID, duration_seconds: 60 })
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Unable to start conference');
+                const repeaterID = bridgeID * 100 + essid;
+                sendYorkshireEndpoint(1, 'FreeSTAR-SystemX-UK', '', bridgeID, repeaterID, true);
+                sendYorkshireEndpoint(2, 'BrandMeister-UK-2341', bmPassword, bridgeID, repeaterID, true);
+                sendYorkshireEndpoint(4, 'TGIF', tgifPassword, bridgeID, repeaterID, true);
+                ws.send(JSON.stringify({ cmd: 'bridge_state', active: true, a_node: 1, a_tg: 23530, b_node: 2, b_tg: 23530, c_node: 4, c_tg: 23530 }));
+                setYorkshireMessage('60-second login test running; no audio will be transmitted.', 'text-yellow-400');
+                setTimeout(() => { clearYorkshirePasswords(); refreshYorkshireStatus(); }, 61 * 1000);
+                setTimeout(refreshYorkshireStatus, 2500);
+            } catch (error) {
+                setYorkshireMessage(error.message, 'text-red-400');
+            }
+        }
+
+        async function stopYorkshireConference() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ cmd: 'bridge_state', active: false }));
+                sendYorkshireEndpoint(1, 'FreeSTAR-SystemX-UK', '', 2344399, 0, false);
+                sendYorkshireEndpoint(2, 'BrandMeister-UK-2341', '', 2344399, 0, false);
+                sendYorkshireEndpoint(4, 'TGIF', '', 2344399, 0, false);
+            }
+            try {
+                await fetch('/api/yorkshire_conference', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' }, body: JSON.stringify({ action: 'stop' }) });
+            } finally {
+                clearYorkshirePasswords();
+                await refreshYorkshireStatus();
+            }
         }
 
         function updateAdminParams() {
             totSeconds = parseInt(document.getElementById('sel-tot').value, 10);
             localStorage.setItem('dv_hub_tot', totSeconds);
-            dv30Addr = document.getElementById('inp-dv30').value;
-            localStorage.setItem('dv_hub_dv30', dv30Addr);
-            if(ws && ws.readyState === 1 && dv30Addr) {
-                ws.send(JSON.stringify({ cmd: 'set_dv30', addr: dv30Addr }));
+            dv30Config = {
+                count: Number(document.getElementById('sel-dv30-count').value) === 2 ? 2 : 1,
+                typeA: document.getElementById('sel-dv30-type-a').value,
+                addrA: document.getElementById('inp-dv30-a').value.trim(),
+                typeB: document.getElementById('sel-dv30-type-b').value,
+                addrB: document.getElementById('inp-dv30-b').value.trim()
+            };
+            localStorage.setItem('dv_hub_dv30_config', JSON.stringify(dv30Config));
+            if(ws && ws.readyState === 1) {
+                ws.send(JSON.stringify({ cmd: 'set_dv30', count: dv30Config.count, addr1: dv30Config.addrA, addr2: dv30Config.count === 2 ? dv30Config.addrB : '' }));
             }
         }
 
         function saveLinkState() {
-            localStorage.setItem('dv_hub_link', JSON.stringify(linkState));
+            const safeState = { ...linkState, pwd: '', active: false };
+            localStorage.setItem('dv_hub_link', JSON.stringify(safeState));
         }
 
         async function toggleConnection() {
             linkState.active = !linkState.active;
             const btn = document.getElementById('btn-toggle-link');
-            const status = document.getElementById('svc-link');
+            const status = document.getElementById('svc-manual-link');
             const pttBtn = document.getElementById('btn-ptt');
+
+            updateNetworkPassword();
+            updateDMRIdentity();
+            syncManualDMROptions();
+            if (linkState.active && linkState.proto === 'DMR') {
+                if (!/^[A-Z0-9]{3,8}$/.test(config.callsign) || config.dmrID < 1000000 || config.dmrID > 9999999) {
+                    linkState.active = false;
+                    alert('Enter your registered callsign and 7-digit DMR ID.');
+                    return;
+                }
+                const selectedNetwork = document.getElementById('sel-network').selectedOptions[0];
+                if (selectedNetwork?.getAttribute('data-req-pass') === 'true' && !linkState.pwd) {
+                    linkState.active = false;
+                    alert('Enter your user/hotspot credential for the selected network.');
+                    return;
+                }
+            }
             
             // Dashboard info displays
             const netStatusDisplay = document.getElementById('net-status-display');
@@ -819,28 +1805,27 @@
                 
                 btn.innerText = 'DISCONNECT LINK';
                 btn.classList.add('danger');
-                status.className = 'chip chip-ok';
-                status.innerText = 'CONNECTED';
+                status.className = linkState.proto === 'DMR' ? 'chip chip-warn' : 'chip chip-ok';
+                status.innerText = linkState.proto === 'DMR' ? 'CONNECTING' : 'CONNECTED';
                 
                 // Update dashboard displays
-                netStatusDisplay.className = 'chip chip-ok';
-                netStatusDisplay.innerText = 'CONNECTED';
+                netStatusDisplay.className = linkState.proto === 'DMR' ? 'chip chip-warn' : 'chip chip-ok';
+                netStatusDisplay.innerText = linkState.proto === 'DMR' ? 'CONNECTING' : 'CONNECTED';
                 netActiveNetwork.innerText = linkState.net;
                 netActiveProto.innerText = linkState.proto;
                 netActiveTG.innerText = linkState.proto === 'DMR' ? 'TG ' + linkState.tg : 'REF ' + linkState.tg;
                 
-                // Update radio mode
-                document.getElementById('radio-mode').innerText = linkState.proto;
-                
                 document.getElementById('sel-network').disabled = true;
-                document.getElementById('inp-tg').disabled = true;
                 document.getElementById('inp-net-pass').disabled = true;
+                document.getElementById('inp-callsign').disabled = true;
+                document.getElementById('inp-dmr-id').disabled = true;
+                document.getElementById('inp-essid').disabled = true;
+                document.getElementById('inp-dmr-options').disabled = true;
                 
                 pttBtn.innerText = 'PTT [' + linkState.proto + ' - TG' + linkState.tg + ']';
                 pttBtn.classList.remove('btn-cyber');
                 pttBtn.className = 'btn-cyber';
                 
-                await initAudio();
             } else {
                 btn.innerText = 'CONNECT LINK';
                 btn.classList.remove('danger');
@@ -855,8 +1840,11 @@
                 netActiveTG.innerText = '-';
                 
                 document.getElementById('sel-network').disabled = false;
-                document.getElementById('inp-tg').disabled = false;
                 document.getElementById('inp-net-pass').disabled = false;
+                document.getElementById('inp-callsign').disabled = false;
+                document.getElementById('inp-dmr-id').disabled = false;
+                document.getElementById('inp-essid').disabled = false;
+                document.getElementById('inp-dmr-options').disabled = false;
                 
                 pttBtn.innerText = 'PTT [DISABLED]';
                 
@@ -867,7 +1855,10 @@
             if(ws && ws.readyState === 1) {
                 ws.send(JSON.stringify({ 
                     cmd: 'node_state', node_id: linkState.id, active: linkState.active, 
-                    mode: linkState.proto, target: linkState.net, tg: linkState.tg, password: linkState.pwd
+                    mode: linkState.proto, target: linkState.net, tg: linkState.tg, password: linkState.pwd,
+                    callsign: config.callsign, dmr_id: selectedDMRID(),
+                    repeater_id: selectedRepeaterID(),
+                    options: linkState.options
                 }));
             }
         }
@@ -883,26 +1874,28 @@
             
             if (!linkState.active) {
                 linkState.tg = newTG;
+				syncManualDMROptions();
                 saveLinkState();
                 return;
             }
             
             const unlinkVal = linkState.proto === 'DMR' ? 4000 : 0;
             linkState.tg = newTG;
+            syncManualDMROptions();
             saveLinkState();
             
             if (ws && ws.readyState === 1) {
                 console.log('[TG] Changing to', newTG);
                 
-                // Send disconnect
+                // Disconnect cleanly before re-authenticating with the new
+                // single-talkgroup System X options string.
                 ws.send(JSON.stringify({ 
                     cmd: 'node_state', 
                     node_id: linkState.id, 
-                    active: true, 
+                    active: false,
                     mode: linkState.proto, 
                     target: linkState.net, 
-                    tg: unlinkVal, 
-                    password: linkState.pwd 
+                    tg: unlinkVal
                 }));
                 
                 // Wait 800ms then send new TG
@@ -914,7 +1907,11 @@
                         mode: linkState.proto, 
                         target: linkState.net, 
                         tg: newTG, 
-                        password: linkState.pwd 
+                        password: linkState.pwd,
+                        callsign: config.callsign,
+                        dmr_id: selectedDMRID(),
+                        repeater_id: selectedRepeaterID(),
+                        options: linkState.options
                     }));
                     
                     // Update displays
@@ -924,6 +1921,53 @@
                     console.log('[TG] Changed to', newTG);
                 }, 800);
             }
+        }
+
+        function setNetworkControlsDisabled(disabled) {
+            ['sel-network', 'inp-net-pass', 'inp-callsign', 'inp-dmr-id', 'inp-essid', 'inp-dmr-options']
+                .forEach(id => document.getElementById(id).disabled = disabled);
+        }
+
+        function handleNetworkStatus(msg) {
+			liveNodeStates[Number(msg.node_id)] = { ...(liveNodeStates[Number(msg.node_id)] || {}), state: msg.state, network: msg.network };
+			renderNetworkNode(Number(msg.node_id));
+            if (msg.node_id !== linkState.id) return;
+            const serviceStatus = document.getElementById('svc-manual-link');
+            const networkStatus = document.getElementById('net-status-display');
+            const loginMessage = document.getElementById('network-login-message');
+            const button = document.getElementById('btn-toggle-link');
+            loginMessage.innerText = msg.message || msg.state;
+
+            if (msg.state === 'connected') {
+                serviceStatus.className = 'chip chip-ok';
+                serviceStatus.innerText = 'CONNECTED';
+                networkStatus.className = 'chip chip-ok';
+                networkStatus.innerText = 'CONNECTED';
+                linkState.active = true;
+                button.innerText = 'DISCONNECT LINK';
+                button.classList.add('danger');
+                document.getElementById('btn-ptt').innerText = 'PTT [' + linkState.proto + ' - TG' + linkState.tg + ']';
+                setNetworkControlsDisabled(true);
+            } else if (msg.state === 'connecting') {
+                serviceStatus.className = 'chip chip-warn';
+                serviceStatus.innerText = 'CONNECTING';
+                networkStatus.className = 'chip chip-warn';
+                networkStatus.innerText = 'CONNECTING';
+            } else {
+                const rejected = msg.state === 'rejected' || msg.state === 'error';
+                serviceStatus.className = rejected ? 'chip chip-err' : 'chip chip-idle';
+                serviceStatus.innerText = rejected ? 'LOGIN FAILED' : 'DISCONNECTED';
+                networkStatus.className = rejected ? 'chip chip-err' : 'chip chip-idle';
+                networkStatus.innerText = rejected ? 'REJECTED' : 'DISCONNECTED';
+                linkState.active = false;
+                button.innerText = 'CONNECT LINK';
+                button.classList.remove('danger');
+                document.getElementById('btn-ptt').innerText = 'PTT [DISABLED]';
+                setNetworkControlsDisabled(false);
+                if (isTransmitting) stopTX();
+            }
+            document.getElementById('dash-manual-led').className = networkStateClass(msg.state);
+            saveLinkState();
         }
 
         function connectWS() {
@@ -945,11 +1989,15 @@
                             mode: linkState.proto, 
                             target: linkState.net, 
                             tg: linkState.tg, 
-                            password: linkState.pwd 
+                            password: linkState.pwd,
+                            callsign: config.callsign,
+                            dmr_id: selectedDMRID(),
+                            repeater_id: selectedRepeaterID(),
+                            options: linkState.options
                         }));
                     }
                     ws.send(JSON.stringify({ cmd: 'set_vocoder', type: activeVocoder }));
-                    if (dv30Addr) ws.send(JSON.stringify({ cmd: 'set_dv30', addr: dv30Addr }));
+                    ws.send(JSON.stringify({ cmd: 'set_dv30', count: dv30Config.count, addr1: dv30Config.addrA, addr2: dv30Config.count === 2 ? dv30Config.addrB : '' }));
                 };
                 
                 ws.onclose = () => {
@@ -971,13 +2019,20 @@
                             const msg = JSON.parse(e.data);
                             
                             if (msg.type === 'traffic') {
-                                trafficBuffer.unshift(msg.data);
-                                if (trafficBuffer.length > 50) trafficBuffer.pop();
+                                ingestTraffic(msg.data);
                                 renderTraffic();
                             } else if (msg.type === 'state_sync') {
                                 if (!msg.active && isTransmitting) {
                                     stopTX();
                                 }
+                            } else if (msg.type === 'tx_status') {
+                                handleTXStatus(msg);
+                            } else if (msg.type === 'network_status') {
+                                handleNetworkStatus(msg);
+                            } else if (msg.type === 'bridge_status') {
+                                handleBridgeStatus(msg);
+                            } else if (msg.type === 'ysf_dashboard') {
+                                updateYSFDashboard(msg);
                             }
                         } else if (workletNode) {
                             workletNode.port.postMessage({ type: 'rx_audio', payload: e.data }, [e.data]);
@@ -993,20 +2048,61 @@
             }
         }
         
+        function ingestTraffic(data) {
+            const now = Date.now();
+            trafficBuffer = trafficBuffer.filter(item => now - (item._lastSeenAt || item._startedAt || now) < TRAFFIC_RETENTION_MS);
+            const streamKey = data.stream_id
+                ? `${data.mode}-${data.node}-${data.stream_id}`
+                : `${data.mode}-${data.node}-${data.callsign || 'unknown'}-${data.time}`;
+            const existingIndex = trafficBuffer.findIndex(item => item._key === streamKey);
+            if (existingIndex >= 0) {
+                const existing = trafficBuffer.splice(existingIndex, 1)[0];
+                const currentSequence = Number(data.sequence);
+                const previousSequence = Number(existing._lastSequence);
+                if (Number.isFinite(currentSequence) && Number.isFinite(previousSequence)) {
+                    const gap = (currentSequence - previousSequence + 256) % 256;
+                    if (gap > 1 && gap < 128) existing._missing += gap - 1;
+                    if (gap > 0) existing._received += 1;
+                }
+                Object.assign(existing, data);
+                existing._lastSequence = currentSequence;
+                existing._lastSeenAt = now;
+                existing.duration = (now - existing._startedAt) / 1000;
+                existing.loss_pct = existing._missing > 0
+                    ? (existing._missing / (existing._received + existing._missing)) * 100
+                    : 0;
+                trafficBuffer.unshift(existing);
+            } else {
+                trafficBuffer.unshift({ ...data, _key: streamKey, _startedAt: now, _lastSeenAt: now, _lastSequence: Number(data.sequence), _received: 1, _missing: 0, duration: 0, loss_pct: 0 });
+            }
+            if (trafficBuffer.length > 50) trafficBuffer.length = 50;
+        }
+
         function renderTraffic() {
+            const now = Date.now();
+            trafficBuffer = trafficBuffer.filter(item => now - (item._lastSeenAt || item._startedAt || now) < TRAFFIC_RETENTION_MS);
             const log = document.getElementById('activity-log');
             log.innerHTML = trafficBuffer.map((t, i) => {
                 const modeChip = t.mode === 'DMR' ? 'chip-ok' : 'chip-warn';
+                const identity = t.raw_id ? `${escapeHTML(t.callsign || 'UNKNOWN')} · ${Number(t.raw_id)}` : escapeHTML(t.callsign || 'UNKNOWN');
+                const name = t.name ? escapeHTML(t.name) : 'Name unavailable';
+                const location = t.location ? escapeHTML(t.location) : 'Location unavailable';
+                const slotType = t.mode === 'DMR' ? `TS${Number(t.slot) || '?'} · ${escapeHTML(t.call_type || 'group')}` : '—';
+                const loss = Number.isFinite(Number(t.loss_pct)) ? `${Number(t.loss_pct).toFixed(1)}%` : '—';
+                const ber = t.ber_available ? `${Number(t.ber).toFixed(1)}%` : '—';
+                const rssi = t.rssi_available ? `${Number(t.rssi)} dBm` : '—';
+                const stream = t.stream_id ? `0x${Number(t.stream_id).toString(16).toUpperCase().padStart(8, '0')}` : '—';
+                const repeater = t.repeater_id ? Number(t.repeater_id) : '—';
                 return `
                     <div class="activity-row ${i === 0 ? 'active' : ''}">
                         <div class="text-gray-400">${t.time}</div>
                         <div><span class="chip ${modeChip}" style="font-size: 9px;">${t.mode}</span></div>
-                        <div class="text-white font-bold">${t.callsign || t.raw_id || 'UNKNOWN'}</div>
-                        <div class="text-green-400">${t.target}</div>
-                        <div class="text-gray-400">-</div>
-                        <div class="text-gray-400">-</div>
-                        <div class="text-green-400">-</div>
-                        <div class="text-green-400">-</div>
+                        <div><div class="text-white font-bold">${identity}</div><div class="text-gray-400 text-[8px]">${name}</div><div class="text-gray-500 text-[8px]">${location}</div></div>
+                        <div><div class="text-green-400">${escapeHTML(t.target || '—')}</div><div class="text-gray-500 text-[8px]">${escapeHTML(t.network || '')}</div><div class="text-gray-600 text-[8px]">RPT ${repeater} · ${stream}</div></div>
+                        <div><div class="text-gray-300">${slotType}</div><div class="text-gray-500 text-[8px]">${escapeHTML(t.frame_type || '')}</div></div>
+                        <div class="text-gray-400">${Number(t.duration || 0).toFixed(1)}</div>
+                        <div class="text-green-400">${loss}</div>
+                        <div><div class="text-green-400">${ber}</div><div class="text-gray-500 text-[8px]">${rssi}</div></div>
                     </div>
                 `;
             }).join('');
@@ -1016,6 +2112,8 @@
                 document.getElementById('net-last-activity').innerText = trafficBuffer[0].time;
             }
         }
+
+        setInterval(renderTraffic, 5000);
 
         async function initAudio() {
             if (audioCtx) {
@@ -1068,15 +2166,15 @@
             }
         }
 
-        function startTX() {
+        async function startTX() {
             if(!linkState.active || isTransmitting) return;
             if(!ws || ws.readyState !== 1) {
                 console.warn('[PTT] WebSocket not connected');
                 return;
             }
             if(!audioCtx || !workletNode) {
-                console.warn('[PTT] Audio not initialized');
-                return;
+                await initAudio();
+                if(!audioCtx || !workletNode) return;
             }
             
             isTransmitting = true;
@@ -1095,6 +2193,25 @@
             }
             
             console.log('[PTT] TX started');
+        }
+
+        function handleTXStatus(msg) {
+            const txChip = document.getElementById('svc-tx');
+            if (msg.state === 'busy' || msg.state === 'denied') {
+                const attempted = isTransmitting;
+                if (attempted) stopTX();
+                txChip.className = 'chip chip-err';
+                txChip.innerText = msg.state === 'busy' ? 'BUSY' : 'DENIED';
+                if (attempted) alert('Transmit ' + msg.state + ': ' + (msg.reason || 'TX is unavailable'));
+                return;
+            }
+            if (msg.state === 'active') {
+                txChip.className = 'chip chip-ok';
+                txChip.innerText = isTransmitting ? 'TRANSMIT' : 'BUSY ' + (msg.callsign || msg.dmr_id || '');
+            } else if (msg.state === 'idle' && !isTransmitting) {
+                txChip.className = 'chip chip-idle';
+                txChip.innerText = 'IDLE';
+            }
         }
 
         function stopTX() {
@@ -1130,18 +2247,35 @@
 
         window.onload = () => {
             // Initialize system info
-            updateSystemInfo();
-            updateRadioInfo();
+            pollSystemStats();
+            updateAMBEHeartbeat();
+            updateYSFStatus();
+            updateYSFDashboard();
+            updateYSFIdentity();
+            refreshYorkshireStatus();
+            refreshNetworkOverview();
+            document.getElementById('inp-callsign').value = config.callsign;
+            document.getElementById('inp-dmr-id').value = config.dmrID;
+            document.getElementById('inp-essid').value = config.essid;
+            scheduleCallsignLookup();
+            populateBridgeTalkgroups('a');
+            populateBridgeTalkgroups('b');
             
-            // Update CPU stats every 5 seconds
-            setInterval(updateCPUStats, 5000);
+            // Other live status feeds. System telemetry schedules its next poll only
+            // after the current request finishes, so a slow request cannot stall it.
+            setInterval(updateAMBEHeartbeat, 5000);
+            setInterval(updateYSFStatus, 15000);
+            setInterval(updateYSFIdentity, 15000);
+            setInterval(updateYSFDashboard, 10000);
+            setInterval(refreshYorkshireStatus, 5000);
+            setInterval(refreshNetworkOverview, 5000);
             
             // Restore saved state
             const saved = localStorage.getItem('dv_hub_link');
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
-                    linkState = { ...parsed, active: false };
+                    linkState = { ...linkState, ...parsed, pwd: '', active: false };
                     
                     // Restore network selection
                     const sel = document.getElementById('sel-network');
@@ -1154,32 +2288,46 @@
                     
                     // Restore TG
                     document.getElementById('inp-tg').value = linkState.tg;
-                    
-                    // Restore password if exists
-                    if (linkState.pwd) {
-                        document.getElementById('inp-net-pass').value = linkState.pwd;
-                    }
+                    document.getElementById('inp-dmr-options').value = linkState.options || '';
                 } catch(e) {
                     console.error('Failed to restore link state:', e);
                 }
             }
             
             syncNetworkSelection();
-            
-            const savedVoc = localStorage.getItem('dv_hub_voc');
-            if (savedVoc) setVocoder(savedVoc);
+            saveLinkState();
             
             const savedToT = localStorage.getItem('dv_hub_tot');
             if (savedToT) {
                 totSeconds = parseInt(savedToT, 10);
                 document.getElementById('sel-tot').value = savedToT;
             }
-            
-            const savedDV30 = localStorage.getItem('dv_hub_dv30');
-            if (savedDV30) {
-                dv30Addr = savedDV30;
-                document.getElementById('inp-dv30').value = savedDV30;
+
+            const savedDV30Config = localStorage.getItem('dv_hub_dv30_config');
+            const legacyDV30 = localStorage.getItem('dv_hub_dv30');
+            if (savedDV30Config) {
+                try { dv30Config = { ...dv30Config, ...JSON.parse(savedDV30Config) }; } catch (_) {}
+            } else if (legacyDV30) {
+                dv30Config.addrA = legacyDV30;
             }
+            if (!dv30Config.addrA || /(?:^|\/)ai\.2e0lxy\.uk(?::2468)?$/i.test(dv30Config.addrA)) {
+                dv30Config.addrA = 'zx3de49.glddns.com:2468';
+            }
+            document.getElementById('sel-dv30-count').value = String(dv30Config.count === 2 ? 2 : 1);
+            document.getElementById('sel-dv30-type-a').value = dv30Config.typeA || 'DVStick30';
+            document.getElementById('inp-dv30-a').value = dv30Config.addrA || '';
+            document.getElementById('sel-dv30-type-b').value = dv30Config.typeB || 'DVStick30';
+            document.getElementById('inp-dv30-b').value = dv30Config.addrB || '';
+            updateVocoderTopology(false);
+
+            const savedVoc = localStorage.getItem('dv_hub_voc');
+            const savedHardwareReady = validVocoderAddress(dv30Config.addrA) && (dv30Config.count !== 2 || validVocoderAddress(dv30Config.addrB));
+            const hardwareMigrationDone = localStorage.getItem('dv_hub_hw_ready_v1') === '1';
+            if (!hardwareMigrationDone && savedHardwareReady) {
+                localStorage.setItem('dv_hub_hw_ready_v1', '1');
+                setVocoder('hw');
+            } else if (savedVoc === 'hw' && !savedHardwareReady) setVocoder('sw');
+            else if (savedVoc) setVocoder(savedVoc);
             
             // Connect WebSocket
             connectWS();
@@ -1190,6 +2338,10 @@
                 document.getElementById('clock').innerText = now.toISOString().split('T')[1].split('.')[0] + ' UTC'; 
             }, 1000);
         };
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) pollSystemStats();
+        });
     </script>
 </body>
 </html>

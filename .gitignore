@@ -37,3 +37,15 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Android local/generated files
+android/.gradle/
+android/local.properties
+android/**/build/
+android/*.apk
+android/*.aab
+/.artifacts/
+
+# Python generated files
+__pycache__/
+*.py[cod]

@@ -1,0 +1,29 @@
+[Unit]
+Description=Yorkshire Link HUB DV30 AMBE Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dvhub/ambe-server.env
+ExecStart=/usr/bin/python3 /opt/dvhub-ambe-server/dvhub_ambe_server.py --device ${AMBE_DEVICE} --baud ${AMBE_BAUD} --mode ${AMBE_MODE} --bind ${AMBE_BIND} --allow ${AMBE_ALLOW}
+User=dvhub-ambe
+Group=dvhub-ambe
+SupplementaryGroups=dialout
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

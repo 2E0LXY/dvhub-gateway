@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DVHub" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/dv_background</item>
+        <item name="android:navigationBarColor">@color/dv_background</item>
+        <item name="colorPrimary">@color/dv_green</item>
+        <item name="colorSecondary">@color/dv_cyan</item>
+        <item name="colorError">@color/dv_error</item>
+        <item name="android:windowBackground">@color/dv_background</item>
+    </style>
+</resources>

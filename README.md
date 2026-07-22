@@ -5,6 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)
+[![Android](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml/badge.svg)](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml)
 
 A high-performance, production-ready gateway that bridges web browsers to DMR and YSF digital voice networks. Features a built-in AMBE+2 software vocoder achieving 85-90% quality, with optional hardware DV30 support for reference-quality audio.
 
@@ -12,6 +13,7 @@ A high-performance, production-ready gateway that bridges web browsers to DMR an
 
 ### Core Capabilities
 - **Dual Vocoder System**: Software AMBE+2 codec (pure Go) + optional DV30 hardware support
+- **Remote DV30 Server**: Secure-overlay support for a USB DVstick 30 on another Linux machine, with hardware TX encoding and RX decoding
 - **Multi-Protocol**: DMR (ETSI TS 102 361) and YSF (C4FM) framing
 - **Web Interface**: Modern cyberpunk-themed dashboard with real-time traffic monitoring
 - **Low Latency**: <30ms TX, <100ms RX end-to-end
@@ -54,6 +56,25 @@ go build -o dvhub-gateway gateway.go
 ```
 
 Access dashboard at `http://localhost:8080`
+
+### Android remote
+
+The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
+
+**[Download the latest Yorkshire Link HUB APK](https://github.com/2E0LXY/dvhub-gateway/releases)**
+
+Build it with:
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+The local APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. Generated build output is not committed to Git; installable builds are published under [GitHub Releases](https://github.com/2E0LXY/dvhub-gateway/releases), and GitHub Actions uploads an artifact for each Android build.
+
+### Remote DV30 / AMBE server
+
+The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it to the public gateway using the configured UDP route or a VPN. It supports hardware AMBE encode and decode and restricts requests to the configured gateway address.
 
 ## 📦 Installation
 
@@ -100,6 +121,18 @@ localStorage.setItem('dv_hub_rx_freq', '430.2000');
 
 ### Network Configuration
 
+BrandMeister API v2 credentials are stored only on the gateway at `/etc/dvhub/brandmeister-api.token` with `root:dvhub` ownership and mode `0640`. The dashboard reports only whether the credential is configured and verified; the JWT is never returned to a browser, written to logs, or committed to Git. This API credential is separate from the BrandMeister hotspot-security password used by the DMR master protocol.
+
+### Permanent Yorkshire TG23530 conference
+
+The gateway can supervise a permanent, bidirectional YSF 23530 ↔ FreeSTAR ↔ BrandMeister/TGIF conference. Its credentials live only in `/etc/dvhub/yorkshire-conference.json`; use `root:dvhub` ownership and mode `0640`. Required JSON fields are `enabled`, `callsign`, `ysf_dmr_id`, `bridge_dmr_id`, `bridge_essid`, `brandmeister_password`, and `tgif_password`. Never commit the live file.
+
+When enabled, the supervisor restores the YSF2DMR service, the three DMR logins, and the protected one-talker bridge route after restarts. **Disconnect / Pause** writes `/var/lib/dvgateway/yorkshire-conference.paused`, preventing automatic reconnection until **Connect permanently** is selected. Rejected credentials are retried no more than once every five minutes.
+
+The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, booking only TG23530 as the static simplex talkgroup. The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
+
+The dashboard and Android app use registered DMR ID `2351633` on session/node 7 with ESSID `02` for manual FreeSTAR operation. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using DMR ID `2344399`, ESSID `01`, and TG23530.
+
 Networks are configured in `gateway.go` at line 544:
 
 ```go
@@ -141,6 +174,9 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
    - Vocoder Mode Toggle (SW/HW)
 
 2. **Network Configuration**
+   - Separate live-status card and indicator light for every configured network
+   - Green/amber/red/grey connection states with the active target TG
+   - Conference-managed FreeSTAR, BrandMeister and TGIF legs are visibly protected from accidental manual retuning
    - Target Network Selection
    - Talkgroup/Reflector Input
    - Password (for BrandMeister/FreeDMR)
@@ -232,6 +268,10 @@ AMBE Frame (9 bytes = 72 bits)
 
 ## 🔧 API Reference
 
+### AMBE Link Heartbeat
+
+`GET /api/vocoder/health` performs a live UDP probe of the configured DV30 server. It reports link state, round-trip time, hardware-active state, device product and firmware, uptime, encode/decode totals, and errors. The configured address is intentionally omitted from the response.
+
 ### WebSocket Commands (JSON)
 
 #### Connect to Network
@@ -274,7 +314,7 @@ AMBE Frame (9 bytes = 72 bits)
 ```json
 {
   "cmd": "set_dv30",
-  "addr": "192.168.1.100:2460"
+  "addr": "zx3de49.glddns.com:2468"
 }
 ```
 
@@ -353,7 +393,7 @@ AMBE Frame (9 bytes = 72 bits)
 **Symptoms**: Connected but poor audio quality
 
 **Solutions**:
-1. Test DV30 server: `echo -ne '\x61\x01' | nc -u 192.168.1.100 2460`
+1. Test DV30 server health: `printf '\x70' | nc -u -w1 zx3de49.glddns.com 2468`
 2. Verify IP:Port in Administration tab
 3. Check DV30 server is running
 4. Ensure network route to DV30 server

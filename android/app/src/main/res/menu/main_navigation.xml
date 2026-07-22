@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/nav_dashboard" android:icon="@android:drawable/ic_menu_view" android:title="Status" />
+    <item android:id="@+id/nav_link" android:icon="@android:drawable/ic_menu_send" android:title="Link" />
+    <item android:id="@+id/nav_conference" android:icon="@android:drawable/ic_menu_share" android:title="Bridge" />
+    <item android:id="@+id/nav_activity" android:icon="@android:drawable/ic_menu_recent_history" android:title="Activity" />
+    <item android:id="@+id/nav_settings" android:icon="@android:drawable/ic_menu_preferences" android:title="Settings" />
+</menu>
