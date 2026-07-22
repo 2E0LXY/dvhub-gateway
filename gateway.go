@@ -2499,12 +2499,14 @@ func (g *Gateway) configureYorkshireSession(id int, target, password string, con
 	// BrandMeister and TGIF hotspot accounts are registered against the base
 	// seven-digit DMR ID and reject the expanded value.
 	expectedRepeaterID := config.BridgeDMRID
+	expectedOptions := ""
 	if target == "FreeSTAR-SystemX-UK" {
 		expectedRepeaterID = config.BridgeDMRID*100 + config.BridgeESSID
+		expectedOptions = "TS2_1=23530;"
 	}
 	session.mu.RLock()
 	ready := session.Conn != nil && session.LinkActive && session.Mode == "DMR" && session.Target == target &&
-		session.TG == 23530 && session.DMRID == config.BridgeDMRID && session.RepeaterID == expectedRepeaterID
+		session.TG == 23530 && session.DMRID == config.BridgeDMRID && session.RepeaterID == expectedRepeaterID && session.Options == expectedOptions
 	recentRejection := !session.LinkActive && session.AuthStage == authDisconnected && !session.LastRejected.IsZero() && time.Since(session.LastRejected) < 5*time.Minute
 	session.mu.RUnlock()
 	if ready || recentRejection {
@@ -2522,7 +2524,7 @@ func (g *Gateway) configureYorkshireSession(id int, target, password string, con
 	session.Callsign = config.Callsign
 	session.DMRID = config.BridgeDMRID
 	session.RepeaterID = expectedRepeaterID
-	session.Options = ""
+	session.Options = expectedOptions
 	session.LinkActive = true
 	session.mu.Unlock()
 	g.beginDMRLogin(session)

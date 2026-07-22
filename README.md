@@ -129,6 +129,8 @@ The gateway can supervise a permanent, bidirectional YSF 23530 ↔ FreeSTAR ↔ 
 
 When enabled, the supervisor restores the YSF2DMR service, the three DMR logins, and the protected one-talker bridge route after restarts. **Disconnect / Pause** writes `/var/lib/dvgateway/yorkshire-conference.paused`, preventing automatic reconnection until **Connect permanently** is selected. Rejected credentials are retried no more than once every five minutes.
 
+The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, booking only TG23530 as the static simplex talkgroup. The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
+
 Networks are configured in `gateway.go` at line 544:
 
 ```go
