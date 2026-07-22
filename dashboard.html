@@ -803,7 +803,7 @@
         let isTransmitting = false;
         let totSeconds = 90;
         let totTimerObj = null;
-        let activeVocoder = 'sw';
+        let activeVocoder = 'hw';
         let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
         let callsignLookupTimer = null;
@@ -2027,7 +2027,11 @@
 
             const savedVoc = localStorage.getItem('dv_hub_voc');
             const savedHardwareReady = validVocoderAddress(dv30Config.addrA) && (dv30Config.count !== 2 || validVocoderAddress(dv30Config.addrB));
-            if (savedVoc === 'hw' && !savedHardwareReady) setVocoder('sw');
+            const hardwareMigrationDone = localStorage.getItem('dv_hub_hw_ready_v1') === '1';
+            if (!hardwareMigrationDone && savedHardwareReady) {
+                localStorage.setItem('dv_hub_hw_ready_v1', '1');
+                setVocoder('hw');
+            } else if (savedVoc === 'hw' && !savedHardwareReady) setVocoder('sw');
             else if (savedVoc) setVocoder(savedVoc);
             
             // Connect WebSocket

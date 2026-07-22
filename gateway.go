@@ -245,6 +245,7 @@ func main() {
 		gw.sessions[i].DV30Addr.Store(defaultDV30)
 		gw.sessions[i].DV30Addr2.Store((*net.UDPAddr)(nil))
 		gw.sessions[i].DV30Count.Store(1)
+		gw.sessions[i].UseHWVocoder.Store(true)
 		go gw.runUDPListener(gw.sessions[i])
 	}
 
@@ -1754,16 +1755,31 @@ func nextDV30Channel() byte {
 func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int) []byte {
 	conn := dv30Pool.Get().(*net.UDPConn)
 	defer dv30Pool.Put(conn)
+	// A request that exceeded its deadline can leave a late datagram on a
+	// pooled socket. Drain it before assigning that socket to a new channel.
+	conn.SetReadDeadline(time.Now())
+	stale := make([]byte, 512)
+	for {
+		if _, _, err := conn.ReadFromUDP(stale); err != nil {
+			break
+		}
+	}
 	if _, err := conn.WriteToUDP(request, target); err != nil {
 		return nil
 	}
-	conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	deadline := time.Now().Add(250 * time.Millisecond)
+	conn.SetReadDeadline(deadline)
 	resp := make([]byte, 512)
-	n, _, err := conn.ReadFromUDP(resp)
-	if err == nil && n >= minimumSize && resp[0] == replyOpcode && resp[1] == channel {
-		return resp[:n]
+	for {
+		n, peer, err := conn.ReadFromUDP(resp)
+		if err != nil {
+			return nil
+		}
+		if peer != nil && peer.IP.Equal(target.IP) && peer.Port == target.Port && n >= minimumSize && resp[0] == replyOpcode && resp[1] == channel {
+			return resp[:n]
+		}
+		conn.SetReadDeadline(deadline)
 	}
-	return nil
 }
 
 func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
