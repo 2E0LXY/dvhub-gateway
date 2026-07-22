@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="14dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TG23530 CONFERENCE" android:textColor="@color/dv_green" android:textSize="16sp" android:textStyle="bold" />
+        <TextView android:id="@+id/legStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:background="@drawable/bg_card" android:padding="12dp" android:text="Loading conference status…" android:textColor="@color/dv_text" />
+        <EditText android:id="@+id/ysfDmrId" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="YSF leg DMR ID" android:inputType="number" android:text="2351633" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/bridgeDmrId" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Bridge DMR ID" android:inputType="number" android:text="2344399" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/bridgeEssid" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Bridge ESSID" android:inputType="number" android:text="01" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/freestarPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="FreeSTAR master password" android:inputType="textPassword" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/bmPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="BrandMeister hotspot security password" android:inputType="textPassword" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/tgifPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="TGIF hotspot key / legacy password" android:inputType="textPassword" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <Button android:id="@+id/testConference" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Test for 60 seconds" />
+        <Button android:id="@+id/startConference" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Connect for 15 minutes" />
+        <Button android:id="@+id/stopConference" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Disconnect all" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="8dp" android:text="Passwords remain in memory only and are cleared when disconnected." android:textColor="@color/dv_muted" android:textSize="12sp" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="CUSTOM BRIDGE MATRIX" android:textColor="@color/dv_green" android:textSize="16sp" android:textStyle="bold" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Connect the required network legs on the Link page, then route two or three of them here." android:textColor="@color/dv_muted" />
+        <Spinner android:id="@+id/matrixNetworkA" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:background="@drawable/bg_card" />
+        <Spinner android:id="@+id/matrixTgA" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="4dp" android:background="@drawable/bg_card" />
+        <Spinner android:id="@+id/matrixNetworkB" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:background="@drawable/bg_card" />
+        <Spinner android:id="@+id/matrixTgB" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="4dp" android:background="@drawable/bg_card" />
+        <Spinner android:id="@+id/matrixNetworkC" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="8dp" android:background="@drawable/bg_card" />
+        <Spinner android:id="@+id/matrixTgC" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="4dp" android:background="@drawable/bg_card" />
+        <Button android:id="@+id/connectMatrix" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Connect matrix route" />
+        <Button android:id="@+id/disconnectMatrix" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Disconnect matrix route" />
+        <TextView android:id="@+id/matrixStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:padding="8dp" android:text="Matrix disconnected" android:textColor="@color/dv_muted" />
+    </LinearLayout>
+</ScrollView>

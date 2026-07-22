@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dv_background">#070B0F</color>
+    <color name="dv_surface">#0F161D</color>
+    <color name="dv_surface_alt">#151F28</color>
+    <color name="dv_green">#00E89D</color>
+    <color name="dv_green_dark">#006B4C</color>
+    <color name="dv_cyan">#35D8FF</color>
+    <color name="dv_warning">#FFC857</color>
+    <color name="dv_error">#FF5C6C</color>
+    <color name="dv_text">#EEF7F4</color>
+    <color name="dv_muted">#8CA39C</color>
+</resources>

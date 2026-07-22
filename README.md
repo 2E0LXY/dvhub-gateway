@@ -5,6 +5,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8.svg)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)
+[![Android](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml/badge.svg)](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml)
 
 A high-performance, production-ready gateway that bridges web browsers to DMR and YSF digital voice networks. Features a built-in AMBE+2 software vocoder achieving 85-90% quality, with optional hardware DV30 support for reference-quality audio.
 
@@ -54,6 +55,19 @@ go build -o dvhub-gateway gateway.go
 ```
 
 Access dashboard at `http://localhost:8080`
+
+### Android remote
+
+The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
+
+Build it with:
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+The APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions also uploads an installable debug APK for each Android build.
 
 ## 📦 Installation
 

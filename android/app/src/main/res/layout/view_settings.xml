@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:fillViewport="true">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="14dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="SECURE CONNECTION" android:textColor="@color/dv_green" android:textSize="16sp" android:textStyle="bold" />
+        <EditText android:id="@+id/serverUrl" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Gateway URL" android:inputType="textUri" android:text="https://194.146.49.25" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/username" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Gateway username" android:inputType="text" android:text="2E0LXY" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/password" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Gateway password" android:inputType="textPassword" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/callsign" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Callsign" android:inputType="textCapCharacters" android:text="2E0LXY" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <Button android:id="@+id/lookupCallsign" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Look up callsign and DMR IDs" />
+        <TextView android:id="@+id/lookupResult" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="8dp" android:text="Enter a callsign to confirm its registered IDs, name and location." android:textColor="@color/dv_cyan" />
+        <EditText android:id="@+id/dmrId" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="7-digit DMR ID" android:inputType="number" android:text="2344399" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/essid" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="ESSID 00-99" android:inputType="number" android:text="01" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <Button android:id="@+id/saveSettings" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:text="Save encrypted &amp; connect" />
+        <Button android:id="@+id/testSettings" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Test connection" />
+        <TextView android:id="@+id/settingsStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:padding="10dp" android:text="Credentials are encrypted using Android Keystore." android:textColor="@color/dv_muted" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="18dp" android:text="VOCODER HARDWARE" android:textColor="@color/dv_green" android:textSize="16sp" android:textStyle="bold" />
+        <Spinner android:id="@+id/dv30Count" android:layout_width="match_parent" android:layout_height="52dp" android:background="@drawable/bg_card" />
+        <EditText android:id="@+id/dv30Address1" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DV30 / DV3000 address 1 (host:port or serial)" android:inputType="text" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <EditText android:id="@+id/dv30Address2" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DV30 / DV3000 address 2 (optional)" android:inputType="text" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+        <Button android:id="@+id/useHardwareVocoder" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use DV30 / DV3000 hardware" />
+        <Button android:id="@+id/useSoftwareVocoder" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use software vocoder" />
+        <TextView android:id="@+id/vocoderStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:padding="8dp" android:text="Software vocoder selected" android:textColor="@color/dv_muted" />
+    </LinearLayout>
+</ScrollView>
