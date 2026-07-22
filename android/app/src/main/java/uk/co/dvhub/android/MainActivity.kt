@@ -312,6 +312,20 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
 
     override fun onJson(json: JsonObject) = runOnUiThread {
         val kind = first(json, "type", "event", "cmd") ?: ""
+        if (kind == "tx_status") {
+            when (first(json, "state")) {
+                "busy", "denied" -> {
+                    if (audioIsTransmitting()) endPtt()
+                    val reason = first(json, "reason") ?: "Transmit permission denied"
+                    link?.linkStatus?.text = reason
+                    toast(reason)
+                }
+                "active" -> if (!audioIsTransmitting()) {
+                    link?.linkStatus?.text = "RX only · transmitter in use by ${first(json, "callsign", "dmr_id") ?: "another operator"}"
+                }
+                "idle" -> if (!audioIsTransmitting()) updateLinkUi(link ?: return@runOnUiThread)
+            }
+        }
         if (kind.contains("traffic", true) || json.has("callsign") || json.has("source_id")) {
             val call = first(json,"callsign","source_callsign","call") ?: "Unknown"
             val id = first(json,"dmr_id","source_id","id") ?: "—"
