@@ -382,8 +382,8 @@
                             <span class="chip chip-ok" id="svc-gateway">RUNNING</span>
                         </div>
                         <div class="data-row">
-                            <span class="data-label">Network Link</span>
-                            <span class="chip chip-idle" id="svc-link">DISCONNECTED</span>
+                            <span class="data-label">TG23530 Conference</span>
+                            <span class="chip chip-idle" id="svc-link">CHECKING</span>
                         </div>
                         <div class="data-row">
                             <span class="data-label">Audio Pipeline</span>
@@ -429,64 +429,39 @@
                 </div>
             </div>
             
-            <!-- Bottom Row: Network Status & Radio Info -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                
-                <!-- Network Status (Info Only) -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <span>Network Status</span>
-                    </div>
-                    <div class="p-3 space-y-2">
-                        <div class="data-row">
-                            <span class="data-label">Connection State</span>
-                            <span class="chip chip-idle" id="net-status-display">DISCONNECTED</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Active Network</span>
-                            <span class="data-value" id="net-active-network">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Protocol</span>
-                            <span class="data-value" id="net-active-proto">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Target TG/REF</span>
-                            <span class="data-value" id="net-active-tg">-</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Last Activity</span>
-                            <span class="data-value" id="net-last-activity">Never</span>
-                        </div>
-                    </div>
+            <!-- Named network status overview -->
+            <div class="section-card">
+                <div class="section-header">
+                    <span>Network Connections</span>
+                    <span class="chip chip-idle" id="network-summary">CHECKING</span>
                 </div>
-                
-                <!-- Radio Info -->
-                <div class="section-card">
-                    <div class="section-header">
-                        <span>Radio Info</span>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 p-3">
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">FreeSTAR</span><span id="dash-freestar-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-freestar-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">System X UK · TG 23530</div>
                     </div>
-                    <div class="p-3 space-y-2">
-                        <div class="data-row">
-                            <span class="data-label">TX Frequency</span>
-                            <span class="data-value" id="radio-tx">430.2000 MHz</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">RX Frequency</span>
-                            <span class="data-value" id="radio-rx">430.2000 MHz</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Callsign</span>
-                            <span class="data-value" id="radio-call">M0ABC</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">DMR ID</span>
-                            <span class="data-value" id="radio-dmrid">2350000</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Mode</span>
-                            <span class="data-value" id="radio-mode">DMR</span>
-                        </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">BrandMeister</span><span id="dash-brandmeister-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-brandmeister-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">UK 2341 · TG 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">TGIF</span><span id="dash-tgif-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-tgif-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">TGIF Network · TG 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">YSF Bridge</span><span id="dash-ysf-led" class="status-indicator status-idle"></span></div>
+                        <span id="dash-ysf-state" class="chip chip-idle">CHECKING</span>
+                        <div class="text-[8px] text-gray-500">Yorkshire Link · REF 23530</div>
+                    </div>
+                    <div class="border border-gray-800 bg-gray-950/40 p-3 space-y-2">
+                        <div class="flex items-center justify-between"><span class="text-green-400 font-bold">Manual / App</span><span id="dash-manual-led" class="status-indicator status-idle"></span></div>
+                        <span id="svc-manual-link" class="chip chip-idle">DISCONNECTED</span>
+                        <div class="text-[8px] text-gray-500"><span id="net-active-network">No manual link</span> · <span id="net-active-proto">—</span> · <span id="net-active-tg">—</span></div>
+                        <span id="net-status-display" class="hidden">DISCONNECTED</span>
+                        <span id="net-last-activity" class="hidden">Never</span>
                     </div>
                 </div>
             </div>
@@ -1163,14 +1138,6 @@
             }
         }
         
-        function updateRadioInfo() {
-            document.getElementById('radio-call').innerText = config.callsign;
-            document.getElementById('radio-dmrid').innerText = config.dmrID;
-            document.getElementById('radio-tx').innerText = config.txFreq + ' MHz';
-            document.getElementById('radio-rx').innerText = config.rxFreq + ' MHz';
-            document.getElementById('radio-mode').innerText = linkState.proto;
-        }
-
         const workletCode = `
             class DVProcessor extends AudioWorkletProcessor {
                 constructor() {
@@ -1351,8 +1318,26 @@
         function networkStateClass(state) {
             if (state === 'connected') return 'status-indicator status-ok';
             if (state === 'connecting') return 'status-indicator status-warn';
-            if (state === 'rejected') return 'status-indicator status-err';
+            if (state === 'rejected' || state === 'error') return 'status-indicator status-err';
             return 'status-indicator status-idle';
+        }
+
+        function networkChipClass(state) {
+            if (state === 'connected') return 'chip chip-ok';
+            if (state === 'connecting') return 'chip chip-warn';
+            if (state === 'rejected' || state === 'error') return 'chip chip-err';
+            return 'chip chip-idle';
+        }
+
+        function setDashboardNetworkState(name, state) {
+            const normalized = String(state || 'disconnected').toLowerCase();
+            const led = document.getElementById(`dash-${name}-led`);
+            const chip = document.getElementById(`dash-${name}-state`);
+            if (led) led.className = networkStateClass(normalized);
+            if (chip) {
+                chip.className = networkChipClass(normalized);
+                chip.textContent = normalized.toUpperCase();
+            }
         }
 
         function renderNetworkNode(nodeID) {
@@ -1371,6 +1356,25 @@
             liveNodeStates = {};
             (data.nodes || []).forEach(node => { liveNodeStates[Number(node.id)] = node; });
             [1, 2, 3, 4, 5, 7].forEach(renderNetworkNode);
+
+            setDashboardNetworkState('freestar', liveNodeStates[1]?.state);
+            setDashboardNetworkState('brandmeister', liveNodeStates[2]?.state);
+            setDashboardNetworkState('tgif', liveNodeStates[4]?.state);
+
+            const manualNodes = Object.values(liveNodeStates).filter(node => !node.conference_managed);
+            const selectedNode = manualNodes.find(node => node.state === 'connected')
+                || manualNodes.find(node => node.state === 'connecting')
+                || manualNodes.find(node => node.state === 'rejected')
+                || null;
+            const selectedState = String(selectedNode?.state || 'disconnected').toLowerCase();
+            const manualChip = document.getElementById('svc-manual-link');
+            document.getElementById('dash-manual-led').className = networkStateClass(selectedState);
+            manualChip.className = networkChipClass(selectedState);
+            manualChip.textContent = selectedState.toUpperCase();
+            document.getElementById('net-status-display').textContent = selectedState.toUpperCase();
+            document.getElementById('net-active-network').textContent = selectedNode?.network || 'No manual link';
+            document.getElementById('net-active-proto').textContent = selectedNode?.mode || '—';
+            document.getElementById('net-active-tg').textContent = Number(selectedNode?.talkgroup) > 0 ? `TG ${selectedNode.talkgroup}` : '—';
 
             const freeSTARState = liveNodeStates[1]?.state === 'connected' || liveNodeStates[7]?.state === 'connected'
                 ? 'connected' : (liveNodeStates[1]?.state === 'connecting' || liveNodeStates[7]?.state === 'connecting' ? 'connecting' : 'disconnected');
@@ -1475,7 +1479,6 @@
             localStorage.setItem('dv_hub_callsign', config.callsign);
             localStorage.setItem('dv_hub_dmrid', config.dmrID);
             localStorage.setItem('dv_hub_essid', config.essid);
-            updateRadioInfo();
             saveLinkState();
         }
 
@@ -1614,7 +1617,17 @@
                 document.getElementById('yorkshire-freestar-state').textContent = data.freestar || 'Disconnected';
                 document.getElementById('yorkshire-bm-state').textContent = data.brandmeister || 'Disconnected';
                 document.getElementById('yorkshire-tgif-state').textContent = data.tgif || 'Disconnected';
+                setDashboardNetworkState('freestar', data.freestar);
+                setDashboardNetworkState('brandmeister', data.brandmeister);
+                setDashboardNetworkState('tgif', data.tgif);
+                setDashboardNetworkState('ysf', data.ysf2dmr ? 'connected' : 'disconnected');
+                const conferenceChip = document.getElementById('svc-link');
+                const summaryChip = document.getElementById('network-summary');
                 if (data.ready) {
+                    conferenceChip.className = 'chip chip-ok';
+                    conferenceChip.textContent = 'ALL ONLINE';
+                    summaryChip.className = 'chip chip-ok';
+                    summaryChip.textContent = '4 / 4 CONNECTED';
                     if (data.permanent) {
                         setYorkshireMessage('Permanent TG23530 conference is online. YSF, FreeSTAR, BrandMeister and TGIF are linked bidirectionally with automatic recovery.', 'text-green-400');
                     } else {
@@ -1627,11 +1640,23 @@
                     if (data.brandmeister !== 'connected') missing.push('BrandMeister');
                     if (data.tgif !== 'connected') missing.push('TGIF');
                     if (!data.ysf2dmr) missing.push('YSF converter');
+                    conferenceChip.className = 'chip chip-warn';
+                    conferenceChip.textContent = 'PARTIAL';
+                    summaryChip.className = 'chip chip-warn';
+                    summaryChip.textContent = `${4 - missing.length} / 4 CONNECTED`;
                     setYorkshireMessage(`Partial connection: ${missing.join(', ')} not ready. No complete conference path is available.`, 'text-yellow-400');
                 } else if (!data.ysf2dmr && data.freestar === 'disconnected' && data.brandmeister === 'disconnected' && data.tgif === 'disconnected') {
+                    conferenceChip.className = 'chip chip-idle';
+                    conferenceChip.textContent = 'OFFLINE';
+                    summaryChip.className = 'chip chip-idle';
+                    summaryChip.textContent = '0 / 4 CONNECTED';
                     setYorkshireMessage('Idle. No Yorkshire conference connections are active.', 'text-gray-400');
                 }
             } catch (_) {
+                document.getElementById('svc-link').className = 'chip chip-err';
+                document.getElementById('svc-link').textContent = 'STATUS ERROR';
+                document.getElementById('network-summary').className = 'chip chip-err';
+                document.getElementById('network-summary').textContent = 'UNAVAILABLE';
                 setYorkshireMessage('Unable to read conference status.', 'text-red-400');
             }
         }
@@ -1725,7 +1750,7 @@
         async function toggleConnection() {
             linkState.active = !linkState.active;
             const btn = document.getElementById('btn-toggle-link');
-            const status = document.getElementById('svc-link');
+            const status = document.getElementById('svc-manual-link');
             const pttBtn = document.getElementById('btn-ptt');
 
             updateNetworkPassword();
@@ -1765,9 +1790,6 @@
                 netActiveNetwork.innerText = linkState.net;
                 netActiveProto.innerText = linkState.proto;
                 netActiveTG.innerText = linkState.proto === 'DMR' ? 'TG ' + linkState.tg : 'REF ' + linkState.tg;
-                
-                // Update radio mode
-                document.getElementById('radio-mode').innerText = linkState.proto;
                 
                 document.getElementById('sel-network').disabled = true;
                 document.getElementById('inp-net-pass').disabled = true;
@@ -1886,7 +1908,7 @@
 			liveNodeStates[Number(msg.node_id)] = { ...(liveNodeStates[Number(msg.node_id)] || {}), state: msg.state, network: msg.network };
 			renderNetworkNode(Number(msg.node_id));
             if (msg.node_id !== linkState.id) return;
-            const serviceStatus = document.getElementById('svc-link');
+            const serviceStatus = document.getElementById('svc-manual-link');
             const networkStatus = document.getElementById('net-status-display');
             const loginMessage = document.getElementById('network-login-message');
             const button = document.getElementById('btn-toggle-link');
@@ -1920,6 +1942,7 @@
                 setNetworkControlsDisabled(false);
                 if (isTransmitting) stopTX();
             }
+            document.getElementById('dash-manual-led').className = networkStateClass(msg.state);
             saveLinkState();
         }
 
@@ -2207,7 +2230,6 @@
             updateYSFIdentity();
             refreshYorkshireStatus();
             refreshNetworkOverview();
-            updateRadioInfo();
             document.getElementById('inp-callsign').value = config.callsign;
             document.getElementById('inp-dmr-id').value = config.dmrID;
             document.getElementById('inp-essid').value = config.essid;
