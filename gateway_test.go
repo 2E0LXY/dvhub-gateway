@@ -1,8 +1,10 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDMRFingerprintIgnoresNetworkRewrites(t *testing.T) {
@@ -19,6 +21,61 @@ func TestDMRFingerprintIgnoresNetworkRewrites(t *testing.T) {
 	frameB[20] ^= 0xff
 	if dmrFingerprint(frameA) == dmrFingerprint(frameB) {
 		t.Fatal("fingerprint did not change when encoded payload changed")
+	}
+}
+
+func TestDV30NetworkEncodeAndDecode(t *testing.T) {
+	server, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	server.SetDeadline(time.Now().Add(2 * time.Second))
+	done := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, 512)
+		for requestNumber := 0; requestNumber < 2; requestNumber++ {
+			n, client, readErr := server.ReadFromUDP(buffer)
+			if readErr != nil {
+				done <- readErr
+				return
+			}
+			switch buffer[0] {
+			case 0x61:
+				if n != 322 {
+					done <- &net.AddrError{Err: "invalid encode request", Addr: client.String()}
+					return
+				}
+				_, readErr = server.WriteToUDP(append([]byte{0x62, buffer[1]}, []byte{1, 2, 3, 4, 5, 6, 7, 8, 9}...), client)
+			case 0x63:
+				if n != 11 {
+					done <- &net.AddrError{Err: "invalid decode request", Addr: client.String()}
+					return
+				}
+				_, readErr = server.WriteToUDP(append([]byte{0x64, buffer[1]}, make([]byte, 320)...), client)
+			default:
+				done <- &net.AddrError{Err: "unknown opcode", Addr: client.String()}
+				return
+			}
+			if readErr != nil {
+				done <- readErr
+				return
+			}
+		}
+		done <- nil
+	}()
+
+	target := server.LocalAddr().(*net.UDPAddr)
+	encoded := encodeDV30(make([]byte, 320), target, 1)
+	if string(encoded) != string([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9}) {
+		t.Fatalf("unexpected hardware encode result: %x", encoded)
+	}
+	decoded := decodeDV30(encoded, target, 1)
+	if len(decoded) != 320 {
+		t.Fatalf("hardware decode returned %d bytes, want 320", len(decoded))
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

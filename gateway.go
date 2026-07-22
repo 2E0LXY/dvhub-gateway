@@ -1234,7 +1234,16 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 
 			// Decode voice to PCM
 			if len(pcmData) > 0 {
-				decodedPCM := decodeMBE(pcmData)
+				var decodedPCM []byte
+				if s.UseHWVocoder.Load() {
+					dv30Addr := s.DV30Addr.Load().(*net.UDPAddr)
+					if dv30Addr != nil {
+						decodedPCM = decodeDV30(pcmData, dv30Addr, s.ID)
+					}
+				}
+				if len(decodedPCM) == 0 {
+					decodedPCM = decodeMBE(pcmData)
+				}
 
 				// Send to all connected browsers
 				g.mu.Lock()
@@ -1599,27 +1608,56 @@ var dv30Pool = sync.Pool{
 	},
 }
 
-func encodeDV30(pcm []byte, target *net.UDPAddr, channel int) []byte {
+var dv30RequestID atomic.Uint32
+
+func nextDV30Channel() byte {
+	return byte(dv30RequestID.Add(1))
+}
+
+func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int) []byte {
 	conn := dv30Pool.Get().(*net.UDPConn)
 	defer dv30Pool.Put(conn)
-
-	// DV30 protocol: 0x61 (encode request) + channel + PCM
-	req := make([]byte, 1+1+len(pcm))
-	req[0] = 0x61
-	req[1] = byte(channel)
-	copy(req[2:], pcm)
-
-	conn.WriteToUDP(req, target)
-	conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-
-	resp := make([]byte, 32)
+	if _, err := conn.WriteToUDP(request, target); err != nil {
+		return nil
+	}
+	conn.SetReadDeadline(time.Now().Add(60 * time.Millisecond))
+	resp := make([]byte, 512)
 	n, _, err := conn.ReadFromUDP(resp)
-	if err == nil && n > 2 && resp[0] == 0x62 {
-		return resp[2:n] // Return AMBE data
+	if err == nil && n >= minimumSize && resp[0] == replyOpcode && resp[1] == channel {
+		return resp[:n]
+	}
+	return nil
+}
+
+func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
+	if len(pcm) != 320 {
+		return encodeMBE(pcm)
+	}
+	channel := nextDV30Channel()
+	request := make([]byte, 2+len(pcm))
+	request[0], request[1] = 0x61, channel
+	copy(request[2:], pcm)
+	if response := exchangeDV30(request, target, 0x62, channel, 11); response != nil {
+		return append([]byte(nil), response[2:11]...)
 	}
 
-	// Fallback to software if HW fails
+	// Fallback to software if HW fails.
 	return encodeMBE(pcm)
+}
+
+func decodeDV30(ambe []byte, target *net.UDPAddr, _ int) []byte {
+	if len(ambe) != 9 {
+		return decodeMBE(ambe)
+	}
+	channel := nextDV30Channel()
+	request := make([]byte, 2+len(ambe))
+	request[0], request[1] = 0x63, channel
+	copy(request[2:], ambe)
+	if response := exchangeDV30(request, target, 0x64, channel, 322); response != nil {
+		return append([]byte(nil), response[2:322]...)
+	}
+
+	return decodeMBE(ambe)
 }
 
 // ============================================================================

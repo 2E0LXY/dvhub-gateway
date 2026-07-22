@@ -44,3 +44,7 @@ android/local.properties
 android/**/build/
 android/*.apk
 android/*.aab
+
+# Python generated files
+__pycache__/
+*.py[cod]

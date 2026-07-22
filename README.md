@@ -13,6 +13,7 @@ A high-performance, production-ready gateway that bridges web browsers to DMR an
 
 ### Core Capabilities
 - **Dual Vocoder System**: Software AMBE+2 codec (pure Go) + optional DV30 hardware support
+- **Remote DV30 Server**: Secure-overlay support for a USB DVstick 30 on another Linux machine, with hardware TX encoding and RX decoding
 - **Multi-Protocol**: DMR (ETSI TS 102 361) and YSF (C4FM) framing
 - **Web Interface**: Modern cyberpunk-themed dashboard with real-time traffic monitoring
 - **Low Latency**: <30ms TX, <100ms RX end-to-end
@@ -70,6 +71,10 @@ cd android
 ```
 
 The local APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. Generated build output is not committed to Git; installable builds are published under [GitHub Releases](https://github.com/2E0LXY/dvhub-gateway/releases), and GitHub Actions uploads an artifact for each Android build.
+
+### Remote DV30 / AMBE server
+
+The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it to the public gateway over Tailscale or WireGuard. It supports hardware AMBE encode and decode and restricts requests to the configured gateway VPN address.
 
 ## 📦 Installation
 
