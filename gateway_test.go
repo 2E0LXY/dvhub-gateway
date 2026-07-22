@@ -115,6 +115,19 @@ func TestBridgeEndpointsIncludesOptionalConferenceLeg(t *testing.T) {
 	}
 }
 
+func TestConferenceRepeaterIDUsesESSIDWhereRequired(t *testing.T) {
+	const baseID uint32 = 2344399
+	if got := conferenceRepeaterID("BrandMeister-UK-2341", baseID, 1); got != 234439901 {
+		t.Fatalf("BrandMeister repeater ID = %d, want 234439901", got)
+	}
+	if got := conferenceRepeaterID("FreeSTAR-SystemX-UK", baseID, 1); got != 234439901 {
+		t.Fatalf("FreeSTAR repeater ID = %d, want 234439901", got)
+	}
+	if got := conferenceRepeaterID("TGIF", baseID, 1); got != baseID {
+		t.Fatalf("TGIF repeater ID = %d, want %d", got, baseID)
+	}
+}
+
 func TestParseDV30AddressAcceptsHostnameURLAndRejectsEmpty(t *testing.T) {
 	if parseDV30Address("") != nil {
 		t.Fatal("empty DV30 address was accepted")

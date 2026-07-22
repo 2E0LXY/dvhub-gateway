@@ -1202,8 +1202,8 @@ func (g *Gateway) sendDMRConfig(s *UserSession) {
 	repeaterID := s.RepeaterID
 	s.mu.RUnlock()
 	config := fmt.Sprintf("%-8.8s%09d%09d%02d%02d%8.8s%9.9s%03d%-20.20s%-19.19s%c%-124.124s%-40.40s%-40.40s",
-		callsign, 430200000, 430200000, 1, 1, "0.000000", "0.000000", 0,
-		"United Kingdom", "Yorkshire Link HUB", '4', "https://194.146.49.25", "Yorkshire Link HUB 2.0", "MMDVM")
+		callsign, 435000000, 435000000, 1, 1, "53.80000", "-1.500000", 0,
+		"Yorkshire, UK", "Yorkshire Link HUB", '4', "https://ai.2e0lxy.uk", "20260722", "MMDVM")
 	packet := append([]byte("RPTC"), writeUint32BE(repeaterID)...)
 	packet = append(packet, []byte(config)...)
 	_ = g.writeNetworkPacket(s, packet)
@@ -2515,18 +2515,23 @@ Enable=0
 	return os.WriteFile(ysf2dmrConfigPath, []byte(runtimeConfig), 0600)
 }
 
+func conferenceRepeaterID(target string, dmrID, essid uint32) uint32 {
+	if target == "FreeSTAR-SystemX-UK" || target == "BrandMeister-UK-2341" {
+		return dmrID*100 + essid
+	}
+	return dmrID
+}
+
 func (g *Gateway) configureYorkshireSession(id int, target, password string, config YorkshireConferenceConfig) error {
 	session := g.sessionByID(id)
 	if session == nil {
 		return fmt.Errorf("conference node %d is unavailable", id)
 	}
-	// FreeSTAR accepts the MMDVM-style ESSID-expanded repeater identity. The
-	// BrandMeister and TGIF hotspot accounts are registered against the base
-	// seven-digit DMR ID and reject the expanded value.
-	expectedRepeaterID := config.BridgeDMRID
+	// FreeSTAR and BrandMeister identify hotspot instances using the
+	// seven-digit DMR ID followed by the configured two-digit ESSID.
+	expectedRepeaterID := conferenceRepeaterID(target, config.BridgeDMRID, config.BridgeESSID)
 	expectedOptions := ""
 	if target == "FreeSTAR-SystemX-UK" {
-		expectedRepeaterID = config.BridgeDMRID*100 + config.BridgeESSID
 		expectedOptions = "TS2_1=23530;"
 	}
 	session.mu.RLock()
