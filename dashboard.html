@@ -366,7 +366,11 @@
                         </div>
                         <div class="data-row">
                             <span class="data-label">CPU Temp</span>
-                            <span class="data-value" id="hw-temp">48°C</span>
+                            <span class="data-value" id="hw-temp">CHECKING</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Telemetry Updated</span>
+                            <span class="data-value" id="hw-updated">WAITING</span>
                         </div>
                     </div>
                 </div>
@@ -1090,9 +1094,19 @@
             }
         }
         
+        let systemStatsBusy = false;
+        let systemStatsTimer = null;
+
         async function updateSystemStats() {
+            if (systemStatsBusy) return;
+            systemStatsBusy = true;
             try {
-                const response = await fetch('/api/system', { cache: 'no-store', credentials: 'include' });
+                // The timestamp also defeats intermediary/browser caches which do not
+                // consistently honour cache: no-store for repeated authenticated GETs.
+                const response = await fetch('/api/system?_=' + Date.now(), {
+                    cache: 'no-store',
+                    credentials: 'include'
+                });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const stats = await response.json();
 
@@ -1102,11 +1116,21 @@
                 document.getElementById('hw-cpu').innerText = Number(stats.cpu_load).toFixed(1) + '%';
                 document.getElementById('hw-temp').innerText = Number.isFinite(stats.temp_c)
                     ? Number(stats.temp_c).toFixed(1) + '°C'
-                    : '-';
+                    : 'NOT EXPOSED BY VPS';
+                document.getElementById('hw-updated').innerText = new Date().toLocaleTimeString();
             } catch (err) {
                 console.error('[SYS] Telemetry update failed:', err);
                 document.getElementById('hw-cpu').innerText = '-';
+                document.getElementById('hw-updated').innerText = 'UPDATE FAILED';
+            } finally {
+                systemStatsBusy = false;
             }
+        }
+
+        async function pollSystemStats() {
+            await updateSystemStats();
+            clearTimeout(systemStatsTimer);
+            systemStatsTimer = setTimeout(pollSystemStats, 5000);
         }
 
         async function updateAMBEHeartbeat() {
@@ -2223,7 +2247,7 @@
 
         window.onload = () => {
             // Initialize system info
-            updateSystemInfo();
+            pollSystemStats();
             updateAMBEHeartbeat();
             updateYSFStatus();
             updateYSFDashboard();
@@ -2237,8 +2261,8 @@
             populateBridgeTalkgroups('a');
             populateBridgeTalkgroups('b');
             
-            // Update server telemetry every 5 seconds
-            setInterval(updateSystemStats, 5000);
+            // Other live status feeds. System telemetry schedules its next poll only
+            // after the current request finishes, so a slow request cannot stall it.
             setInterval(updateAMBEHeartbeat, 5000);
             setInterval(updateYSFStatus, 15000);
             setInterval(updateYSFIdentity, 15000);
@@ -2314,6 +2338,10 @@
                 document.getElementById('clock').innerText = now.toISOString().split('T')[1].split('.')[0] + ' UTC'; 
             }, 1000);
         };
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) pollSystemStats();
+        });
     </script>
 </body>
 </html>
