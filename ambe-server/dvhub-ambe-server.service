@@ -1,5 +1,5 @@
 [Unit]
-Description=DVHub DV30 AMBE Server
+Description=Yorkshire Link HUB DV30 AMBE Server
 After=network-online.target
 Wants=network-online.target
 
