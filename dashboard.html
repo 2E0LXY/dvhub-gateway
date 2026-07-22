@@ -750,11 +750,11 @@
                             <div><label class="text-gray-500 uppercase block mb-1">BrandMeister hotspot password</label><input type="password" class="input-cyber" id="yorkshire-bm-pass" autocomplete="new-password" placeholder="Required"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">TGIF hotspot key / legacy password</label><input type="password" class="input-cyber" id="yorkshire-tgif-pass" autocomplete="new-password" placeholder="Security key or legacy password"></div>
                         </div>
-                        <div id="yorkshire-message" class="text-gray-400">Idle. Credentials are kept only for the active session and erased on disconnect.</div>
+                        <div id="yorkshire-message" class="text-gray-400">Idle. Permanent-mode credentials are encrypted in transit and stored only in the protected server configuration.</div>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <button id="btn-yorkshire-test" class="btn-cyber" onclick="startYorkshireConference(true)">TEST FOR 60 SECONDS</button>
-                            <button id="btn-yorkshire-start" class="btn-cyber" onclick="startYorkshireConference(false)">CONNECT FOR 15 MINUTES</button>
-                            <button id="btn-yorkshire-stop" class="btn-cyber danger" onclick="stopYorkshireConference()">DISCONNECT ALL</button>
+                            <button id="btn-yorkshire-start" class="btn-cyber" onclick="startYorkshireConference(false)">CONNECT PERMANENTLY</button>
+                            <button id="btn-yorkshire-stop" class="btn-cyber danger" onclick="stopYorkshireConference()">DISCONNECT / PAUSE</button>
                         </div>
                     </div>
                 </div>
@@ -1447,8 +1447,12 @@
                 document.getElementById('yorkshire-bm-state').textContent = data.brandmeister || 'Disconnected';
                 document.getElementById('yorkshire-tgif-state').textContent = data.tgif || 'Disconnected';
                 if (data.ready) {
-                    const expiry = data.expires_at ? new Date(data.expires_at).toLocaleTimeString() : 'safety timer';
-                    setYorkshireMessage(`All TG23530 conference legs are ready; automatic disconnect at ${expiry}.`, 'text-green-400');
+                    if (data.permanent) {
+                        setYorkshireMessage('Permanent TG23530 conference is online. YSF, FreeSTAR, BrandMeister and TGIF are linked bidirectionally with automatic recovery.', 'text-green-400');
+                    } else {
+                        const expiry = data.expires_at ? new Date(data.expires_at).toLocaleTimeString() : 'safety timer';
+                        setYorkshireMessage(`All TG23530 conference legs are ready; automatic disconnect at ${expiry}.`, 'text-green-400');
+                    }
                 } else if (data.active || data.ysf2dmr) {
                     const missing = [];
                     if (data.freestar !== 'connected') missing.push('FreeSTAR');
@@ -1465,6 +1469,23 @@
         }
 
         async function startYorkshireConference(testOnly) {
+            if (!testOnly) {
+                setYorkshireMessage('Starting the permanent TG23530 conference…', 'text-yellow-400');
+                try {
+                    const response = await fetch('/api/yorkshire_conference', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                        body: JSON.stringify({ action: 'permanent' })
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(result.error || 'Unable to start permanent conference');
+                    clearYorkshirePasswords();
+                    await refreshYorkshireStatus();
+                    setTimeout(refreshYorkshireStatus, 2500);
+                } catch (error) {
+                    setYorkshireMessage(error.message, 'text-red-400');
+                }
+                return;
+            }
             updateDMRIdentity();
             const ysfID = Number(document.getElementById('yorkshire-ysf-id').value);
             const bridgeID = Number(document.getElementById('yorkshire-bridge-id').value);
@@ -1480,7 +1501,7 @@
             try {
                 const response = await fetch('/api/yorkshire_conference', {
                     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
-                    body: JSON.stringify({ action: testOnly ? 'test' : 'start', callsign: config.callsign, dmr_id: ysfID, duration_seconds: testOnly ? 60 : 900 })
+                    body: JSON.stringify({ action: 'test', callsign: config.callsign, dmr_id: ysfID, duration_seconds: 60 })
                 });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || 'Unable to start conference');
@@ -1489,8 +1510,8 @@
                 sendYorkshireEndpoint(2, 'BrandMeister-UK-2341', bmPassword, bridgeID, repeaterID, true);
                 sendYorkshireEndpoint(4, 'TGIF', tgifPassword, bridgeID, repeaterID, true);
                 ws.send(JSON.stringify({ cmd: 'bridge_state', active: true, a_node: 1, a_tg: 23530, b_node: 2, b_tg: 23530, c_node: 4, c_tg: 23530 }));
-                setYorkshireMessage(testOnly ? '60-second login test running; no audio will be transmitted.' : 'Authenticating TG23530 endpoints; automatic disconnect is limited to 15 minutes.', 'text-yellow-400');
-                setTimeout(() => { clearYorkshirePasswords(); refreshYorkshireStatus(); }, (testOnly ? 61 : 901) * 1000);
+                setYorkshireMessage('60-second login test running; no audio will be transmitted.', 'text-yellow-400');
+                setTimeout(() => { clearYorkshirePasswords(); refreshYorkshireStatus(); }, 61 * 1000);
                 setTimeout(refreshYorkshireStatus, 2500);
             } catch (error) {
                 setYorkshireMessage(error.message, 'text-red-400');

@@ -61,7 +61,7 @@ Access dashboard at `http://localhost:8080`
 
 The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
 
-**[Download Yorkshire Link HUB 1.0.3 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.3/Yorkshire-Link-HUB-1.0.3.apk)**
+**[Download the latest Yorkshire Link HUB APK](https://github.com/2E0LXY/dvhub-gateway/releases)**
 
 Build it with:
 
@@ -122,6 +122,12 @@ localStorage.setItem('dv_hub_rx_freq', '430.2000');
 ### Network Configuration
 
 BrandMeister API v2 credentials are stored only on the gateway at `/etc/dvhub/brandmeister-api.token` with `root:dvhub` ownership and mode `0640`. The dashboard reports only whether the credential is configured and verified; the JWT is never returned to a browser, written to logs, or committed to Git. This API credential is separate from the BrandMeister hotspot-security password used by the DMR master protocol.
+
+### Permanent Yorkshire TG23530 conference
+
+The gateway can supervise a permanent, bidirectional YSF 23530 ↔ FreeSTAR ↔ BrandMeister/TGIF conference. Its credentials live only in `/etc/dvhub/yorkshire-conference.json`; use `root:dvhub` ownership and mode `0640`. Required JSON fields are `enabled`, `callsign`, `ysf_dmr_id`, `bridge_dmr_id`, `bridge_essid`, `brandmeister_password`, and `tgif_password`. Never commit the live file.
+
+When enabled, the supervisor restores the YSF2DMR service, the three DMR logins, and the protected one-talker bridge route after restarts. **Disconnect / Pause** writes `/var/lib/dvgateway/yorkshire-conference.paused`, preventing automatic reconnection until **Connect permanently** is selected. Rejected credentials are retried no more than once every five minutes.
 
 Networks are configured in `gateway.go` at line 544:
 

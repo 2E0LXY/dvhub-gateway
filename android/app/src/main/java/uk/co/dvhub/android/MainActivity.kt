@@ -139,7 +139,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         val b = ViewConferenceBinding.inflate(layoutInflater); conference = b; replace(b.root)
         b.ysfDmrId.setText("2351633"); b.bridgeDmrId.setText(settings.dmrId); b.bridgeEssid.setText(settings.essid)
         b.testConference.setOnClickListener { startConference(b, 60, "test") }
-        b.startConference.setOnClickListener { startConference(b, 900, "start") }
+        b.startConference.setOnClickListener { startPermanentConference(b) }
         b.stopConference.setOnClickListener { stopConference(b) }
         setupMatrix(b)
         refreshStatus(); return true
@@ -166,6 +166,17 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                     b.bmPassword.text.clear(); b.tgifPassword.text.clear()
                     b.legStatus.text = "Conference test active · TG 23530 · automatic stop in ${seconds}s"
                 }, 800)
+            }
+        } }
+    }
+
+    private fun startPermanentConference(b: ViewConferenceBinding) {
+        b.legStatus.text = "Starting permanent TG23530 conference…"
+        client.post("/api/yorkshire_conference", JsonObject().apply { addProperty("action", "permanent") }) { result -> runOnUiThread {
+            result.onFailure { toast(it.message ?: "Conference failed") }.onSuccess {
+                b.bmPassword.text.clear(); b.tgifPassword.text.clear()
+                b.legStatus.text = "Permanent TG23530 conference starting · automatic recovery enabled"
+                handler.postDelayed({ refreshStatus() }, 2500)
             }
         } }
     }
@@ -305,7 +316,10 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private fun systemText(j: JsonObject): String = "Host ${first(j,"hostname","host") ?: "gateway"}  ·  CPU ${first(j,"cpu_load","cpu","load") ?: "—"}%\nMemory ${first(j,"memory","memory_used","ram") ?: "—"}  ·  Uptime ${first(j,"uptime") ?: "—"}"
     private fun servicesText(j: JsonObject): String = "Gateway ${deep(j,"dvhub-gateway") ?: deep(j,"gateway") ?: "online"}  ·  YSF ${deep(j,"ysfreflector") ?: "—"}  ·  Caddy ${deep(j,"caddy") ?: "—"}"
     private fun ysfText(j: JsonObject): String = "${first(j,"name","reflector_name") ?: "Yorkshire Link HUB"}  ·  ID ${first(j,"id","reflector_id","number") ?: "not registered"}\nStatus ${first(j,"status","state") ?: "—"}  ·  Clients ${first(j,"clients","client_count","connected_count") ?: "0"}  ·  TX today ${first(j,"transmissions_today") ?: "0"}\n${first(j,"host") ?: settings.serverUrl} : ${first(j,"port") ?: "42000"}  ·  Uptime ${first(j,"uptime_seconds") ?: "—"}s"
-    private fun conferenceText(j: JsonObject): String = "Conference ${first(j,"active","status","state") ?: "inactive"} · TG ${first(j,"tg","talkgroup") ?: "23530"}\nYSF ${deep(j,"ysf") ?: "—"} · FreeSTAR ${deep(j,"freestar") ?: "—"} · BM ${deep(j,"brandmeister") ?: "—"} · TGIF ${deep(j,"tgif") ?: "—"}"
+    private fun conferenceText(j: JsonObject): String {
+        val mode = if (j.get("permanent")?.asBoolean == true) "permanent" else "temporary"
+        return "Conference ${first(j,"active","status","state") ?: "inactive"} · $mode · TG ${first(j,"tg","talkgroup") ?: "23530"}\nYSF ${deep(j,"ysf") ?: "—"} · FreeSTAR ${deep(j,"freestar") ?: "—"} · BM ${deep(j,"brandmeister") ?: "—"} · TGIF ${deep(j,"tgif") ?: "—"}"
+    }
 
     override fun onConnection(connected: Boolean, message: String) = runOnUiThread {
         shell.connectionBadge.text = if (connected) "ONLINE" else "OFFLINE"

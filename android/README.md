@@ -13,7 +13,7 @@ Native Android controller for the 2E0LXY DVHub gateway. It uses the gateway's au
 3. In **Settings**, enter the HTTPS gateway URL, Basic Auth login, callsign, DMR ID and ESSID, then tap **Save encrypted & connect**.
 4. Android asks for microphone permission the first time **HOLD TO TALK** is pressed.
 
-Gateway credentials are encrypted with a non-exportable Android Keystore key. BrandMeister, TGIF, FreeSTAR and other network passwords are used only for the current screen/session and are cleared from the conference form after connection.
+Gateway credentials are encrypted with a non-exportable Android Keystore key. Passwords entered for individual or 60-second test connections are used only for the current screen/session and cleared afterward. Permanent conference mode uses the gateway's protected server-side configuration and never downloads those network passwords to Android.
 
 ## Radio operation
 

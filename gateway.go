@@ -39,6 +39,8 @@ const (
 	ysf2dmrConfigPath      = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
 	dmrHostsPath           = "/var/lib/dvgateway/DMR_Hosts.txt"
 	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
+	yorkshireConfigPath    = "/etc/dvhub/yorkshire-conference.json"
+	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
 )
@@ -95,6 +97,7 @@ type UserSession struct {
 	RemoteAddr           *net.UDPAddr
 	LastNetwork          time.Time
 	LastControl          time.Time
+	LastRejected         time.Time
 	SeqNo                uint8
 	StreamID             uint32
 	mu                   sync.RWMutex
@@ -170,28 +173,39 @@ type YSFIdentity struct {
 	PublicDashboardPath string `json:"public_dashboard_path"`
 }
 
+type YorkshireConferenceConfig struct {
+	Enabled              bool   `json:"enabled"`
+	Callsign             string `json:"callsign"`
+	YSFDMRID             uint32 `json:"ysf_dmr_id"`
+	BridgeDMRID          uint32 `json:"bridge_dmr_id"`
+	BridgeESSID          uint32 `json:"bridge_essid"`
+	BrandMeisterPassword string `json:"brandmeister_password"`
+	TGIFPassword         string `json:"tgif_password"`
+}
+
 type Gateway struct {
-	HomeAddr        atomic.Value
-	sessions        [MaxUsers]*UserSession
-	clients         map[*WSClient]bool
-	mu              sync.Mutex
-	txMu            sync.Mutex
-	txOwner         *WSClient
-	txNode          int
-	txDMRID         uint32
-	txCallsign      string
-	idDB            map[uint32]RadioIDInfo
-	dbMutex         sync.RWMutex
-	bridge          BridgeRoute
-	bridgeMu        sync.Mutex
-	conferenceMu    sync.Mutex
-	conferenceTimer *time.Timer
-	conferenceUntil time.Time
-	tgCache         map[string][]Talkgroup
-	tgTimes         map[string]time.Time
-	tgMutex         sync.RWMutex
-	rejectedMu      sync.Mutex
-	rejectedDMR     map[uint32]time.Time
+	HomeAddr            atomic.Value
+	sessions            [MaxUsers]*UserSession
+	clients             map[*WSClient]bool
+	mu                  sync.Mutex
+	txMu                sync.Mutex
+	txOwner             *WSClient
+	txNode              int
+	txDMRID             uint32
+	txCallsign          string
+	idDB                map[uint32]RadioIDInfo
+	dbMutex             sync.RWMutex
+	bridge              BridgeRoute
+	bridgeMu            sync.Mutex
+	conferenceMu        sync.Mutex
+	conferenceTimer     *time.Timer
+	conferenceUntil     time.Time
+	conferencePermanent atomic.Bool
+	tgCache             map[string][]Talkgroup
+	tgTimes             map[string]time.Time
+	tgMutex             sync.RWMutex
+	rejectedMu          sync.Mutex
+	rejectedDMR         map[uint32]time.Time
 }
 
 var (
@@ -249,6 +263,7 @@ func main() {
 		gw.sessions[i].UseHWVocoder.Store(true)
 		go gw.runUDPListener(gw.sessions[i])
 	}
+	go gw.runYorkshireConferenceSupervisor()
 
 	http.HandleFunc("/ws", gw.handleWS)
 	http.HandleFunc("/api/state", gw.handleState)
@@ -1192,6 +1207,7 @@ func (g *Gateway) markDMRConnected(s *UserSession) {
 	s.mu.Lock()
 	s.AuthStage = authRunning
 	s.LastNetwork = time.Now()
+	s.LastRejected = time.Time{}
 	network := s.Target
 	repeaterID := s.RepeaterID
 	s.mu.Unlock()
@@ -1247,6 +1263,7 @@ func (g *Gateway) handleDMRControl(s *UserSession, data []byte, remote *net.UDPA
 		s.mu.Lock()
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
+		s.LastRejected = time.Now()
 		s.UserPassword = ""
 		s.MasterPassword = ""
 		s.AuthPassword = ""
@@ -2395,6 +2412,183 @@ func serviceActive(name string) bool {
 	return exec.Command("/usr/bin/systemctl", "is-active", "--quiet", name).Run() == nil
 }
 
+func loadYorkshireConferenceConfig() (YorkshireConferenceConfig, error) {
+	var config YorkshireConferenceConfig
+	data, err := os.ReadFile(yorkshireConfigPath)
+	if err != nil {
+		return config, err
+	}
+	if len(data) > 16*1024 || json.Unmarshal(data, &config) != nil {
+		return config, fmt.Errorf("invalid Yorkshire conference configuration")
+	}
+	config.Callsign = strings.ToUpper(strings.TrimSpace(config.Callsign))
+	if !validCallsign.MatchString(config.Callsign) || config.YSFDMRID < 1000000 || config.YSFDMRID > 9999999 ||
+		config.BridgeDMRID < 1000000 || config.BridgeDMRID > 9999999 || config.YSFDMRID == config.BridgeDMRID ||
+		config.BridgeESSID > 99 || strings.TrimSpace(config.BrandMeisterPassword) == "" || strings.TrimSpace(config.TGIFPassword) == "" {
+		return config, fmt.Errorf("Yorkshire conference configuration is incomplete")
+	}
+	return config, nil
+}
+
+func writeYSF2DMRConfig(config YorkshireConferenceConfig) error {
+	freeSTARHost, err := loadDMRHost("FreeSTAR-SystemX-UK")
+	if err != nil {
+		return fmt.Errorf("FreeSTAR master configuration is unavailable")
+	}
+	runtimeConfig := fmt.Sprintf(`[Info]
+RXFrequency=435000000
+TXFrequency=435000000
+Power=1
+Latitude=53.8
+Longitude=-1.5
+Height=0
+Location=Yorkshire, United Kingdom
+Description=Yorkshire Link HUB permanent TG23530 bridge
+URL=https://194.146.49.25/
+
+[YSF Network]
+Callsign=%s
+Suffix=ND
+DstAddress=127.0.0.1
+DstPort=42000
+LocalAddress=127.0.0.1
+LocalPort=42013
+EnableWiresX=0
+RemoteGateway=0
+HangTime=1000
+WiresXMakeUpper=1
+Daemon=0
+
+[DMR Network]
+Id=%d
+StartupDstId=23530
+StartupPC=0
+Address=dmr.freestar.network
+Port=62031
+Jitter=500
+EnableUnlink=1
+TGUnlink=4000
+PCUnlink=0
+Password=%s
+TGListFile=/var/lib/dvgateway/TGList-DMR.txt
+Debug=0
+
+[DMR Id Lookup]
+File=/var/lib/dvgateway/dmrid.dat
+Time=24
+DropUnknown=0
+
+[Log]
+DisplayLevel=1
+FileLevel=1
+FilePath=/var/log/ysf2dmr
+FileRoot=YSF2DMR
+
+[aprs.fi]
+Enable=0
+`, config.Callsign, config.YSFDMRID, freeSTARHost.Password)
+	return os.WriteFile(ysf2dmrConfigPath, []byte(runtimeConfig), 0600)
+}
+
+func (g *Gateway) configureYorkshireSession(id int, target, password string, config YorkshireConferenceConfig) error {
+	session := g.sessionByID(id)
+	if session == nil {
+		return fmt.Errorf("conference node %d is unavailable", id)
+	}
+	// FreeSTAR accepts the MMDVM-style ESSID-expanded repeater identity. The
+	// BrandMeister and TGIF hotspot accounts are registered against the base
+	// seven-digit DMR ID and reject the expanded value.
+	expectedRepeaterID := config.BridgeDMRID
+	if target == "FreeSTAR-SystemX-UK" {
+		expectedRepeaterID = config.BridgeDMRID*100 + config.BridgeESSID
+	}
+	session.mu.RLock()
+	ready := session.Conn != nil && session.LinkActive && session.Mode == "DMR" && session.Target == target &&
+		session.TG == 23530 && session.DMRID == config.BridgeDMRID && session.RepeaterID == expectedRepeaterID
+	recentRejection := !session.LinkActive && session.AuthStage == authDisconnected && !session.LastRejected.IsZero() && time.Since(session.LastRejected) < 5*time.Minute
+	session.mu.RUnlock()
+	if ready || recentRejection {
+		return nil
+	}
+	session.mu.Lock()
+	if session.Conn == nil {
+		session.mu.Unlock()
+		return fmt.Errorf("conference node %d socket is not ready", id)
+	}
+	session.Mode = "DMR"
+	session.Target = target
+	session.TG = 23530
+	session.UserPassword = password
+	session.Callsign = config.Callsign
+	session.DMRID = config.BridgeDMRID
+	session.RepeaterID = expectedRepeaterID
+	session.Options = ""
+	session.LinkActive = true
+	session.mu.Unlock()
+	g.beginDMRLogin(session)
+	return nil
+}
+
+func (g *Gateway) ensurePermanentYorkshireConference() error {
+	config, err := loadYorkshireConferenceConfig()
+	if err != nil {
+		return err
+	}
+	if !config.Enabled {
+		return fmt.Errorf("permanent Yorkshire conference is disabled in server configuration")
+	}
+	if err := writeYSF2DMRConfig(config); err != nil {
+		return err
+	}
+	if !serviceActive("ysf2dmr.service") {
+		if output, startErr := exec.Command("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", "ysf2dmr.service").CombinedOutput(); startErr != nil {
+			return fmt.Errorf("YSF converter failed: %s", strings.TrimSpace(string(output)))
+		}
+	}
+	legs := []struct {
+		id       int
+		target   string
+		password string
+	}{
+		{1, "FreeSTAR-SystemX-UK", ""},
+		{2, "BrandMeister-UK-2341", config.BrandMeisterPassword},
+		{4, "TGIF", config.TGIFPassword},
+	}
+	for _, leg := range legs {
+		if err := g.configureYorkshireSession(leg.id, leg.target, leg.password, config); err != nil {
+			return err
+		}
+	}
+	g.bridgeMu.Lock()
+	routeReady := g.bridge.Active && g.bridge.ANode == 1 && g.bridge.ATG == 23530 && g.bridge.BNode == 2 && g.bridge.BTG == 23530 && g.bridge.CNode == 4 && g.bridge.CTG == 23530
+	if !routeReady {
+		g.bridge = BridgeRoute{Active: true, ANode: 1, ATG: 23530, BNode: 2, BTG: 23530, CNode: 4, CTG: 23530, Suppress: make(map[int]BridgeSuppression), Fingerprints: make(map[[32]byte]time.Time)}
+	}
+	g.bridgeMu.Unlock()
+	g.conferencePermanent.Store(true)
+	g.conferenceMu.Lock()
+	g.conferenceUntil = time.Time{}
+	g.conferenceMu.Unlock()
+	g.updateBridgeStatus()
+	return nil
+}
+
+func (g *Gateway) runYorkshireConferenceSupervisor() {
+	time.Sleep(time.Second)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		config, err := loadYorkshireConferenceConfig()
+		_, pausedErr := os.Stat(yorkshirePausedPath)
+		if err == nil && config.Enabled && os.IsNotExist(pausedErr) {
+			if ensureErr := g.ensurePermanentYorkshireConference(); ensureErr != nil {
+				fmt.Printf("[CONF] Permanent TG23530 bridge recovery failed: %v\n", ensureErr)
+			}
+		}
+		<-ticker.C
+	}
+}
+
 func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 	g.bridgeMu.Lock()
 	route := g.bridge
@@ -2424,8 +2618,10 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 	configured := route.Active && route.ANode == 1 && route.BNode == 2 && route.CNode == 4 && route.ATG == 23530 && route.BTG == 23530 && route.CTG == 23530
 	return map[string]any{
 		"active": configured, "ready": configured && converterActive && freeSTARStatus == "connected" && brandMeisterStatus == "connected" && tgifStatus == "connected",
-		"ysf2dmr":  converterActive,
-		"freestar": freeSTARStatus, "brandmeister": brandMeisterStatus,
+		"permanent":         g.conferencePermanent.Load(),
+		"server_configured": func() bool { _, err := loadYorkshireConferenceConfig(); return err == nil }(),
+		"ysf2dmr":           converterActive,
+		"freestar":          freeSTARStatus, "brandmeister": brandMeisterStatus,
 		"tgif": tgifStatus, "talkgroup": 23530,
 		"expires_at": func() string {
 			if until.IsZero() {
@@ -2436,7 +2632,11 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 	}
 }
 
-func (g *Gateway) stopYorkshireConference(reason string) {
+func (g *Gateway) stopYorkshireConference(reason string, pausePermanent bool) {
+	g.conferencePermanent.Store(false)
+	if pausePermanent {
+		_ = os.WriteFile(yorkshirePausedPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0640)
+	}
 	g.conferenceMu.Lock()
 	if g.conferenceTimer != nil {
 		g.conferenceTimer.Stop()
@@ -2480,7 +2680,17 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if request.Action == "stop" {
-		g.stopYorkshireConference("Yorkshire conference disconnected")
+		g.stopYorkshireConference("Yorkshire conference disconnected by operator", true)
+		json.NewEncoder(w).Encode(g.yorkshireConferenceStatus())
+		return
+	}
+	if request.Action == "permanent" {
+		_ = os.Remove(yorkshirePausedPath)
+		g.stopYorkshireConference("Starting permanent Yorkshire conference", false)
+		if err := g.ensurePermanentYorkshireConference(); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusServiceUnavailable)
+			return
+		}
 		json.NewEncoder(w).Encode(g.yorkshireConferenceStatus())
 		return
 	}
@@ -2508,7 +2718,7 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 	if duration > 900 {
 		duration = 900
 	}
-	g.stopYorkshireConference("Replacing previous Yorkshire session")
+	g.stopYorkshireConference("Replacing previous Yorkshire session", true)
 	config := fmt.Sprintf(`[Info]
 RXFrequency=435000000
 TXFrequency=435000000
@@ -2573,7 +2783,7 @@ Enable=0
 	g.conferenceMu.Lock()
 	g.conferenceUntil = time.Now().Add(time.Duration(duration) * time.Second)
 	g.conferenceTimer = time.AfterFunc(time.Duration(duration)*time.Second, func() {
-		g.stopYorkshireConference("Yorkshire conference safety timer expired")
+		g.stopYorkshireConference("Yorkshire conference safety timer expired", true)
 	})
 	g.conferenceMu.Unlock()
 	time.Sleep(300 * time.Millisecond)
