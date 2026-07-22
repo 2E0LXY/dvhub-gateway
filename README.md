@@ -74,7 +74,7 @@ The local APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ### Remote DV30 / AMBE server
 
-The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it to the public gateway over Tailscale or WireGuard. It supports hardware AMBE encode and decode and restricts requests to the configured gateway VPN address.
+The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it to the public gateway using the configured UDP route or a VPN. It supports hardware AMBE encode and decode and restricts requests to the configured gateway address.
 
 ## 📦 Installation
 
@@ -295,7 +295,7 @@ AMBE Frame (9 bytes = 72 bits)
 ```json
 {
   "cmd": "set_dv30",
-  "addr": "192.168.1.100:2460"
+  "addr": "ai.2e0lxy.uk:2468"
 }
 ```
 
@@ -374,7 +374,7 @@ AMBE Frame (9 bytes = 72 bits)
 **Symptoms**: Connected but poor audio quality
 
 **Solutions**:
-1. Test DV30 server: `echo -ne '\x61\x01' | nc -u 192.168.1.100 2460`
+1. Test DV30 server health: `printf '\x70' | nc -u -w1 ai.2e0lxy.uk 2468`
 2. Verify IP:Port in Administration tab
 3. Check DV30 server is running
 4. Ensure network route to DV30 server

@@ -12,7 +12,9 @@ Requests are serialized because one DV30 is one hardware vocoder resource. Inval
 
 ## Network requirement
 
-The public DVHub VPS cannot route directly to a private LAN address. Install Tailscale or configure WireGuard on both machines, then use their VPN addresses. Do not expose UDP 2460 directly to the internet; the compact real-time protocol deliberately has no password exchange and relies on the VPN plus the server source-IP allowlist.
+The configured direct route is public UDP `2468` forwarded to `192.168.1.131:2468`. The service source allowlist must remain `194.146.49.25/32`, and the Linux firewall should allow UDP 2468 only from that VPS. A Tailscale or WireGuard route remains the safer alternative because this compact real-time protocol deliberately has no password exchange.
+
+The hostname used by DVHub must resolve directly to the router. A Cloudflare-proxied (orange-cloud) DNS record cannot carry arbitrary UDP; use a DNS-only record for `ai.2e0lxy.uk` or a dedicated name such as `ambe.2e0lxy.uk`.
 
 ## Install on the Linux machine with the DV30
 
@@ -27,13 +29,13 @@ sudo systemctl status dvhub-ambe-server
 
 Use the persistent `/dev/serial/by-id/...` name. Earlier FTDI-based sticks may use 230400 baud; later CP2102 versions commonly use 460800. The service log reports the detected AMBE product and firmware after successful initialisation.
 
-Test health from the permitted DVHub VPN address:
+Test health from the permitted DVHub VPS:
 
 ```bash
-printf '\x70' | nc -u -w1 OPENCLAW_VPN_IP 2460
+printf '\x70' | nc -u -w1 ai.2e0lxy.uk 2468
 ```
 
-Configure DVHub with `OPENCLAW_VPN_IP:2460`, select one hardware vocoder, and switch the vocoder mode to hardware. If the device or VPN is unavailable, DVHub falls back to its software codec rather than transmitting an empty frame.
+Configure DVHub with `ai.2e0lxy.uk:2468` (or simply `https://ai.2e0lxy.uk`, which DVHub normalises to UDP 2468), select one hardware vocoder, and switch the vocoder mode to hardware. If the device or route is unavailable, DVHub falls back to its software codec rather than transmitting an empty frame.
 
 ## Compatibility and licence
 

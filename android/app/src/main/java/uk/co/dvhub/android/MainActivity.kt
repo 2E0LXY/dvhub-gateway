@@ -87,12 +87,15 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         b.networkSpinner.adapter = darkAdapter(GatewayNetworks.all)
         b.networkSpinner.setSelection(GatewayNetworks.all.indexOfFirst { it.nodeId == currentNetwork.nodeId }.coerceAtLeast(0))
         b.networkSpinner.onItemSelectedListener = SimpleItemSelected { position ->
-            currentNetwork = GatewayNetworks.all[position]; loadTalkgroups(currentNetwork, b)
+            currentNetwork = GatewayNetworks.all[position]
+            b.networkPassword.visibility = if (currentNetwork.requiresUserPassword) View.VISIBLE else View.GONE
+            if (!currentNetwork.requiresUserPassword) b.networkPassword.text.clear()
+            loadTalkgroups(currentNetwork, b)
         }
         b.linkButton.setOnClickListener {
             val tg = (b.talkgroupSpinner.selectedItem as? Talkgroup)?.id ?: currentTg
             val pass = b.networkPassword.text.toString()
-            if (!linkActive && currentNetwork.apiName != "ysf" && pass.isBlank()) { toast("Enter the network/hotspot password"); return@setOnClickListener }
+            if (!linkActive && currentNetwork.requiresUserPassword && pass.isBlank()) { toast("Enter your user/hotspot credential"); return@setOnClickListener }
             linkActive = !linkActive; currentTg = tg
             if (!client.nodeState(currentNetwork, linkActive, tg, pass, b.dmrOptions.text.toString())) {
                 linkActive = false; toast("WebSocket is not connected")
@@ -145,10 +148,10 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private fun startConference(b: ViewConferenceBinding, seconds: Int, action: String) {
         val bridgeId = b.bridgeDmrId.text.toString().toLongOrNull()
         val ysfId = b.ysfDmrId.text.toString().toLongOrNull()
-        if (bridgeId == null || ysfId == null || b.freestarPassword.text.isBlank()) { toast("Enter both DMR IDs and the FreeSTAR password"); return }
+        if (bridgeId == null || ysfId == null || b.bmPassword.text.isBlank() || b.tgifPassword.text.isBlank()) { toast("Enter both DMR IDs and the BrandMeister/TGIF user credentials"); return }
         val request = JsonObject().apply {
             addProperty("action", action); addProperty("callsign", settings.callsign); addProperty("dmr_id", ysfId)
-            addProperty("freestar_password", b.freestarPassword.text.toString()); addProperty("duration_seconds", seconds)
+            addProperty("duration_seconds", seconds)
         }
         client.post("/api/yorkshire_conference", request) { result -> runOnUiThread {
             result.onFailure { toast(it.message ?: "Conference failed") }.onSuccess {
@@ -156,11 +159,11 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                 val essid = b.bridgeEssid.text.toString().padStart(2, '0')
                 settings = settings.copy(dmrId = bridgeId.toString(), essid = essid); client.configure(settings); client.connect()
                 handler.postDelayed({
-                    client.nodeState(GatewayNetworks.all[0], true, 23530, b.freestarPassword.text.toString())
+                    client.nodeState(GatewayNetworks.all[0], true, 23530, "")
                     client.nodeState(GatewayNetworks.all[1], true, 23530, b.bmPassword.text.toString())
                     client.nodeState(GatewayNetworks.all[3], true, 23530, b.tgifPassword.text.toString())
                     client.bridge(true, 1, 2, 4, 23530, 23530, 23530); settings = original
-                    b.freestarPassword.text.clear(); b.bmPassword.text.clear(); b.tgifPassword.text.clear()
+                    b.bmPassword.text.clear(); b.tgifPassword.text.clear()
                     b.legStatus.text = "Conference test active · TG 23530 · automatic stop in ${seconds}s"
                 }, 800)
             }

@@ -9,7 +9,7 @@ data class GatewaySettings(
     val essid: String = "01"
 )
 
-data class Network(val nodeId: Int, val label: String, val apiName: String, val target: String) {
+data class Network(val nodeId: Int, val label: String, val apiName: String, val target: String, val requiresUserPassword: Boolean = false) {
     override fun toString() = label
 }
 
@@ -28,9 +28,9 @@ data class RadioActivity(
 object GatewayNetworks {
     val all = listOf(
         Network(1, "FreeSTAR / System-X UK", "freestar", "FreeSTAR-SystemX-UK"),
-        Network(2, "BrandMeister UK 2341", "brandmeister", "BrandMeister-UK-2341"),
-        Network(3, "DMR+ FreeSTAR", "dmrplus", "DMRPlus-FreeSTAR"),
-        Network(4, "TGIF", "tgif", "TGIF"),
+        Network(2, "BrandMeister UK 2341", "brandmeister", "BrandMeister-UK-2341", true),
+        Network(3, "DMR+ FreeSTAR", "dmrplus", "DMRPlus-FreeSTAR", true),
+        Network(4, "TGIF", "tgif", "TGIF", true),
         Network(5, "FreeDMR UK", "freedmr", "FreeDMR-UK"),
         Network(6, "Local YSF reflector", "ysf", "DVHub-YSF")
     )

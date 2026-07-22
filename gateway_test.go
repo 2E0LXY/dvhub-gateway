@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +112,44 @@ func TestBridgeEndpointsIncludesOptionalConferenceLeg(t *testing.T) {
 	conference := bridgeEndpoints(BridgeRoute{ANode: 1, ATG: 23530, BNode: 2, BTG: 23530, CNode: 4, CTG: 23530})
 	if len(conference) != 3 || conference[4] != 23530 {
 		t.Fatalf("conference endpoints = %#v, want TGIF node 4 on TG23530", conference)
+	}
+}
+
+func TestParseDV30AddressAcceptsHostnameURLAndRejectsEmpty(t *testing.T) {
+	if parseDV30Address("") != nil {
+		t.Fatal("empty DV30 address was accepted")
+	}
+	for _, value := range []string{"localhost:2468", "https://localhost"} {
+		addr := parseDV30Address(value)
+		if addr == nil || addr.Port != 2468 {
+			t.Fatalf("DV30 address %q parsed as %#v", value, addr)
+		}
+	}
+}
+
+func TestConfiguredDMRHostsCanBeLoaded(t *testing.T) {
+	if _, err := os.Stat(dmrHostsPath); os.IsNotExist(err) {
+		t.Skip("live DMR_Hosts.txt is not installed in this test environment")
+	}
+	wantsUserCredential := map[string]bool{
+		"FreeSTAR-SystemX-UK":  false,
+		"BrandMeister-UK-2341": true,
+		"DMRPlus-FreeSTAR":     true,
+		"TGIF":                 true,
+		"FreeDMR-UK":           false,
+	}
+	for target, wantUserCredential := range wantsUserCredential {
+		entry, err := loadDMRHost(target)
+		if err != nil {
+			t.Errorf("%s: %v", target, err)
+			continue
+		}
+		if entry.Password == "" || entry.Host == "" || entry.Port == 0 {
+			t.Errorf("%s returned an incomplete host entry", target)
+		}
+		if got := dmrRequiresUserPassword(target, entry); got != wantUserCredential {
+			t.Errorf("%s requires user credential = %v, want %v", target, got, wantUserCredential)
+		}
 	}
 }
 

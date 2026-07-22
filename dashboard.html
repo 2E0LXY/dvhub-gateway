@@ -585,7 +585,7 @@
                                 <option value="DVStick30">DVStick30 / DV30</option>
                                 <option value="DV3000">DV3000 / ThumbDV</option>
                             </select>
-                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="192.168.1.100:2460" onchange="updateAdminParams()">
+                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="ai.2e0lxy.uk:2468" onchange="updateAdminParams()">
                         </div>
 
                         <div id="dv30-device-b" class="hidden">
@@ -634,11 +634,11 @@
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
                             <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection(true)">
-                                <option value="1" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="true">DMR - FreeSTAR System X UK</option>
+                                <option value="1" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false">DMR - FreeSTAR System X UK</option>
                                 <option value="2" data-proto="DMR" data-net="BrandMeister-UK-2341" data-deftg="235" data-req-pass="true">DMR - BrandMeister UK 2341</option>
                                 <option value="3" data-proto="DMR" data-net="DMRPlus-FreeSTAR" data-deftg="23426" data-req-pass="true">DMR+ - IPSC2 FreeSTAR</option>
                                 <option value="4" data-proto="DMR" data-net="TGIF" data-deftg="116" data-req-pass="true">DMR - TGIF Network</option>
-                                <option value="5" data-proto="DMR" data-net="FreeDMR-UK" data-deftg="2350" data-req-pass="true">DMR - FreeDMR UK</option>
+                                <option value="5" data-proto="DMR" data-net="FreeDMR-UK" data-deftg="2350" data-req-pass="false">DMR - FreeDMR UK</option>
                                 <option value="6" data-proto="YSF" data-net="127.0.0.1:42000" data-deftg="0" data-req-pass="false">YSF - 2E0LXY Local Reflector</option>
                             </select>
                         </div>
@@ -670,8 +670,8 @@
                         </div>
                         
                         <div id="container-password" style="display: none;">
-                            <label class="text-[9px] text-gray-400 uppercase block mb-2">Network Password</label>
-                            <input type="password" class="input-cyber" id="inp-net-pass" placeholder="Hotspot / master password" autocomplete="new-password" oninput="updateNetworkPassword()">
+                            <label class="text-[9px] text-gray-400 uppercase block mb-2">User / Hotspot Credential</label>
+                            <input type="password" class="input-cyber" id="inp-net-pass" placeholder="Required by this network" autocomplete="new-password" oninput="updateNetworkPassword()">
                             <div class="text-[8px] text-gray-500 mt-1">Kept only in this browser tab; never saved to local storage.</div>
                         </div>
 
@@ -680,7 +680,7 @@
                             <input type="text" class="input-cyber" id="inp-dmr-options" placeholder="e.g. TS1=235;TS2=2350;" oninput="updateDMRIdentity()">
                         </div>
 
-                        <div class="text-[9px] text-gray-400" id="network-login-message">Enter your registered identity and network password.</div>
+                        <div class="text-[9px] text-gray-400" id="network-login-message">Master-server password is loaded securely from DMR_Hosts.txt.</div>
                         
                         <button id="btn-toggle-link" onclick="toggleConnection()" class="btn-cyber w-full">CONNECT LINK</button>
                     </div>
@@ -697,7 +697,7 @@
                                     <option value="3">DMR+ IPSC2 FreeSTAR</option><option value="4">TGIF Network</option><option value="5">FreeDMR UK</option>
                                 </select>
                                 <select class="input-cyber" id="bridge-a-tg"></select>
-                                <input type="password" class="input-cyber" id="bridge-a-pass" placeholder="Endpoint A password" autocomplete="new-password">
+                                <input type="password" class="input-cyber" id="bridge-a-pass" placeholder="Endpoint A user credential" autocomplete="new-password">
                             </div>
                             <div class="text-center text-green-400 text-xl pb-8">⇄</div>
                             <div class="space-y-2">
@@ -707,10 +707,10 @@
                                     <option value="3">DMR+ IPSC2 FreeSTAR</option><option value="4">TGIF Network</option><option value="5">FreeDMR UK</option>
                                 </select>
                                 <select class="input-cyber" id="bridge-b-tg"></select>
-                                <input type="password" class="input-cyber" id="bridge-b-pass" placeholder="Endpoint B password" autocomplete="new-password">
+                                <input type="password" class="input-cyber" id="bridge-b-pass" placeholder="Endpoint B user credential" autocomplete="new-password">
                             </div>
                         </div>
-                        <div id="bridge-message" class="text-[9px] text-gray-400">Select two networks, their talkgroups and passwords.</div>
+                        <div id="bridge-message" class="text-[9px] text-gray-400">Select two networks and talkgroups. User credentials appear only where required.</div>
                         <div class="grid grid-cols-2 gap-2">
                             <button id="btn-bridge-connect" onclick="connectBridge()" class="btn-cyber">CONNECT BRIDGE</button>
                             <button id="btn-bridge-disconnect" onclick="disconnectBridge()" class="btn-cyber danger" disabled>DISCONNECT BRIDGE</button>
@@ -732,7 +732,7 @@
                             <div><label class="text-gray-500 uppercase block mb-1">YSF leg DMR ID</label><input class="input-cyber" id="yorkshire-ysf-id" inputmode="numeric" value="2351633" maxlength="7"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">DMR bridge DMR ID</label><input class="input-cyber" id="yorkshire-bridge-id" inputmode="numeric" value="2344399" maxlength="7"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">Bridge ESSID</label><input class="input-cyber" id="yorkshire-essid" inputmode="numeric" value="01" maxlength="2"></div>
-                            <div><label class="text-gray-500 uppercase block mb-1">FreeSTAR System X master password</label><input type="password" class="input-cyber" id="yorkshire-freestar-pass" autocomplete="new-password" placeholder="Pi-Star host-list password"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">FreeSTAR master credential</label><div class="input-cyber text-green-400">Loaded from DMR_Hosts.txt</div></div>
                             <div><label class="text-gray-500 uppercase block mb-1">BrandMeister hotspot password</label><input type="password" class="input-cyber" id="yorkshire-bm-pass" autocomplete="new-password" placeholder="Required"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">TGIF hotspot key / legacy password</label><input type="password" class="input-cyber" id="yorkshire-tgif-pass" autocomplete="new-password" placeholder="Security key or legacy password"></div>
                         </div>
@@ -808,11 +808,11 @@
         let bridgeConnected = false;
 
         const networkByNode = {
-            1: { key: 'FreeSTAR-SystemX-UK', label: 'FreeSTAR System X UK' },
-            2: { key: 'BrandMeister-UK-2341', label: 'BrandMeister UK 2341' },
-            3: { key: 'DMRPlus-FreeSTAR', label: 'DMR+ IPSC2 FreeSTAR' },
-            4: { key: 'TGIF', label: 'TGIF Network' },
-            5: { key: 'FreeDMR-UK', label: 'FreeDMR UK' }
+            1: { key: 'FreeSTAR-SystemX-UK', label: 'FreeSTAR System X UK', requiresUserPassword: false },
+            2: { key: 'BrandMeister-UK-2341', label: 'BrandMeister UK 2341', requiresUserPassword: true },
+            3: { key: 'DMRPlus-FreeSTAR', label: 'DMR+ IPSC2 FreeSTAR', requiresUserPassword: true },
+            4: { key: 'TGIF', label: 'TGIF Network', requiresUserPassword: true },
+            5: { key: 'FreeDMR-UK', label: 'FreeDMR UK', requiresUserPassword: false }
         };
 
         const networkTalkgroups = {
@@ -851,6 +851,9 @@
             const node = Number(document.getElementById(`bridge-${side}-net`).value);
             const network = networkByNode[node];
             const select = document.getElementById(`bridge-${side}-tg`);
+            const password = document.getElementById(`bridge-${side}-pass`);
+            password.style.display = network.requiresUserPassword ? 'block' : 'none';
+            if (!network.requiresUserPassword) password.value = '';
             populateTalkgroupSelect(select, network.key);
             loadNetworkTalkgroups(network.key, () => {
                 const currentNode = Number(document.getElementById(`bridge-${side}-net`).value);
@@ -1145,7 +1148,7 @@
             if (mode === 'hw') {
                 updateAdminParams();
                 if (!validVocoderAddress(dv30Config.addrA)) {
-                    alert('Enter a valid Device 1 IPv4 address and port before enabling hardware vocoding.');
+                    alert('Enter a valid Device 1 hostname/address and optional UDP port before enabling hardware vocoding.');
                     return;
                 }
                 if (dv30Config.count === 2 && !validVocoderAddress(dv30Config.addrB)) {
@@ -1165,11 +1168,13 @@
         }
 
         function validVocoderAddress(value) {
-            const match = String(value || '').trim().match(/^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/);
-            if (!match) return false;
-            const octets = match[1].split('.').map(Number);
-            const port = Number(match[2]);
-            return octets.every(part => part >= 0 && part <= 255) && port >= 1 && port <= 65535;
+            let text = String(value || '').trim();
+            if (!text) return false;
+            try { if (/^[a-z]+:\/\//i.test(text)) text = new URL(text).host; } catch (_) { return false; }
+            const match = text.match(/^([a-z0-9.-]+)(?::(\d{1,5}))?$/i);
+            if (!match || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/i.test(match[1])) return false;
+            const port = match[2] ? Number(match[2]) : 2468;
+            return port >= 1 && port <= 65535;
         }
 
         function updateVocoderTopology(save = true) {
@@ -1198,8 +1203,13 @@
                 linkState.pwd = passInput.value;
             } else {
                 passContainer.style.display = 'none';
+                passInput.value = '';
                 linkState.pwd = '';
             }
+
+            document.getElementById('network-login-message').textContent = reqPass
+                ? 'This network requires your user/hotspot credential; the master entry is selected from DMR_Hosts.txt.'
+                : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.');
 
             const isDMR = linkState.proto === 'DMR';
             document.getElementById('container-dmr-identity').style.display = isDMR ? 'block' : 'none';
@@ -1311,7 +1321,7 @@
             if (!ws || ws.readyState !== WebSocket.OPEN) { message.textContent = 'Control connection is offline.'; return; }
             if (aNode === bNode) { message.textContent = 'Choose two different networks.'; return; }
             if (!/^[A-Z0-9]{3,10}$/.test(config.callsign) || config.dmrID < 1000000 || config.dmrID > 9999999) { message.textContent = 'Enter and confirm a registered callsign and DMR ID first.'; return; }
-            if (!document.getElementById('bridge-a-pass').value || !document.getElementById('bridge-b-pass').value) { message.textContent = 'Enter both network passwords.'; return; }
+            if ((networkByNode[aNode].requiresUserPassword && !document.getElementById('bridge-a-pass').value) || (networkByNode[bNode].requiresUserPassword && !document.getElementById('bridge-b-pass').value)) { message.textContent = 'Enter the user credential for each network that requires one.'; return; }
             sendBridgeEndpoint('a', true);
             sendBridgeEndpoint('b', true);
             ws.send(JSON.stringify({ cmd: 'bridge_state', active: true, a_node: aNode, a_tg: Number(document.getElementById('bridge-a-tg').value), b_node: bNode, b_tg: Number(document.getElementById('bridge-b-tg').value) }));
@@ -1352,7 +1362,6 @@
         }
 
         function clearYorkshirePasswords() {
-            document.getElementById('yorkshire-freestar-pass').value = '';
             document.getElementById('yorkshire-bm-pass').value = '';
             document.getElementById('yorkshire-tgif-pass').value = '';
         }
@@ -1396,24 +1405,23 @@
             const ysfID = Number(document.getElementById('yorkshire-ysf-id').value);
             const bridgeID = Number(document.getElementById('yorkshire-bridge-id').value);
             const essid = Number(document.getElementById('yorkshire-essid').value);
-            const freeSTARPassword = document.getElementById('yorkshire-freestar-pass').value;
             const bmPassword = document.getElementById('yorkshire-bm-pass').value;
             const tgifPassword = document.getElementById('yorkshire-tgif-pass').value;
             if (!ws || ws.readyState !== WebSocket.OPEN) { setYorkshireMessage('Control connection is offline.', 'text-red-400'); return; }
             if (!/^[A-Z0-9]{3,10}$/.test(config.callsign)) { setYorkshireMessage('Enter and confirm your callsign first.', 'text-red-400'); return; }
             if (ysfID < 1000000 || ysfID > 9999999 || bridgeID < 1000000 || bridgeID > 9999999 || ysfID === bridgeID) { setYorkshireMessage('Choose two different registered 7-digit DMR IDs.', 'text-red-400'); return; }
             if (!Number.isInteger(essid) || essid < 0 || essid > 99) { setYorkshireMessage('ESSID must be 00 to 99.', 'text-red-400'); return; }
-            if (!freeSTARPassword || !bmPassword || !tgifPassword) { setYorkshireMessage('Enter the FreeSTAR, BrandMeister and TGIF passwords.', 'text-red-400'); return; }
+            if (!bmPassword || !tgifPassword) { setYorkshireMessage('Enter the BrandMeister and TGIF user credentials.', 'text-red-400'); return; }
             setYorkshireMessage('Starting the local YSF converter…', 'text-yellow-400');
             try {
                 const response = await fetch('/api/yorkshire_conference', {
                     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
-                    body: JSON.stringify({ action: testOnly ? 'test' : 'start', callsign: config.callsign, dmr_id: ysfID, freestar_password: freeSTARPassword, duration_seconds: testOnly ? 60 : 900 })
+                    body: JSON.stringify({ action: testOnly ? 'test' : 'start', callsign: config.callsign, dmr_id: ysfID, duration_seconds: testOnly ? 60 : 900 })
                 });
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || 'Unable to start conference');
                 const repeaterID = bridgeID * 100 + essid;
-                sendYorkshireEndpoint(1, 'FreeSTAR-SystemX-UK', freeSTARPassword, bridgeID, repeaterID, true);
+                sendYorkshireEndpoint(1, 'FreeSTAR-SystemX-UK', '', bridgeID, repeaterID, true);
                 sendYorkshireEndpoint(2, 'BrandMeister-UK-2341', bmPassword, bridgeID, repeaterID, true);
                 sendYorkshireEndpoint(4, 'TGIF', tgifPassword, bridgeID, repeaterID, true);
                 ws.send(JSON.stringify({ cmd: 'bridge_state', active: true, a_node: 1, a_tg: 23530, b_node: 2, b_tg: 23530, c_node: 4, c_tg: 23530 }));
@@ -1475,9 +1483,10 @@
                     alert('Enter your registered callsign and 7-digit DMR ID.');
                     return;
                 }
-                if (!linkState.pwd) {
+                const selectedNetwork = document.getElementById('sel-network').selectedOptions[0];
+                if (selectedNetwork?.getAttribute('data-req-pass') === 'true' && !linkState.pwd) {
                     linkState.active = false;
-                    alert('Enter the hotspot/master password for the selected network.');
+                    alert('Enter your user/hotspot credential for the selected network.');
                     return;
                 }
             }

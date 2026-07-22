@@ -36,6 +36,7 @@ const (
 	ysfIdentityLockPath = "/var/lib/dvgateway/ysf-identity.lock"
 	dvrefTokenPath      = "/etc/dvhub/dvref.token"
 	ysf2dmrConfigPath   = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
+	dmrHostsPath        = "/var/lib/dvgateway/DMR_Hosts.txt"
 )
 
 const (
@@ -63,33 +64,36 @@ type WSClient struct {
 }
 
 type UserSession struct {
-	ID           int
-	Port         int
-	IsActive     atomic.Bool
-	Mode         string
-	Target       string
-	TG           uint32
-	Password     string
-	UseHWVocoder atomic.Bool
-	DV30Addr     atomic.Value // primary *net.UDPAddr
-	DV30Addr2    atomic.Value // secondary *net.UDPAddr, reserved for D-Star -> DMR
-	DV30Count    atomic.Int32
-	FlushFEC     atomic.Bool
-	rtcBuffer    chan []byte
-	LastTXFrame  atomic.Int64
-	Callsign     string
-	DMRID        uint32
-	RepeaterID   uint32
-	Options      string
-	LinkActive   bool
-	AuthStage    int
-	Conn         *net.UDPConn
-	RemoteAddr   *net.UDPAddr
-	LastNetwork  time.Time
-	LastControl  time.Time
-	SeqNo        uint8
-	StreamID     uint32
-	mu           sync.RWMutex
+	ID                   int
+	Port                 int
+	IsActive             atomic.Bool
+	Mode                 string
+	Target               string
+	TG                   uint32
+	UserPassword         string
+	MasterPassword       string
+	AuthPassword         string
+	RequiresUserPassword bool
+	UseHWVocoder         atomic.Bool
+	DV30Addr             atomic.Value // primary *net.UDPAddr
+	DV30Addr2            atomic.Value // secondary *net.UDPAddr, reserved for D-Star -> DMR
+	DV30Count            atomic.Int32
+	FlushFEC             atomic.Bool
+	rtcBuffer            chan []byte
+	LastTXFrame          atomic.Int64
+	Callsign             string
+	DMRID                uint32
+	RepeaterID           uint32
+	Options              string
+	LinkActive           bool
+	AuthStage            int
+	Conn                 *net.UDPConn
+	RemoteAddr           *net.UDPAddr
+	LastNetwork          time.Time
+	LastControl          time.Time
+	SeqNo                uint8
+	StreamID             uint32
+	mu                   sync.RWMutex
 }
 
 type RadioIDInfo struct {
@@ -137,6 +141,13 @@ type BridgeSuppression struct {
 type Talkgroup struct {
 	ID   uint32 `json:"id"`
 	Name string `json:"name"`
+}
+
+type DMRHostEntry struct {
+	Name     string
+	Host     string
+	Password string
+	Port     int
 }
 
 type YSFIdentity struct {
@@ -188,6 +199,9 @@ var (
 		"DMRPlus-FreeSTAR":     "ipsc2.freestar.network:62031",
 		"TGIF":                 "tgif.network:62031",
 		"FreeDMR-UK":           "hotspot.uk.freedmr.link:62031",
+	}
+	dmrNetworkHostNames = map[string]string{
+		"DMRPlus-FreeSTAR": "DMR+_IPSC2-FreeSTAR",
 	}
 	networkTGURLs = map[string]string{
 		"FreeSTAR-SystemX-UK":  "https://w0chp.radio/digital-radio-lists/system-x-talkgroups/download.csv",
@@ -583,7 +597,7 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 							s.TG = uint32(tg)
 						}
 						if pwd, ok := req["password"].(string); ok {
-							s.Password = pwd
+							s.UserPassword = pwd
 						}
 						if callsign, ok := req["callsign"].(string); ok {
 							s.Callsign = strings.ToUpper(strings.TrimSpace(callsign))
@@ -699,17 +713,62 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) sendNetworkStatus(s *UserSession, state, message string) {
 	s.mu.RLock()
 	event := map[string]any{
-		"type":        "network_status",
-		"node_id":     s.ID,
-		"state":       state,
-		"message":     message,
-		"network":     s.Target,
-		"dmr_id":      s.DMRID,
-		"repeater_id": s.RepeaterID,
+		"type":                   "network_status",
+		"node_id":                s.ID,
+		"state":                  state,
+		"message":                message,
+		"network":                s.Target,
+		"dmr_id":                 s.DMRID,
+		"repeater_id":            s.RepeaterID,
+		"requires_user_password": s.RequiresUserPassword,
 	}
 	s.mu.RUnlock()
 	data, _ := json.Marshal(event)
 	g.broadcastText(data)
+}
+
+func loadDMRHost(target string) (DMRHostEntry, error) {
+	configured, exists := dmrNetworkTargets[target]
+	if !exists {
+		return DMRHostEntry{}, fmt.Errorf("unknown DMR master")
+	}
+	configuredHost := configured
+	if host, _, err := net.SplitHostPort(configured); err == nil {
+		configuredHost = host
+	}
+	wantedName := dmrNetworkHostNames[target]
+	file, err := os.Open(dmrHostsPath)
+	if err != nil {
+		return DMRHostEntry{}, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if !strings.EqualFold(fields[2], configuredHost) && (wantedName == "" || !strings.EqualFold(fields[0], wantedName)) {
+			continue
+		}
+		port, err := strconv.Atoi(fields[4])
+		if err != nil || port < 1 || port > 65535 || fields[3] == "" {
+			return DMRHostEntry{}, fmt.Errorf("invalid DMR host entry for %s", target)
+		}
+		return DMRHostEntry{Name: fields[0], Host: fields[2], Password: fields[3], Port: port}, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return DMRHostEntry{}, err
+	}
+	return DMRHostEntry{}, fmt.Errorf("DMR master %s is not present in DMR_Hosts.txt", target)
+}
+
+func dmrRequiresUserPassword(target string, entry DMRHostEntry) bool {
+	return target == "BrandMeister-UK-2341" || target == "TGIF" || strings.EqualFold(entry.Password, "PASSWORD")
 }
 
 func (g *Gateway) sessionByID(id int) *UserSession {
@@ -901,22 +960,28 @@ func (g *Gateway) writeNetworkPacket(s *UserSession, packet []byte) error {
 
 func (g *Gateway) beginDMRLogin(s *UserSession) {
 	s.mu.Lock()
-	addressText, exists := dmrNetworkTargets[s.Target]
-	if !exists {
+	entry, err := loadDMRHost(s.Target)
+	if err != nil {
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.mu.Unlock()
-		g.sendNetworkStatus(s, "error", "Unknown DMR master")
+		g.sendNetworkStatus(s, "error", "DMR master configuration is unavailable")
 		return
 	}
-	if s.DMRID < 1000000 || s.RepeaterID < 1000000 || s.Password == "" || s.Callsign == "" {
+	s.MasterPassword = entry.Password
+	s.RequiresUserPassword = dmrRequiresUserPassword(s.Target, entry)
+	s.AuthPassword = s.MasterPassword
+	if s.RequiresUserPassword {
+		s.AuthPassword = s.UserPassword
+	}
+	if s.DMRID < 1000000 || s.RepeaterID < 1000000 || s.AuthPassword == "" || s.Callsign == "" {
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.mu.Unlock()
-		g.sendNetworkStatus(s, "error", "Callsign, DMR ID and password are required")
+		g.sendNetworkStatus(s, "error", "Callsign, DMR ID and the required user credential are required")
 		return
 	}
-	remote, err := net.ResolveUDPAddr("udp", addressText)
+	remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(entry.Host, strconv.Itoa(entry.Port)))
 	if err != nil {
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
@@ -953,7 +1018,10 @@ func (g *Gateway) disconnectNetwork(s *UserSession, message string) {
 	s.LinkActive = false
 	s.AuthStage = authDisconnected
 	s.RemoteAddr = nil
-	s.Password = ""
+	s.UserPassword = ""
+	s.MasterPassword = ""
+	s.AuthPassword = ""
+	s.RequiresUserPassword = false
 	s.mu.Unlock()
 	g.sendNetworkStatus(s, "disconnected", message)
 	g.updateBridgeStatus()
@@ -961,7 +1029,7 @@ func (g *Gateway) disconnectNetwork(s *UserSession, message string) {
 
 func (g *Gateway) sendDMRAuthorisation(s *UserSession, salt []byte) {
 	s.mu.RLock()
-	password := s.Password
+	password := s.AuthPassword
 	repeaterID := s.RepeaterID
 	s.mu.RUnlock()
 	payload := append(append([]byte{}, salt...), []byte(password)...)
@@ -1053,7 +1121,9 @@ func (g *Gateway) handleDMRControl(s *UserSession, data []byte, remote *net.UDPA
 		s.mu.Lock()
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
-		s.Password = ""
+		s.UserPassword = ""
+		s.MasterPassword = ""
+		s.AuthPassword = ""
 		s.mu.Unlock()
 		fmt.Printf("[NET] Node %d login rejected by %s\n", s.ID, s.Target)
 		g.sendNetworkStatus(s, "rejected", "Master rejected the DMR ID or password")
@@ -1582,16 +1652,29 @@ func quantizeMagnitude(mag float64) byte {
 // ============================================================================
 
 func parseDV30Address(value string) *net.UDPAddr {
-	host, port, err := net.SplitHostPort(strings.TrimSpace(value))
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		value = parsed.Host
+	}
+	if _, _, err := net.SplitHostPort(value); err != nil && !strings.Contains(value, ":") {
+		value = net.JoinHostPort(value, "2468")
+	}
+	host, port, err := net.SplitHostPort(value)
 	if err != nil {
 		return nil
 	}
-	ip := net.ParseIP(host)
 	parsedPort, err := strconv.Atoi(port)
-	if ip == nil || err != nil || parsedPort < 1 || parsedPort > 65535 {
+	if err != nil || parsedPort < 1 || parsedPort > 65535 {
 		return nil
 	}
-	return &net.UDPAddr{IP: ip, Port: parsedPort}
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(host, strconv.Itoa(parsedPort)))
+	if err != nil {
+		return nil
+	}
+	return addr
 }
 
 func safeVocoderAddress(addr *net.UDPAddr) string {
@@ -2234,11 +2317,10 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var request struct {
-		Action           string `json:"action"`
-		Callsign         string `json:"callsign"`
-		DMRID            uint32 `json:"dmr_id"`
-		FreeSTARPassword string `json:"freestar_password"`
-		DurationSeconds  int    `json:"duration_seconds"`
+		Action          string `json:"action"`
+		Callsign        string `json:"callsign"`
+		DMRID           uint32 `json:"dmr_id"`
+		DurationSeconds int    `json:"duration_seconds"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&request) != nil {
 		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
@@ -2254,9 +2336,13 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	request.Callsign = strings.ToUpper(strings.TrimSpace(request.Callsign))
-	validPassword := request.FreeSTARPassword != "" && len(request.FreeSTARPassword) <= 128 && !strings.ContainsAny(request.FreeSTARPassword, "\r\n")
-	if !regexp.MustCompile(`^[A-Z0-9]{3,10}$`).MatchString(request.Callsign) || request.DMRID < 1000000 || request.DMRID > 9999999 || !validPassword {
-		http.Error(w, `{"error":"Valid callsign, 7-digit DMR ID and FreeSTAR password required"}`, http.StatusBadRequest)
+	if !regexp.MustCompile(`^[A-Z0-9]{3,10}$`).MatchString(request.Callsign) || request.DMRID < 1000000 || request.DMRID > 9999999 {
+		http.Error(w, `{"error":"Valid callsign and 7-digit DMR ID required"}`, http.StatusBadRequest)
+		return
+	}
+	freeSTARHost, err := loadDMRHost("FreeSTAR-SystemX-UK")
+	if err != nil {
+		http.Error(w, `{"error":"FreeSTAR master configuration is unavailable"}`, http.StatusServiceUnavailable)
 		return
 	}
 	duration := request.DurationSeconds
@@ -2321,7 +2407,7 @@ FileRoot=YSF2DMR
 
 [aprs.fi]
 Enable=0
-`, request.Callsign, request.DMRID, request.FreeSTARPassword)
+`, request.Callsign, request.DMRID, freeSTARHost.Password)
 	if err := os.WriteFile(ysf2dmrConfigPath, []byte(config), 0600); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
