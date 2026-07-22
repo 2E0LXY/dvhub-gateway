@@ -675,6 +675,8 @@
                             <div class="text-[8px] text-gray-500 mt-1">Kept only in this browser tab; never saved to local storage.</div>
                         </div>
 
+                        <div id="brandmeister-api-status" class="text-[9px] text-gray-500" style="display:none;">BrandMeister API: checking secure server credential…</div>
+
                         <div id="container-dmr-options">
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">DMR Options (optional)</label>
                             <input type="text" class="input-cyber" id="inp-dmr-options" placeholder="e.g. TS1=235;TS2=2350;" oninput="updateDMRIdentity()">
@@ -1210,6 +1212,7 @@
             document.getElementById('network-login-message').textContent = reqPass
                 ? 'This network requires your user/hotspot credential; the master entry is selected from DMR_Hosts.txt.'
                 : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.');
+            updateBrandMeisterAPIStatus(linkState.net === 'BrandMeister-UK-2341');
 
             const isDMR = linkState.proto === 'DMR';
             document.getElementById('container-dmr-identity').style.display = isDMR ? 'block' : 'none';
@@ -1227,6 +1230,24 @@
             });
             
             saveLinkState();
+        }
+
+        async function updateBrandMeisterAPIStatus(visible) {
+            const element = document.getElementById('brandmeister-api-status');
+            element.style.display = visible ? 'block' : 'none';
+            if (!visible) return;
+            element.className = 'text-[9px] text-gray-500';
+            element.textContent = 'BrandMeister API: checking secure server credential…';
+            try {
+                const response = await fetch('/api/brandmeister/status', { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error();
+                const data = await response.json();
+                element.textContent = data.verified ? 'BrandMeister API: configured and verified (key hidden)' : `BrandMeister API: ${data.status || 'unavailable'} (key hidden)`;
+                element.className = data.verified ? 'text-[9px] text-green-400' : 'text-[9px] text-yellow-400';
+            } catch (_) {
+                element.textContent = 'BrandMeister API: status unavailable (key hidden)';
+                element.className = 'text-[9px] text-yellow-400';
+            }
         }
 
         function updateNetworkPassword() {

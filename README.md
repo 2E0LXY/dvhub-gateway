@@ -121,6 +121,8 @@ localStorage.setItem('dv_hub_rx_freq', '430.2000');
 
 ### Network Configuration
 
+BrandMeister API v2 credentials are stored only on the gateway at `/etc/dvhub/brandmeister-api.token` with `root:dvhub` ownership and mode `0640`. The dashboard reports only whether the credential is configured and verified; the JWT is never returned to a browser, written to logs, or committed to Git. This API credential is separate from the BrandMeister hotspot-security password used by the DMR master protocol.
+
 Networks are configured in `gateway.go` at line 544:
 
 ```go

@@ -32,13 +32,14 @@ const BasePort = 62031
 const MaxUsers = 8
 
 const (
-	ysfConfigPath       = "/etc/ysfreflector/YSFReflector.ini"
-	ysfIdentityLockPath = "/var/lib/dvgateway/ysf-identity.lock"
-	dvrefTokenPath      = "/etc/dvhub/dvref.token"
-	ysf2dmrConfigPath   = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
-	dmrHostsPath        = "/var/lib/dvgateway/DMR_Hosts.txt"
-	ysfNetworkName      = "YORKSHIRELINK"
-	ysfDescription      = "YORKSHIRE HUB"
+	ysfConfigPath         = "/etc/ysfreflector/YSFReflector.ini"
+	ysfIdentityLockPath   = "/var/lib/dvgateway/ysf-identity.lock"
+	dvrefTokenPath        = "/etc/dvhub/dvref.token"
+	ysf2dmrConfigPath     = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
+	dmrHostsPath          = "/var/lib/dvgateway/DMR_Hosts.txt"
+	brandMeisterTokenPath = "/etc/dvhub/brandmeister-api.token"
+	ysfNetworkName        = "YORKSHIRELINK"
+	ysfDescription        = "YORKSHIRE HUB"
 )
 
 const (
@@ -259,6 +260,7 @@ func main() {
 	http.HandleFunc("/api/ysf_dashboard", gw.handleYSFDashboard)
 	http.HandleFunc("/api/public/ysf_dashboard", gw.handlePublicYSFDashboard)
 	http.HandleFunc("/api/ysf_identity", gw.handleYSFIdentity)
+	http.HandleFunc("/api/brandmeister/status", gw.handleBrandMeisterStatus)
 	http.HandleFunc("/api/yorkshire_conference", gw.handleYorkshireConference)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
@@ -731,6 +733,52 @@ func (g *Gateway) sendNetworkStatus(s *UserSession, state, message string) {
 	s.mu.RUnlock()
 	data, _ := json.Marshal(event)
 	g.broadcastText(data)
+}
+
+func loadBrandMeisterToken() (string, error) {
+	data, err := os.ReadFile(brandMeisterTokenPath)
+	if err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(string(data))
+	if len(token) < 100 || len(token) > 4096 || len(strings.Split(token, ".")) != 3 || strings.ContainsAny(token, "\r\n") {
+		return "", fmt.Errorf("invalid BrandMeister API token")
+	}
+	return token, nil
+}
+
+func (g *Gateway) handleBrandMeisterStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	token, err := loadBrandMeisterToken()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"configured": false, "verified": false, "status": "not configured"})
+		return
+	}
+	request, err := http.NewRequest(http.MethodGet, "https://api.brandmeister.network/v2/selfcare/byCall?callsign=2E0LXY", nil)
+	if err != nil {
+		http.Error(w, `{"error":"Unable to prepare API verification"}`, http.StatusInternalServerError)
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Accept", "application/json")
+	client := &http.Client{Timeout: 8 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"configured": true, "verified": false, "status": "unavailable"})
+		return
+	}
+	defer response.Body.Close()
+	verified := response.StatusCode >= 200 && response.StatusCode < 300
+	status := "rejected"
+	if verified {
+		status = "verified"
+	}
+	json.NewEncoder(w).Encode(map[string]any{"configured": true, "verified": verified, "status": status})
 }
 
 func loadDMRHost(target string) (DMRHostEntry, error) {
