@@ -420,6 +420,13 @@ func (g *Gateway) acquireTX(client *WSClient, nodeID int) {
 		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "node_id": nodeID, "reason": reason})
 		return
 	}
+	g.bridgeMu.Lock()
+	radioBusy := g.bridge.Active && g.bridge.ActiveNode != 0 && time.Now().Before(g.bridge.ActiveUntil)
+	g.bridgeMu.Unlock()
+	if radioBusy {
+		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "busy", "reason": "A registered DMR radio stream is active"})
+		return
+	}
 	session.mu.RLock()
 	dmrID, callsign := session.DMRID, session.Callsign
 	session.mu.RUnlock()
@@ -491,6 +498,13 @@ func (g *Gateway) registeredDMRID(id uint32) bool {
 	_, found := g.idDB[id]
 	g.dbMutex.RUnlock()
 	return found
+}
+
+func (g *Gateway) webTXActive() bool {
+	g.txMu.Lock()
+	active := g.txOwner != nil
+	g.txMu.Unlock()
+	return active
 }
 
 func (g *Gateway) reportRejectedDMR(id uint32) {
@@ -778,6 +792,12 @@ func dmrFingerprint(data []byte) [32]byte {
 
 func (g *Gateway) forwardBridgeFrame(source *UserSession, data []byte) {
 	if len(data) < 55 || string(data[:4]) != "DMRD" {
+		return
+	}
+	// A browser/app operator holding the global TX lease takes precedence.
+	// The DMR audio can still be received locally, but it must not be
+	// retransmitted onto another network at the same time.
+	if g.webTXActive() {
 		return
 	}
 
