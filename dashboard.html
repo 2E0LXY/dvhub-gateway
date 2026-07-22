@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DV Hub | Gateway Dashboard</title>
+    <title>Yorkshire Link HUB | Gateway Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -299,7 +299,7 @@
         <div class="p-4">
             <div class="flex flex-col md:flex-row justify-between items-center gap-4">
                 <div>
-                    <h1 class="orbitron text-2xl font-black text-white glow-text">DV HUB GATEWAY</h1>
+                    <h1 class="orbitron text-2xl font-black text-white glow-text">YORKSHIRE LINK HUB</h1>
                     <p class="text-[9px] text-gray-500 uppercase tracking-wider mt-1">Digital Voice Network Bridge v2.0</p>
                 </div>
                 
@@ -484,7 +484,7 @@
         <!-- YSF DASHBOARD VIEW -->
         <div id="view-ysf" class="space-y-3 view-hidden">
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <div class="section-card"><div class="section-header">Reflector Status</div><div class="p-4"><span id="ysfd-status" class="chip chip-idle">CHECKING</span><div class="text-[9px] text-gray-500 mt-2">GB 2E0LXY DVHUB</div></div></div>
+                <div class="section-card"><div class="section-header">Reflector Status</div><div class="p-4"><span id="ysfd-status" class="chip chip-idle">CHECKING</span><div class="text-[9px] text-gray-500 mt-2">Yorkshire Link HUB</div></div></div>
                 <div class="section-card"><div class="section-header">Uptime</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-uptime">-</div></div>
                 <div class="section-card"><div class="section-header">Connected Gateways</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-connected">0</div></div>
                 <div class="section-card"><div class="section-header">Transmissions Today</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-transmissions">0</div></div>
@@ -538,8 +538,8 @@
                             <p class="text-[8px] text-amber-400" id="ysf-id-help">Choose carefully. After confirmation this number cannot be changed from the dashboard.</p>
                         </div>
                         <div class="bg-black border border-gray-800 p-3 rounded text-[9px] space-y-2">
-                            <div class="data-row"><span class="data-label">Advertised Name</span><span class="data-value" id="ysf-identity-name">2E0LXY DVHUB</span></div>
-                            <div class="data-row"><span class="data-label">Description</span><span class="data-value" id="ysf-identity-description">2E0LXY UK Hub</span></div>
+                            <div class="data-row"><span class="data-label">Advertised Name</span><span class="data-value" id="ysf-identity-name">YORKSHIRELINK</span></div>
+                            <div class="data-row"><span class="data-label">Description</span><span class="data-value" id="ysf-identity-description">YORKSHIRE HUB</span></div>
                             <div class="data-row"><span class="data-label">Endpoint</span><span class="data-value">194.146.49.25:42000 UDP</span></div>
                             <div class="data-row"><span class="data-label">Country Prefix</span><span class="data-value">GB- (added by DVRef)</span></div>
                         </div>
@@ -585,7 +585,7 @@
                                 <option value="DVStick30">DVStick30 / DV30</option>
                                 <option value="DV3000">DV3000 / ThumbDV</option>
                             </select>
-                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="ai.2e0lxy.uk:2468" onchange="updateAdminParams()">
+                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="zx3de49.glddns.com:2468" onchange="updateAdminParams()">
                         </div>
 
                         <div id="dv30-device-b" class="hidden">
@@ -639,7 +639,7 @@
                                 <option value="3" data-proto="DMR" data-net="DMRPlus-FreeSTAR" data-deftg="23426" data-req-pass="true">DMR+ - IPSC2 FreeSTAR</option>
                                 <option value="4" data-proto="DMR" data-net="TGIF" data-deftg="116" data-req-pass="true">DMR - TGIF Network</option>
                                 <option value="5" data-proto="DMR" data-net="FreeDMR-UK" data-deftg="2350" data-req-pass="false">DMR - FreeDMR UK</option>
-                                <option value="6" data-proto="YSF" data-net="127.0.0.1:42000" data-deftg="0" data-req-pass="false">YSF - 2E0LXY Local Reflector</option>
+                                <option value="6" data-proto="YSF" data-net="127.0.0.1:42000" data-deftg="0" data-req-pass="false">YSF - Yorkshire Link HUB</option>
                             </select>
                         </div>
 
@@ -722,7 +722,7 @@
                     <div class="section-header">Yorkshire TG23530 Conference Preset</div>
                     <div class="p-4 space-y-3 text-[9px]">
                         <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">Local YSF reflector</div><div class="text-green-400">YSF2DMR → TG23530</div></div>
+                            <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">Yorkshire Link HUB YSF</div><div class="text-green-400">YSF2DMR → TG23530</div></div>
                             <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">FreeSTAR System X</div><div id="yorkshire-freestar-state" class="text-gray-300">Disconnected</div></div>
                             <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">TGIF TG23530</div><div id="yorkshire-tgif-state" class="text-gray-300">Disconnected</div></div>
                             <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">BrandMeister UK</div><div id="yorkshire-bm-state" class="text-gray-300">Disconnected</div></div>
@@ -750,7 +750,7 @@
                     <div class="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[9px]">
                         <div><div class="text-gray-500 uppercase mb-1">Server</div><div class="text-green-400">194.146.49.25</div></div>
                         <div><div class="text-gray-500 uppercase mb-1">UDP Port</div><div class="text-green-400">42000</div></div>
-                        <div><div class="text-gray-500 uppercase mb-1">Reflector</div><div class="text-green-400">GB 2E0LXY DVHUB</div></div>
+                        <div><div class="text-gray-500 uppercase mb-1">Reflector</div><div class="text-green-400">Yorkshire Link HUB</div></div>
                         <div class="md:col-span-3 text-gray-400">Pi-Star: add a custom YSF reflector with this host and port. Windows/Android: use DroidStar in YSF mode and enter the same host and port.</div>
                         <div class="md:col-span-3 flex flex-wrap items-center gap-2">
                             <span id="ysf-service-status" class="chip chip-idle">CHECKING</span>
@@ -802,7 +802,7 @@
         let totSeconds = 90;
         let totTimerObj = null;
         let activeVocoder = 'sw';
-        let dv30Config = { count: 1, typeA: 'DVStick30', addrA: '', typeB: 'DVStick30', addrB: '' };
+        let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
         let callsignLookupTimer = null;
         let bridgeConnected = false;
@@ -996,8 +996,8 @@
                 document.getElementById('ysf-id-help').textContent = data.locked
                     ? 'This reflector identity is fixed locally. DVRef registration has not been submitted.'
                     : 'Choose carefully. After confirmation this number cannot be changed from the dashboard.';
-                document.getElementById('ysf-identity-name').textContent = data.name || '2E0LXY DVHUB';
-                document.getElementById('ysf-identity-description').textContent = data.description || '2E0LXY UK Hub';
+                document.getElementById('ysf-identity-name').textContent = data.name || 'YORKSHIRELINK';
+                document.getElementById('ysf-identity-description').textContent = data.description || 'YORKSHIRE HUB';
                 document.getElementById('ysf-dvref-status').textContent = data.dvref_registered ? 'REGISTERED' : (data.dvref_ready ? 'READY — NOT SUBMITTED' : 'IDENTITY REQUIRED');
                 document.getElementById('ysf-registry-source').textContent = data.registry_source || 'UNKNOWN';
                 document.getElementById('ysf-api-token').textContent = data.api_token_configured ? 'SERVER-SIDE' : 'NOT CONFIGURED';
@@ -1993,6 +1993,9 @@
                 try { dv30Config = { ...dv30Config, ...JSON.parse(savedDV30Config) }; } catch (_) {}
             } else if (legacyDV30) {
                 dv30Config.addrA = legacyDV30;
+            }
+            if (!dv30Config.addrA || /(?:^|\/)ai\.2e0lxy\.uk(?::2468)?$/i.test(dv30Config.addrA)) {
+                dv30Config.addrA = 'zx3de49.glddns.com:2468';
             }
             document.getElementById('sel-dv30-count').value = String(dv30Config.count === 2 ? 2 : 1);
             document.getElementById('sel-dv30-type-a').value = dv30Config.typeA || 'DVStick30';

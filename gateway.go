@@ -37,6 +37,8 @@ const (
 	dvrefTokenPath      = "/etc/dvhub/dvref.token"
 	ysf2dmrConfigPath   = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
 	dmrHostsPath        = "/var/lib/dvgateway/DMR_Hosts.txt"
+	ysfNetworkName      = "YORKSHIRELINK"
+	ysfDescription      = "YORKSHIRE HUB"
 )
 
 const (
@@ -227,6 +229,7 @@ func main() {
 	go gw.txWatchdog()
 	go gw.broadcastYSFDashboardLoop()
 
+	defaultDV30 := parseDV30Address("zx3de49.glddns.com:2468")
 	for i := 0; i < MaxUsers; i++ {
 		gw.sessions[i] = &UserSession{
 			ID:         i + 1,
@@ -238,7 +241,7 @@ func main() {
 			RepeaterID: 2350000,
 			StreamID:   uint32(rand.Int31()) + 1,
 		}
-		gw.sessions[i].DV30Addr.Store((*net.UDPAddr)(nil))
+		gw.sessions[i].DV30Addr.Store(defaultDV30)
 		gw.sessions[i].DV30Addr2.Store((*net.UDPAddr)(nil))
 		gw.sessions[i].DV30Count.Store(1)
 		go gw.runUDPListener(gw.sessions[i])
@@ -260,7 +263,7 @@ func main() {
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
 
-	fmt.Println("[SYS] DV Hub Gateway v2.0 - Software Vocoder Enabled")
+	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - Software Vocoder Enabled")
 	fmt.Println("[SYS] Listening on :8080")
 	http.ListenAndServe("127.0.0.1:8080", nil)
 }
@@ -676,6 +679,9 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 				if addr1 == "" {
 					addr1, _ = req["addr"].(string)
 				} // backwards compatibility
+				if addr1 == "" || strings.Contains(strings.ToLower(addr1), "ai.2e0lxy.uk") {
+					addr1 = "zx3de49.glddns.com:2468"
+				}
 				addr2, _ := req["addr2"].(string)
 				count := 1
 				if value, ok := req["count"].(float64); ok && int(value) == 2 {
@@ -1046,7 +1052,7 @@ func (g *Gateway) sendDMRConfig(s *UserSession) {
 	s.mu.RUnlock()
 	config := fmt.Sprintf("%-8.8s%09d%09d%02d%02d%8.8s%9.9s%03d%-20.20s%-19.19s%c%-124.124s%-40.40s%-40.40s",
 		callsign, 430200000, 430200000, 1, 1, "0.000000", "0.000000", 0,
-		"United Kingdom", "DV Hub Web Gateway", '4', "https://194.146.49.25", "DVHub Gateway 2.0", "MMDVM")
+		"United Kingdom", "Yorkshire Link HUB", '4', "https://194.146.49.25", "Yorkshire Link HUB 2.0", "MMDVM")
 	packet := append([]byte("RPTC"), writeUint32BE(repeaterID)...)
 	packet = append(packet, []byte(config)...)
 	_ = g.writeNetworkPacket(s, packet)
@@ -2062,7 +2068,7 @@ func (g *Gateway) downloadFile(url, dest string) {
 func parseYSFInfo() (id, name, description string) {
 	data, err := os.ReadFile(ysfConfigPath)
 	if err != nil {
-		return "", "2E0LXY DVHUB", "2E0LXY UK Hub"
+		return "", ysfNetworkName, ysfDescription
 	}
 	inInfo := false
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -2173,7 +2179,7 @@ func (g *Gateway) handleYSFIdentity(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"That number appears in the current YSF registry"}`, http.StatusConflict)
 		return
 	}
-	cmd := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-set-ysf-identity", request.ID, "2E0LXY DVHUB", "2E0LXY UK Hub")
+	cmd := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-set-ysf-identity", request.ID, ysfNetworkName, ysfDescription)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, strings.TrimSpace(string(output))), http.StatusInternalServerError)
 		return
@@ -2364,7 +2370,7 @@ Latitude=53.8
 Longitude=-1.5
 Height=0
 Location=Yorkshire, United Kingdom
-Description=2E0LXY DVHub temporary TG23530 bridge
+Description=Yorkshire Link HUB temporary TG23530 bridge
 URL=https://194.146.49.25/
 
 [YSF Network]

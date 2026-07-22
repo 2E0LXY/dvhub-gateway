@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="description" content="Public status for the Yorkshire Link HUB YSF reflector">
+    <title>Yorkshire Link HUB YSF Status</title>
+    <style>
+        :root { color-scheme: dark; --green:#39ff88; --panel:#0c1210; --line:#233329; --muted:#839187; }
+        * { box-sizing:border-box; }
+        body { margin:0; background:#050806; color:#e7efe9; font:14px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }
+        body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.28; background-image:linear-gradient(rgba(57,255,136,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(57,255,136,.04) 1px,transparent 1px); background-size:32px 32px; }
+        main { position:relative; width:min(1100px,calc(100% - 28px)); margin:36px auto; }
+        header { display:flex; justify-content:space-between; gap:20px; align-items:end; border-bottom:1px solid var(--line); padding-bottom:18px; }
+        h1 { margin:0; color:var(--green); font:700 clamp(22px,4vw,36px)/1.1 system-ui,sans-serif; letter-spacing:.04em; }
+        .subtitle,.muted { color:var(--muted); }
+        .pill { display:inline-flex; align-items:center; gap:8px; padding:7px 11px; border:1px solid var(--line); border-radius:999px; font-size:12px; }
+        .dot { width:8px; height:8px; border-radius:50%; background:#777; }
+        .running .dot { background:var(--green); box-shadow:0 0 14px var(--green); }
+        .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:18px 0; }
+        .card,.table-card { border:1px solid var(--line); background:linear-gradient(150deg,rgba(18,29,22,.96),rgba(7,10,8,.96)); border-radius:10px; }
+        .card { padding:16px; }
+        .label { color:var(--muted); text-transform:uppercase; font-size:10px; letter-spacing:.12em; }
+        .value { color:var(--green); font-size:20px; margin-top:8px; overflow-wrap:anywhere; }
+        .table-card { overflow:hidden; }
+        .table-title { padding:13px 16px; border-bottom:1px solid var(--line); font-weight:700; }
+        table { width:100%; border-collapse:collapse; }
+        th,td { text-align:left; padding:11px 16px; border-bottom:1px solid #172019; }
+        th { color:var(--muted); font-size:10px; text-transform:uppercase; }
+        td:first-child { color:var(--green); }
+        footer { display:flex; justify-content:space-between; gap:18px; margin-top:18px; color:var(--muted); font-size:11px; }
+        a { color:var(--green); }
+        @media (max-width:760px) { .grid{grid-template-columns:repeat(2,1fr)} header{align-items:start;flex-direction:column} th,td{padding:9px 10px;font-size:11px} .hide-mobile{display:none} }
+    </style>
+</head>
+<body>
+<main>
+    <header>
+        <div><h1 id="name">Yorkshire Link HUB</h1><div class="subtitle" id="endpoint">194.146.49.25:42000 UDP</div></div>
+        <div class="pill" id="status"><span class="dot"></span><span>Checking</span></div>
+    </header>
+    <section class="grid" aria-label="Reflector statistics">
+        <div class="card"><div class="label">Reflector ID</div><div class="value" id="reflector-id">—</div></div>
+        <div class="card"><div class="label">Uptime</div><div class="value" id="uptime">—</div></div>
+        <div class="card"><div class="label">Connected Gateways</div><div class="value" id="connected">0</div></div>
+        <div class="card"><div class="label">Transmissions Today</div><div class="value" id="transmissions">0</div></div>
+    </section>
+    <section class="table-card">
+        <div class="table-title">Recently heard</div>
+        <div style="overflow-x:auto">
+            <table><thead><tr><th>Source</th><th>Destination</th><th class="hide-mobile">Gateway</th><th>Duration</th><th>Time</th></tr></thead><tbody id="heard"><tr><td colspan="5" class="muted">No transmissions logged yet.</td></tr></tbody></table>
+        </div>
+    </section>
+    <footer><span>Maintained by 2E0LXY · Public read-only view</span><span>Updated <span id="updated">—</span></span></footer>
+</main>
+<script>
+    const text = (id, value) => { document.getElementById(id).textContent = value; };
+    const uptime = seconds => { seconds=Math.max(0,Number(seconds)||0); const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60); return d?`${d}d ${h}h`:`${h}h ${m}m`; };
+    async function refresh() {
+        try {
+            const response=await fetch('/api/public/ysf_dashboard',{cache:'no-store'}); if(!response.ok) throw new Error();
+            const data=await response.json();
+            text('name',data.name||'Yorkshire Link HUB'); text('endpoint',`${data.host}:${data.port} UDP`);
+            text('reflector-id',data.reflector_id||'Not set'); text('uptime',uptime(data.uptime_seconds));
+            text('connected',data.connected_count??0); text('transmissions',data.transmissions_today??0); text('updated',new Date().toLocaleTimeString());
+            const status=document.getElementById('status'); status.className=`pill ${data.status==='running'?'running':''}`; status.lastElementChild.textContent=(data.status||'unknown').toUpperCase();
+            const tbody=document.getElementById('heard'); tbody.replaceChildren();
+            const heard=(data.last_heard||[]).slice(0,30);
+            if(!heard.length){const row=tbody.insertRow();const cell=row.insertCell();cell.colSpan=5;cell.className='muted';cell.textContent='No transmissions logged yet.';}
+            for(const item of heard){const row=tbody.insertRow(); const values=[item.source,item.destination,item.gateway,`${Number(item.duration_seconds)||0}s`,item.time?new Date(item.time).toLocaleString():'—']; values.forEach((value,index)=>{const cell=row.insertCell();cell.textContent=value||'—';if(index===2)cell.className='hide-mobile';});}
+        } catch { const status=document.getElementById('status'); status.className='pill'; status.lastElementChild.textContent='UNAVAILABLE'; }
+    }
+    refresh(); setInterval(refresh,10000);
+</script>
+</body>
+</html>

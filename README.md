@@ -61,7 +61,7 @@ Access dashboard at `http://localhost:8080`
 
 The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
 
-**[Download DVHub Remote 1.0.2 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.2/DVHub-Remote-1.0.2.apk)**
+**[Download Yorkshire Link HUB 1.0.3 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.3/Yorkshire-Link-HUB-1.0.3.apk)**
 
 Build it with:
 
@@ -295,7 +295,7 @@ AMBE Frame (9 bytes = 72 bits)
 ```json
 {
   "cmd": "set_dv30",
-  "addr": "ai.2e0lxy.uk:2468"
+  "addr": "zx3de49.glddns.com:2468"
 }
 ```
 
@@ -374,7 +374,7 @@ AMBE Frame (9 bytes = 72 bits)
 **Symptoms**: Connected but poor audio quality
 
 **Solutions**:
-1. Test DV30 server health: `printf '\x70' | nc -u -w1 ai.2e0lxy.uk 2468`
+1. Test DV30 server health: `printf '\x70' | nc -u -w1 zx3de49.glddns.com 2468`
 2. Verify IP:Port in Administration tab
 3. Check DV30 server is running
 4. Ensure network route to DV30 server

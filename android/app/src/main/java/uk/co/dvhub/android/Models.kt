@@ -32,6 +32,6 @@ object GatewayNetworks {
         Network(3, "DMR+ FreeSTAR", "dmrplus", "DMRPlus-FreeSTAR", true),
         Network(4, "TGIF", "tgif", "TGIF", true),
         Network(5, "FreeDMR UK", "freedmr", "FreeDMR-UK"),
-        Network(6, "Local YSF reflector", "ysf", "DVHub-YSF")
+        Network(6, "Yorkshire Link HUB YSF", "ysf", "Yorkshire-Link-HUB")
     )
 }

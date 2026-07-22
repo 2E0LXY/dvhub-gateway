@@ -7,7 +7,7 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_dvhub"
-        android:label="DVHub Remote"
+        android:label="Yorkshire Link HUB"
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.DVHub">

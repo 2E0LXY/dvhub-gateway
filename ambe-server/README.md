@@ -12,9 +12,9 @@ Requests are serialized because one DV30 is one hardware vocoder resource. Inval
 
 ## Network requirement
 
-The configured direct route is public UDP `2468` forwarded to `192.168.1.131:2468`. The service source allowlist must remain `194.146.49.25/32`, and the Linux firewall should allow UDP 2468 only from that VPS. A Tailscale or WireGuard route remains the safer alternative because this compact real-time protocol deliberately has no password exchange.
+The configured direct route is `zx3de49.glddns.com` on public UDP `2468`, forwarded to `192.168.1.131:2468`. The service source allowlist must remain `194.146.49.25/32`, and the Linux firewall should allow UDP 2468 only from that VPS. A Tailscale or WireGuard route remains the safer alternative because this compact real-time protocol deliberately has no password exchange.
 
-The hostname used by DVHub must resolve directly to the router. A Cloudflare-proxied (orange-cloud) DNS record cannot carry arbitrary UDP; use a DNS-only record for `ai.2e0lxy.uk` or a dedicated name such as `ambe.2e0lxy.uk`.
+The hostname used by the hub must resolve directly to the router. `zx3de49.glddns.com` currently provides that unproxied route.
 
 ## Install on the Linux machine with the DV30
 
@@ -32,10 +32,10 @@ Use the persistent `/dev/serial/by-id/...` name. Earlier FTDI-based sticks may u
 Test health from the permitted DVHub VPS:
 
 ```bash
-printf '\x70' | nc -u -w1 ai.2e0lxy.uk 2468
+printf '\x70' | nc -u -w1 zx3de49.glddns.com 2468
 ```
 
-Configure DVHub with `ai.2e0lxy.uk:2468` (or simply `https://ai.2e0lxy.uk`, which DVHub normalises to UDP 2468), select one hardware vocoder, and switch the vocoder mode to hardware. If the device or route is unavailable, DVHub falls back to its software codec rather than transmitting an empty frame.
+Configure the hub with `zx3de49.glddns.com:2468`, select one hardware vocoder, and switch the vocoder mode to hardware. If the device or route is unavailable, the hub falls back to its software codec rather than transmitting an empty frame.
 
 ## Compatibility and licence
 
