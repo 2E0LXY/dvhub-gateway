@@ -2141,32 +2141,42 @@ func (g *Gateway) downloadYSFRegistry() {
 		if resp, err := client.Do(req); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
-				var payload struct {
-					Reflectors []struct {
-						Designator  string `json:"designator"`
-						Name        string `json:"name"`
-						Description string `json:"description"`
-						DNS         string `json:"dns"`
-						IPv4        string `json:"ipv4"`
-						Port        int    `json:"port"`
-					} `json:"reflectors"`
+				type reflectorRecord struct {
+					Designator  string `json:"designator"`
+					Name        string `json:"name"`
+					Description string `json:"description"`
+					DNS         string `json:"dns"`
+					IPv4        string `json:"ipv4"`
+					Port        int    `json:"port"`
 				}
-				if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload) == nil && len(payload.Reflectors) > 100 {
-					sort.Slice(payload.Reflectors, func(i, j int) bool { return payload.Reflectors[i].Designator < payload.Reflectors[j].Designator })
-					var output strings.Builder
-					for _, reflector := range payload.Reflectors {
-						host := strings.TrimSpace(reflector.DNS)
-						if host == "" {
-							host = strings.TrimSpace(reflector.IPv4)
-						}
-						if host == "" || reflector.Port < 1 || reflector.Port > 65535 {
-							continue
-						}
-						fmt.Fprintf(&output, "%s;%s;%s;%s;%d;000;\n", reflector.Designator, reflector.Name, reflector.Description, host, reflector.Port)
+				var payload struct {
+					Reflectors []reflectorRecord `json:"reflectors"`
+					Data       struct {
+						Reflectors []reflectorRecord `json:"reflectors"`
+					} `json:"data"`
+				}
+				if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload) == nil {
+					reflectors := payload.Reflectors
+					if len(reflectors) == 0 {
+						reflectors = payload.Data.Reflectors
 					}
-					if writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.txt", []byte(output.String()), 0644) == nil {
-						_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("DVRef API\n"), 0644)
-						return
+					if len(reflectors) > 100 {
+						sort.Slice(reflectors, func(i, j int) bool { return reflectors[i].Designator < reflectors[j].Designator })
+						var output strings.Builder
+						for _, reflector := range reflectors {
+							host := strings.TrimSpace(reflector.DNS)
+							if host == "" {
+								host = strings.TrimSpace(reflector.IPv4)
+							}
+							if host == "" || reflector.Port < 1 || reflector.Port > 65535 {
+								continue
+							}
+							fmt.Fprintf(&output, "%s;%s;%s;%s;%d;000;\n", reflector.Designator, reflector.Name, reflector.Description, host, reflector.Port)
+						}
+						if writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.txt", []byte(output.String()), 0644) == nil {
+							_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("DVRef API\n"), 0644)
+							return
+						}
 					}
 				}
 			}
