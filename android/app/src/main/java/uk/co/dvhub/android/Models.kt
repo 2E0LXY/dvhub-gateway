@@ -27,7 +27,7 @@ data class RadioActivity(
 
 object GatewayNetworks {
     val all = listOf(
-        Network(1, "FreeSTAR / System-X UK", "freestar", "FreeSTAR-SystemX-UK"),
+        Network(7, "FreeSTAR / System-X UK (manual)", "freestar", "FreeSTAR-SystemX-UK"),
         Network(2, "BrandMeister UK 2341", "brandmeister", "BrandMeister-UK-2341", true),
         Network(3, "DMR+ FreeSTAR", "dmrplus", "DMRPlus-FreeSTAR", true),
         Network(4, "TGIF", "tgif", "TGIF", true),

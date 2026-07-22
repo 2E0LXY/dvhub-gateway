@@ -646,7 +646,7 @@
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
                             <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection(true)">
-                                <option value="1" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false">DMR - FreeSTAR System X UK</option>
+                                <option value="7" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false" data-manual-dmrid="2351633">DMR - FreeSTAR System X UK (manual)</option>
                                 <option value="2" data-proto="DMR" data-net="BrandMeister-UK-2341" data-deftg="235" data-req-pass="true">DMR - BrandMeister UK 2341</option>
                                 <option value="3" data-proto="DMR" data-net="DMRPlus-FreeSTAR" data-deftg="23426" data-req-pass="true">DMR+ - IPSC2 FreeSTAR</option>
                                 <option value="4" data-proto="DMR" data-net="TGIF" data-deftg="116" data-req-pass="true">DMR - TGIF Network</option>
@@ -676,7 +676,7 @@
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2" id="lbl-tg-input">Talkgroup (TG)</label>
                             <div class="flex gap-2">
-                                <select class="input-cyber" id="inp-tg"></select>
+                                <select class="input-cyber" id="inp-tg" onchange="syncManualDMROptions()"></select>
                                 <button onclick="setTG()" class="btn-cyber" style="white-space: nowrap;">SET</button>
                             </div>
                         </div>
@@ -809,7 +809,7 @@
             rxFreq: localStorage.getItem('dv_hub_rx_freq') || '430.2000'
         };
         
-        let linkState = { active: false, id: 1, proto: 'DMR', net: 'FreeSTAR-SystemX-UK', tg: 23426, pwd: '', options: '' };
+        let linkState = { active: false, id: 7, proto: 'DMR', net: 'FreeSTAR-SystemX-UK', tg: 23426, pwd: '', options: 'TS2_1=23426;' };
         const networkPasswords = {};
         let ws, audioCtx, micSource, workletNode;
         let isTransmitting = false;
@@ -1254,7 +1254,9 @@
 
             document.getElementById('network-login-message').textContent = reqPass
                 ? 'This network requires your user/hotspot credential; the master entry is selected from DMR_Hosts.txt.'
-                : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.');
+                : (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK'
+                    ? 'Manual FreeSTAR uses registered DMR ID 2351633 with ESSID 02; the selected TG is applied as the only static talkgroup.'
+                    : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.'));
             updateBrandMeisterAPIStatus(linkState.net === 'BrandMeister-UK-2341');
 
             const isDMR = linkState.proto === 'DMR';
@@ -1269,10 +1271,38 @@
             linkState.tg = parseInt(tgInput.value, 10) || 0;
             const selectedNetwork = linkState.net;
             loadNetworkTalkgroups(selectedNetwork, () => {
-                if (linkState.net === selectedNetwork) populateTalkgroupSelect(tgInput, selectedNetwork, linkState.tg);
+                if (linkState.net === selectedNetwork) {
+                    populateTalkgroupSelect(tgInput, selectedNetwork, linkState.tg);
+                    syncManualDMROptions();
+                }
             });
-            
+            syncManualDMROptions();
             saveLinkState();
+        }
+
+        function syncManualDMROptions() {
+            const input = document.getElementById('inp-dmr-options');
+            const tg = Number(document.getElementById('inp-tg').value);
+            if (linkState.net === 'FreeSTAR-SystemX-UK') {
+                linkState.options = tg > 0 && tg !== 4000 ? `TS2_1=${tg};` : 'TS2_1=0;';
+                input.value = linkState.options;
+                input.readOnly = true;
+                input.title = 'Automatically restricted to the selected FreeSTAR talkgroup';
+            } else {
+                input.readOnly = false;
+                input.title = '';
+                linkState.options = input.value.trim();
+            }
+        }
+
+        function selectedDMRID() {
+            const option = document.getElementById('sel-network').selectedOptions[0];
+            return Number(option?.getAttribute('data-manual-dmrid')) || config.dmrID;
+        }
+
+        function selectedRepeaterID() {
+            if (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK') return selectedDMRID() * 100 + 2;
+            return config.essid ? (config.dmrID * 100 + config.essid) : config.dmrID;
         }
 
         async function updateBrandMeisterAPIStatus(visible) {
@@ -1562,6 +1592,7 @@
 
             updateNetworkPassword();
             updateDMRIdentity();
+            syncManualDMROptions();
             if (linkState.active && linkState.proto === 'DMR') {
                 if (!/^[A-Z0-9]{3,8}$/.test(config.callsign) || config.dmrID < 1000000 || config.dmrID > 9999999) {
                     linkState.active = false;
@@ -1601,7 +1632,6 @@
                 document.getElementById('radio-mode').innerText = linkState.proto;
                 
                 document.getElementById('sel-network').disabled = true;
-                document.getElementById('inp-tg').disabled = true;
                 document.getElementById('inp-net-pass').disabled = true;
                 document.getElementById('inp-callsign').disabled = true;
                 document.getElementById('inp-dmr-id').disabled = true;
@@ -1612,7 +1642,6 @@
                 pttBtn.classList.remove('btn-cyber');
                 pttBtn.className = 'btn-cyber';
                 
-                await initAudio();
             } else {
                 btn.innerText = 'CONNECT LINK';
                 btn.classList.remove('danger');
@@ -1627,7 +1656,6 @@
                 netActiveTG.innerText = '-';
                 
                 document.getElementById('sel-network').disabled = false;
-                document.getElementById('inp-tg').disabled = false;
                 document.getElementById('inp-net-pass').disabled = false;
                 document.getElementById('inp-callsign').disabled = false;
                 document.getElementById('inp-dmr-id').disabled = false;
@@ -1644,8 +1672,8 @@
                 ws.send(JSON.stringify({ 
                     cmd: 'node_state', node_id: linkState.id, active: linkState.active, 
                     mode: linkState.proto, target: linkState.net, tg: linkState.tg, password: linkState.pwd,
-                    callsign: config.callsign, dmr_id: config.dmrID,
-                    repeater_id: config.essid ? (config.dmrID * 100 + config.essid) : config.dmrID,
+                    callsign: config.callsign, dmr_id: selectedDMRID(),
+                    repeater_id: selectedRepeaterID(),
                     options: linkState.options
                 }));
             }
@@ -1662,26 +1690,28 @@
             
             if (!linkState.active) {
                 linkState.tg = newTG;
+				syncManualDMROptions();
                 saveLinkState();
                 return;
             }
             
             const unlinkVal = linkState.proto === 'DMR' ? 4000 : 0;
             linkState.tg = newTG;
+            syncManualDMROptions();
             saveLinkState();
             
             if (ws && ws.readyState === 1) {
                 console.log('[TG] Changing to', newTG);
                 
-                // Send disconnect
+                // Disconnect cleanly before re-authenticating with the new
+                // single-talkgroup System X options string.
                 ws.send(JSON.stringify({ 
                     cmd: 'node_state', 
                     node_id: linkState.id, 
-                    active: true, 
+                    active: false,
                     mode: linkState.proto, 
                     target: linkState.net, 
-                    tg: unlinkVal, 
-                    password: linkState.pwd 
+                    tg: unlinkVal
                 }));
                 
                 // Wait 800ms then send new TG
@@ -1693,7 +1723,11 @@
                         mode: linkState.proto, 
                         target: linkState.net, 
                         tg: newTG, 
-                        password: linkState.pwd 
+                        password: linkState.pwd,
+                        callsign: config.callsign,
+                        dmr_id: selectedDMRID(),
+                        repeater_id: selectedRepeaterID(),
+                        options: linkState.options
                     }));
                     
                     // Update displays
@@ -1706,7 +1740,7 @@
         }
 
         function setNetworkControlsDisabled(disabled) {
-            ['sel-network', 'inp-tg', 'inp-net-pass', 'inp-callsign', 'inp-dmr-id', 'inp-essid', 'inp-dmr-options']
+            ['sel-network', 'inp-net-pass', 'inp-callsign', 'inp-dmr-id', 'inp-essid', 'inp-dmr-options']
                 .forEach(id => document.getElementById(id).disabled = disabled);
         }
 
@@ -1770,8 +1804,8 @@
                             tg: linkState.tg, 
                             password: linkState.pwd,
                             callsign: config.callsign,
-                            dmr_id: config.dmrID,
-                            repeater_id: config.essid ? (config.dmrID * 100 + config.essid) : config.dmrID,
+                            dmr_id: selectedDMRID(),
+                            repeater_id: selectedRepeaterID(),
                             options: linkState.options
                         }));
                     }
@@ -1939,15 +1973,15 @@
             }
         }
 
-        function startTX() {
+        async function startTX() {
             if(!linkState.active || isTransmitting) return;
             if(!ws || ws.readyState !== 1) {
                 console.warn('[PTT] WebSocket not connected');
                 return;
             }
             if(!audioCtx || !workletNode) {
-                console.warn('[PTT] Audio not initialized');
-                return;
+                await initAudio();
+                if(!audioCtx || !workletNode) return;
             }
             
             isTransmitting = true;

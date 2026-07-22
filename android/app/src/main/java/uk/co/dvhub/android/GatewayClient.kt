@@ -82,11 +82,18 @@ class GatewayClient(private val listener: Listener) {
     }
 
     fun nodeState(network: Network, active: Boolean, tg: Int, password: String, options: String = "") = send(JsonObject().apply {
+		val effectiveOptions = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") {
+			if (tg == 4000) "TS2_1=0;" else "TS2_1=$tg;"
+		} else options
+		val effectiveDMRId = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") 2351633L else (settings.dmrId.toLongOrNull() ?: 0)
+		val effectiveRepeaterId = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") {
+			effectiveDMRId * 100 + 2
+		} else repeaterId()
         addProperty("cmd", "node_state"); addProperty("node_id", network.nodeId); addProperty("active", active)
         addProperty("mode", if (network.apiName == "ysf") "YSF" else "DMR"); addProperty("target", network.target)
         addProperty("tg", tg); addProperty("password", password); addProperty("callsign", settings.callsign)
-        addProperty("dmr_id", settings.dmrId.toLongOrNull() ?: 0); addProperty("repeater_id", repeaterId())
-        addProperty("options", options)
+        addProperty("dmr_id", effectiveDMRId); addProperty("repeater_id", effectiveRepeaterId)
+        addProperty("options", effectiveOptions)
     })
 
     fun txStart(nodeId: Int) = send(JsonObject().apply { addProperty("cmd", "tx_start"); addProperty("node_id", nodeId) })

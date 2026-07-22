@@ -131,6 +131,8 @@ When enabled, the supervisor restores the YSF2DMR service, the three DMR logins,
 
 The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, booking only TG23530 as the static simplex talkgroup. The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
 
+The dashboard and Android app use registered DMR ID `2351633` on session/node 7 with ESSID `02` for manual FreeSTAR operation. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using DMR ID `2344399`, ESSID `01`, and TG23530.
+
 Networks are configured in `gateway.go` at line 544:
 
 ```go
