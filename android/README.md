@@ -4,7 +4,7 @@ Native Android controller for the 2E0LXY DVHub gateway. It uses the gateway's au
 
 ## Download
 
-**[Download DVHub Remote 1.0.1 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.1/DVHub-Remote-1.0.1.apk)**
+**[Download DVHub Remote 1.0.2 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.2/DVHub-Remote-1.0.2.apk)**
 
 ## Install
 

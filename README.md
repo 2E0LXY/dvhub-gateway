@@ -61,7 +61,7 @@ Access dashboard at `http://localhost:8080`
 
 The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
 
-**[Download DVHub Remote 1.0.1 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.1/DVHub-Remote-1.0.1.apk)**
+**[Download DVHub Remote 1.0.2 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.2/DVHub-Remote-1.0.2.apk)**
 
 Build it with:
 
