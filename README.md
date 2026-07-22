@@ -60,6 +60,8 @@ Access dashboard at `http://localhost:8080`
 
 The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
 
+**[Download DVHub Remote 1.0.1 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.1/DVHub-Remote-1.0.1.apk)**
+
 Build it with:
 
 ```bash
@@ -67,7 +69,7 @@ cd android
 ./gradlew assembleDebug
 ```
 
-The APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions also uploads an installable debug APK for each Android build.
+The local APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`. Generated build output is not committed to Git; installable builds are published under [GitHub Releases](https://github.com/2E0LXY/dvhub-gateway/releases), and GitHub Actions uploads an artifact for each Android build.
 
 ## 📦 Installation
 

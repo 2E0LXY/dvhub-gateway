@@ -2,9 +2,13 @@
 
 Native Android controller for the 2E0LXY DVHub gateway. It uses the gateway's authenticated HTTPS API and WebSocket transport; it does not embed gateway or radio-network passwords.
 
+## Download
+
+**[Download DVHub Remote 1.0.1 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.1/DVHub-Remote-1.0.1.apk)**
+
 ## Install
 
-1. Copy `app/build/outputs/apk/debug/DVHub-Remote-1.0.0.apk` to an Android 8.0 or newer device.
+1. Download the release APK, or build `app/build/outputs/apk/debug/app-debug.apk`, and copy it to an Android 8.0 or newer device.
 2. Permit installation from the browser or file manager used to open it.
 3. In **Settings**, enter the HTTPS gateway URL, Basic Auth login, callsign, DMR ID and ESSID, then tap **Save encrypted & connect**.
 4. Android asks for microphone permission the first time **HOLD TO TALK** is pressed.
