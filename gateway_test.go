@@ -182,6 +182,22 @@ func TestRegisteredIdentityMustMatchRadioID(t *testing.T) {
 	}
 }
 
+func TestYSFGatewayEndpointAndIdentityEnrichment(t *testing.T) {
+	host, port := splitYSFEndpoint("192.0.2.25:42000")
+	if host != "192.0.2.25" || port != 42000 {
+		t.Fatalf("endpoint parsed as %q:%d", host, port)
+	}
+	gateway := &Gateway{idDB: map[uint32]RadioIDInfo{
+		2344399: {Callsign: "2E0LXY", Name: "Daren", City: "York", Country: "United Kingdom"},
+		2344999: {Callsign: "2E0LXY", Name: "Alternate", City: "Leeds", Country: "United Kingdom"},
+		2344000: {Callsign: "M0ABC", Name: "Other"},
+	}}
+	identities := gateway.ysfGatewayIdentities("2e0lxy")
+	if len(identities) != 2 || identities[0].DMRID != 2344399 || identities[1].DMRID != 2344999 {
+		t.Fatalf("unexpected YSF identities: %#v", identities)
+	}
+}
+
 func TestTXLeaseCanOnlyBeReleasedByOwner(t *testing.T) {
 	owner := &WSClient{}
 	other := &WSClient{}

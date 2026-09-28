@@ -949,6 +949,18 @@
             return days ? `${days}d ${hours}h` : `${hours}h ${minutes}m`;
         }
 
+        function formatYSFDuration(totalSeconds) {
+            const seconds = Math.max(0, Number(totalSeconds) || 0);
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainder = Math.floor(seconds % 60);
+            if (days) return `${days}d ${hours}h ${minutes}m`;
+            if (hours) return `${hours}h ${minutes}m ${remainder}s`;
+            if (minutes) return `${minutes}m ${remainder}s`;
+            return `${remainder}s`;
+        }
+
         function formatYSFTime(value) {
             if (!value) return '-';
             return new Date(value).toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -972,8 +984,29 @@
 
                 const gateways = data.connected_gateways || [];
                 document.getElementById('ysfd-gateways').innerHTML = gateways.length ? `
-                    <div class="grid grid-cols-[1fr_1.4fr_1fr] gap-2 text-gray-500 uppercase border-b border-gray-800 pb-2 mb-1"><span>Callsign</span><span>Address</span><span>Connected</span></div>
-                    ${gateways.map(item => `<div class="grid grid-cols-[1fr_1.4fr_1fr] gap-2 py-2 border-b border-gray-900"><span class="text-green-400">${escapeHTML(item.callsign)}</span><span>${escapeHTML(item.address)}</span><span>${escapeHTML(formatYSFTime(item.connected_at))}</span></div>`).join('')}
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    ${gateways.map(item => {
+                        const identities = (item.identities || []).map(identity => {
+                            const location = [identity.city, identity.state, identity.country].filter(Boolean).join(', ');
+                            return `<div class="mt-1 text-[9px]"><span class="text-green-400">DMR ${Number(identity.dmr_id) || '-'}</span> · ${escapeHTML(identity.name || 'Name unavailable')}${location ? ` · ${escapeHTML(location)}` : ''}</div>`;
+                        }).join('') || '<div class="mt-1 text-[9px] text-gray-600">No matching RadioID record</div>';
+                        const statusClass = item.status === 'active' ? 'chip-ok' : item.status === 'idle' ? 'chip-warn' : 'chip-idle';
+                        return `<article class="border border-gray-800 bg-black/20 p-3">
+                            <div class="flex items-center justify-between gap-3 border-b border-gray-800 pb-2 mb-2"><span class="text-green-400 text-sm font-bold">${escapeHTML(item.callsign)}</span><span class="chip ${statusClass}">${escapeHTML(item.status || 'connected')}</span></div>
+                            <div class="grid grid-cols-[115px_1fr] gap-x-3 gap-y-1">
+                                <span class="text-gray-600 uppercase">Protocol</span><span>${escapeHTML(item.protocol || 'YSF')}</span>
+                                <span class="text-gray-600 uppercase">Remote endpoint</span><span>${escapeHTML(item.address || '-')}</span>
+                                <span class="text-gray-600 uppercase">IP / source port</span><span>${escapeHTML(item.ip || '-')} / ${Number(item.port) || '-'}</span>
+                                <span class="text-gray-600 uppercase">Connected</span><span>${escapeHTML(formatYSFTime(item.connected_at))}</span>
+                                <span class="text-gray-600 uppercase">Online for</span><span>${escapeHTML(formatYSFDuration(item.connected_seconds))}</span>
+                                <span class="text-gray-600 uppercase">Last traffic</span><span>${item.traffic_seen ? `${escapeHTML(formatYSFTime(item.last_seen))} (${escapeHTML(formatYSFDuration(item.idle_seconds))} ago)` : 'No traffic since connection'}</span>
+                                <span class="text-gray-600 uppercase">Last route</span><span>${item.last_source ? `${escapeHTML(item.last_source)} → ${escapeHTML(item.last_destination || '-')}` : '-'}</span>
+                                <span class="text-gray-600 uppercase">TX / airtime</span><span>${Number(item.transmission_count) || 0} transmissions · ${escapeHTML(formatYSFDuration(item.total_airtime_seconds))}</span>
+                            </div>
+                            <div class="mt-2 pt-2 border-t border-gray-800"><span class="text-gray-600 uppercase">RadioID identity</span>${identities}</div>
+                        </article>`;
+                    }).join('')}
+                    </div>
                 ` : 'No gateways connected.';
 
                 const heard = data.last_heard || [];

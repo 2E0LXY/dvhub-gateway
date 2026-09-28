@@ -111,6 +111,33 @@ type RadioIDInfo struct {
 	Country  string
 }
 
+type YSFGatewayIdentity struct {
+	DMRID   uint32 `json:"dmr_id"`
+	Name    string `json:"name"`
+	City    string `json:"city"`
+	State   string `json:"state"`
+	Country string `json:"country"`
+}
+
+type YSFGatewayEntry struct {
+	Callsign            string               `json:"callsign"`
+	Address             string               `json:"address"`
+	IP                  string               `json:"ip"`
+	Port                int                  `json:"port"`
+	Protocol            string               `json:"protocol"`
+	ConnectedAt         string               `json:"connected_at"`
+	LastSeen            string               `json:"last_seen"`
+	ConnectedSeconds    int64                `json:"connected_seconds"`
+	IdleSeconds         int64                `json:"idle_seconds"`
+	TrafficSeen         bool                 `json:"traffic_seen"`
+	Status              string               `json:"status"`
+	LastSource          string               `json:"last_source"`
+	LastDestination     string               `json:"last_destination"`
+	TransmissionCount   int                  `json:"transmission_count"`
+	TotalAirtimeSeconds int64                `json:"total_airtime_seconds"`
+	Identities          []YSFGatewayIdentity `json:"identities"`
+}
+
 type DMRTrafficMeta struct {
 	DestinationID uint32
 	RepeaterID    uint32
@@ -2857,13 +2884,39 @@ func ysfServiceUptime() int64 {
 	return seconds
 }
 
-func (g *Gateway) collectYSFDashboard() map[string]any {
-	type gatewayEntry struct {
-		Callsign    string `json:"callsign"`
-		Address     string `json:"address"`
-		ConnectedAt string `json:"connected_at"`
-		LastSeen    string `json:"last_seen"`
+func splitYSFEndpoint(address string) (string, int) {
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil {
+		return address, 0
 	}
+	port, _ := strconv.Atoi(portText)
+	return host, port
+}
+
+func nonNegativeSeconds(duration time.Duration) int64 {
+	seconds := int64(duration.Seconds())
+	if seconds < 0 {
+		return 0
+	}
+	return seconds
+}
+
+func (g *Gateway) ysfGatewayIdentities(callsign string) []YSFGatewayIdentity {
+	identities := make([]YSFGatewayIdentity, 0, 2)
+	g.dbMutex.RLock()
+	for id, info := range g.idDB {
+		if strings.EqualFold(strings.TrimSpace(info.Callsign), strings.TrimSpace(callsign)) {
+			identities = append(identities, YSFGatewayIdentity{
+				DMRID: id, Name: info.Name, City: info.City, State: info.State, Country: info.Country,
+			})
+		}
+	}
+	g.dbMutex.RUnlock()
+	sort.Slice(identities, func(i, j int) bool { return identities[i].DMRID < identities[j].DMRID })
+	return identities
+}
+
+func (g *Gateway) collectYSFDashboard() map[string]any {
 	type heardEntry struct {
 		Time        string `json:"time"`
 		Source      string `json:"source"`
@@ -2877,7 +2930,7 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 		Message string `json:"message"`
 	}
 
-	connected := make(map[string]gatewayEntry)
+	connected := make(map[string]YSFGatewayEntry)
 	heard := make([]heardEntry, 0, 50)
 	activity := make([]activityEntry, 0, 100)
 	uniqueCallsigns := make(map[string]bool)
@@ -2904,13 +2957,17 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 			message := parts[2]
 			formattedTime := timestamp.Format(time.RFC3339)
 			if strings.Contains(message, "YSFReflector-") && strings.HasSuffix(message, " is starting") {
-				connected = make(map[string]gatewayEntry)
+				connected = make(map[string]YSFGatewayEntry)
 				current = nil
 				continue
 			}
 			if match := ysfAdding.FindStringSubmatch(message); len(match) == 3 {
 				callsign := strings.TrimSpace(match[1])
-				connected[callsign] = gatewayEntry{Callsign: callsign, Address: match[2], ConnectedAt: formattedTime, LastSeen: formattedTime}
+				host, port := splitYSFEndpoint(match[2])
+				connected[callsign] = YSFGatewayEntry{
+					Callsign: callsign, Address: match[2], IP: host, Port: port, Protocol: "YSF",
+					ConnectedAt: formattedTime, LastSeen: formattedTime, Status: "connected",
+				}
 				activity = append(activity, activityEntry{Time: formattedTime, Type: "connected", Message: callsign + " connected"})
 				continue
 			}
@@ -2929,6 +2986,11 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 				}
 				if gateway, ok := connected[entry.Gateway]; ok {
 					gateway.LastSeen = formattedTime
+					gateway.TrafficSeen = true
+					gateway.Status = "active"
+					gateway.LastSource = entry.Source
+					gateway.LastDestination = entry.Destination
+					gateway.TransmissionCount++
 					connected[entry.Gateway] = gateway
 				}
 				activity = append(activity, activityEntry{Time: formattedTime, Type: "transmission", Message: entry.Source + " → " + entry.Destination + " via " + entry.Gateway})
@@ -2937,6 +2999,10 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 			if message == "Received end of transmission" && current != nil {
 				start, _ := time.Parse(time.RFC3339, current.Time)
 				current.Duration = int64(timestamp.Sub(start).Seconds())
+				if gateway, ok := connected[current.Gateway]; ok {
+					gateway.TotalAirtimeSeconds += current.Duration
+					connected[current.Gateway] = gateway
+				}
 				heard = append(heard, *current)
 				current = nil
 			}
@@ -2958,8 +3024,17 @@ func (g *Gateway) collectYSFDashboard() map[string]any {
 	for left, right := 0, len(activity)-1; left < right; left, right = left+1, right-1 {
 		activity[left], activity[right] = activity[right], activity[left]
 	}
-	gateways := make([]gatewayEntry, 0, len(connected))
+	gateways := make([]YSFGatewayEntry, 0, len(connected))
+	now := time.Now().UTC()
 	for _, gateway := range connected {
+		connectedAt, _ := time.Parse(time.RFC3339, gateway.ConnectedAt)
+		lastSeen, _ := time.Parse(time.RFC3339, gateway.LastSeen)
+		gateway.ConnectedSeconds = nonNegativeSeconds(now.Sub(connectedAt))
+		gateway.IdleSeconds = nonNegativeSeconds(now.Sub(lastSeen))
+		if gateway.TrafficSeen && gateway.IdleSeconds > 30 {
+			gateway.Status = "idle"
+		}
+		gateway.Identities = g.ysfGatewayIdentities(gateway.Callsign)
 		gateways = append(gateways, gateway)
 	}
 	sort.Slice(gateways, func(i, j int) bool { return gateways[i].Callsign < gateways[j].Callsign })
@@ -2994,7 +3069,8 @@ func (g *Gateway) handlePublicYSFDashboard(w http.ResponseWriter, r *http.Reques
 		"status": data["status"], "name": data["name"], "reflector_id": data["reflector_id"],
 		"host": data["host"], "port": data["port"], "uptime_seconds": data["uptime_seconds"],
 		"connected_count": data["connected_count"], "transmissions_today": data["transmissions_today"],
-		"unique_callsigns": data["unique_callsigns"], "last_heard": data["last_heard"],
+		"unique_callsigns": data["unique_callsigns"], "connected_gateways": data["connected_gateways"],
+		"last_heard": data["last_heard"],
 	}
 	json.NewEncoder(w).Encode(public)
 }

@@ -24,13 +24,22 @@
         .value { color:var(--green); font-size:20px; margin-top:8px; overflow-wrap:anywhere; }
         .table-card { overflow:hidden; }
         .table-title { padding:13px 16px; border-bottom:1px solid var(--line); font-weight:700; }
+        .gateway-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; padding:14px; }
+        .gateway-card { border:1px solid var(--line); border-radius:8px; padding:14px; background:rgba(0,0,0,.2); min-width:0; }
+        .gateway-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:9px; margin-bottom:9px; border-bottom:1px solid var(--line); }
+        .gateway-name { color:var(--green); font-weight:700; font-size:16px; }
+        .gateway-state { color:var(--muted); text-transform:uppercase; font-size:10px; }
+        .gateway-data { display:grid; grid-template-columns:130px minmax(0,1fr); gap:5px 12px; }
+        .gateway-data dt { color:var(--muted); text-transform:uppercase; font-size:10px; }
+        .gateway-data dd { margin:0; overflow-wrap:anywhere; }
+        .identity { border-top:1px solid var(--line); margin-top:9px; padding-top:9px; color:var(--muted); font-size:11px; }
         table { width:100%; border-collapse:collapse; }
         th,td { text-align:left; padding:11px 16px; border-bottom:1px solid #172019; }
         th { color:var(--muted); font-size:10px; text-transform:uppercase; }
         td:first-child { color:var(--green); }
         footer { display:flex; justify-content:space-between; gap:18px; margin-top:18px; color:var(--muted); font-size:11px; }
         a { color:var(--green); }
-        @media (max-width:760px) { .grid{grid-template-columns:repeat(2,1fr)} header{align-items:start;flex-direction:column} th,td{padding:9px 10px;font-size:11px} .hide-mobile{display:none} }
+        @media (max-width:760px) { .grid{grid-template-columns:repeat(2,1fr)} .gateway-grid{grid-template-columns:1fr} .gateway-data{grid-template-columns:105px minmax(0,1fr)} header{align-items:start;flex-direction:column} th,td{padding:9px 10px;font-size:11px} .hide-mobile{display:none} }
     </style>
 </head>
 <body>
@@ -45,6 +54,10 @@
         <div class="card"><div class="label">Connected Gateways</div><div class="value" id="connected">0</div></div>
         <div class="card"><div class="label">Transmissions Today</div><div class="value" id="transmissions">0</div></div>
     </section>
+    <section class="table-card" style="margin-bottom:18px">
+        <div class="table-title">Connected gateways</div>
+        <div class="gateway-grid" id="gateways"><div class="muted">No gateways connected.</div></div>
+    </section>
     <section class="table-card">
         <div class="table-title">Recently heard</div>
         <div style="overflow-x:auto">
@@ -56,6 +69,29 @@
 <script>
     const text = (id, value) => { document.getElementById(id).textContent = value; };
     const uptime = seconds => { seconds=Math.max(0,Number(seconds)||0); const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60); return d?`${d}d ${h}h`:`${h}h ${m}m`; };
+    const duration = seconds => { seconds=Math.max(0,Number(seconds)||0); const d=Math.floor(seconds/86400),h=Math.floor(seconds%86400/3600),m=Math.floor(seconds%3600/60),s=Math.floor(seconds%60); return d?`${d}d ${h}h ${m}m`:h?`${h}h ${m}m ${s}s`:m?`${m}m ${s}s`:`${s}s`; };
+    const localTime = value => value ? new Date(value).toLocaleString() : '—';
+    function addGatewayField(list,label,value){const term=document.createElement('dt');term.textContent=label;const detail=document.createElement('dd');detail.textContent=value;list.append(term,detail);}
+    function renderGateways(items){
+        const container=document.getElementById('gateways');container.replaceChildren();
+        if(!items.length){const empty=document.createElement('div');empty.className='muted';empty.textContent='No gateways connected.';container.append(empty);return;}
+        for(const item of items){
+            const card=document.createElement('article');card.className='gateway-card';
+            const head=document.createElement('div');head.className='gateway-head';
+            const name=document.createElement('span');name.className='gateway-name';name.textContent=item.callsign||'Unknown';
+            const state=document.createElement('span');state.className='gateway-state';state.textContent=item.status||'connected';head.append(name,state);
+            const list=document.createElement('dl');list.className='gateway-data';
+            addGatewayField(list,'Protocol',item.protocol||'YSF'); addGatewayField(list,'Remote endpoint',item.address||'—');
+            addGatewayField(list,'IP / source port',`${item.ip||'—'} / ${Number(item.port)||'—'}`); addGatewayField(list,'Connected',localTime(item.connected_at));
+            addGatewayField(list,'Online for',duration(item.connected_seconds)); addGatewayField(list,'Last traffic',item.traffic_seen?`${localTime(item.last_seen)} (${duration(item.idle_seconds)} ago)`:'No traffic since connection');
+            addGatewayField(list,'Last route',item.last_source?`${item.last_source} → ${item.last_destination||'—'}`:'—'); addGatewayField(list,'TX / airtime',`${Number(item.transmission_count)||0} transmissions · ${duration(item.total_airtime_seconds)}`);
+            card.append(head,list);
+            const identities=document.createElement('div');identities.className='identity';
+            if((item.identities||[]).length){for(const identity of item.identities){const row=document.createElement('div');const location=[identity.city,identity.state,identity.country].filter(Boolean).join(', ');row.textContent=`DMR ${identity.dmr_id||'—'} · ${identity.name||'Name unavailable'}${location?' · '+location:''}`;identities.append(row);}}
+            else identities.textContent='No matching RadioID record';
+            card.append(identities);container.append(card);
+        }
+    }
     async function refresh() {
         try {
             const response=await fetch('/api/public/ysf_dashboard',{cache:'no-store'}); if(!response.ok) throw new Error();
@@ -63,6 +99,7 @@
             text('name',data.name||'Yorkshire Link HUB'); text('endpoint',`${data.host}:${data.port} UDP`);
             text('reflector-id',data.reflector_id||'Not set'); text('uptime',uptime(data.uptime_seconds));
             text('connected',data.connected_count??0); text('transmissions',data.transmissions_today??0); text('updated',new Date().toLocaleTimeString());
+            renderGateways(data.connected_gateways||[]);
             const status=document.getElementById('status'); status.className=`pill ${data.status==='running'?'running':''}`; status.lastElementChild.textContent=(data.status||'unknown').toUpperCase();
             const tbody=document.getElementById('heard'); tbody.replaceChildren();
             const heard=(data.last_heard||[]).slice(0,30);
