@@ -2548,7 +2548,11 @@
             const savedVoc = localStorage.getItem('dv_hub_voc');
             const savedHardwareReady = validVocoderAddress(dv30Config.addrA) && (dv30Config.count !== 2 || validVocoderAddress(dv30Config.addrB));
             const hardwareMigrationDone = localStorage.getItem('dv_hub_hw_ready_v1') === '1';
-            if (!hardwareMigrationDone && savedHardwareReady) {
+            const hybridMigrationDone = localStorage.getItem('dv_hub_hybrid_v1') === '1';
+            if (!hybridMigrationDone && savedHardwareReady) {
+                localStorage.setItem('dv_hub_hybrid_v1', '1');
+                setVocoder('hybrid');
+            } else if (!hardwareMigrationDone && savedHardwareReady) {
                 localStorage.setItem('dv_hub_hw_ready_v1', '1');
                 setVocoder('hybrid');
             } else if ((savedVoc === 'hw' || savedVoc === 'hybrid') && !savedHardwareReady) setVocoder('sw');
