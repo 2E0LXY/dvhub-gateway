@@ -1,0 +1,239 @@
+warning: in the working copy of 'P252DMR/MBEVocoder.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'P252DMR/MBEVocoder.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'P252DMR/Makefile', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'P252DMR/ModeConv.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/P252DMR/MBEVocoder.cpp b/P252DMR/MBEVocoder.cpp
+index 3e2513c..d8091e5 100644
+--- a/P252DMR/MBEVocoder.cpp
++++ b/P252DMR/MBEVocoder.cpp
+@@ -18,17 +18,96 @@
+ *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+ #include <cstring>
+-#include <md380_vocoder.h>
++#include <cstdlib>
++#include <cstdio>
++#include <cerrno>
++#include <netdb.h>
++#include <sys/socket.h>
++#include <sys/time.h>
++#include <unistd.h>
++#include <string>
++#include <vector>
+ #include "MBEVocoder.h"
+ 
+ 
+ const uint8_t  BIT_MASK_TABLE8[]  = { 0x80U, 0x40U, 0x20U, 0x10U, 0x08U, 0x04U, 0x02U, 0x01U };
++const uint8_t DV30_AMBE_SILENCE[] = {0xB9U, 0xE8U, 0x81U, 0x52U, 0x61U, 0x73U, 0x00U, 0x2AU, 0x6BU};
+ #define WRITE_BIT8(p,i,b)   p[(i)>>3] = (b) ? (p[(i)>>3] | BIT_MASK_TABLE8[(i)&7]) : (p[(i)>>3] & ~BIT_MASK_TABLE8[(i)&7])
+ #define READ_BIT8(p,i)     (p[(i)>>3] & BIT_MASK_TABLE8[(i)&7])
+ 
+-MBEVocoder::MBEVocoder(void)
++MBEVocoder::MBEVocoder(void) :
++m_socket(-1),
++m_channel(0U)
+ {
+-	md380_init();
++	const char* endpoint = ::getenv("DV30_ADDRESS");
++	if (endpoint == NULL || *endpoint == '\0')
++		endpoint = "zx3de49.glddns.com:2468";
++
++	std::string value(endpoint);
++	std::string::size_type separator = value.rfind(':');
++	if (separator == std::string::npos)
++		return;
++	std::string host = value.substr(0U, separator);
++	std::string port = value.substr(separator + 1U);
++
++	struct addrinfo hints;
++	::memset(&hints, 0, sizeof(hints));
++	hints.ai_family = AF_UNSPEC;
++	hints.ai_socktype = SOCK_DGRAM;
++	struct addrinfo* result = NULL;
++	if (::getaddrinfo(host.c_str(), port.c_str(), &hints, &result) != 0)
++		return;
++
++	for (struct addrinfo* item = result; item != NULL; item = item->ai_next) {
++		int fd = ::socket(item->ai_family, item->ai_socktype, item->ai_protocol);
++		if (fd < 0)
++			continue;
++		if (::connect(fd, item->ai_addr, item->ai_addrlen) == 0) {
++			m_socket = fd;
++			break;
++		}
++		::close(fd);
++	}
++	::freeaddrinfo(result);
++
++	if (m_socket >= 0) {
++		struct timeval timeout;
++		timeout.tv_sec = 0;
++		timeout.tv_usec = 250000;
++		::setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
++	}
++}
++
++MBEVocoder::~MBEVocoder(void)
++{
++	if (m_socket >= 0)
++		::close(m_socket);
++}
++
++bool MBEVocoder::exchange(uint8_t opcode, const uint8_t* input, unsigned int inputLength,
++	uint8_t replyOpcode, uint8_t* output, unsigned int outputLength)
++{
++	if (m_socket < 0)
++		return false;
++
++	const uint8_t channel = ++m_channel;
++	std::vector<uint8_t> request(2U + inputLength);
++	request[0U] = opcode;
++	request[1U] = channel;
++	::memcpy(&request[2U], input, inputLength);
++	if (::send(m_socket, &request[0U], request.size(), 0) != (ssize_t)request.size())
++		return false;
++
++	uint8_t response[512U];
++	for (;;) {
++		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
++		if (length < 0)
++			return false;
++		if ((unsigned int)length >= outputLength + 2U && response[0U] == replyOpcode && response[1U] == channel) {
++			::memcpy(output, response + 2U, outputLength);
++			return true;
++		}
++	}
+ }
+ 
+ void MBEVocoder::decode_4400(int16_t *pcm, uint8_t *imbe)
+@@ -116,10 +195,12 @@ void MBEVocoder::encode_4400(int16_t *pcm, uint8_t *imbe)
+ 
+ void MBEVocoder::decode_2450(int16_t *pcm, uint8_t *ambe49)
+ {
+-	md380_decode(ambe49, pcm);
++	if (!exchange(0x63U, ambe49, 9U, 0x64U, reinterpret_cast<uint8_t*>(pcm), 320U))
++		::memset(pcm, 0, 320U);
+ }
+ 
+ void MBEVocoder::encode_2450(int16_t *pcm, uint8_t *ambe49)
+ {
+-	md380_encode(ambe49, pcm);
++	if (!exchange(0x61U, reinterpret_cast<uint8_t*>(pcm), 320U, 0x62U, ambe49, 9U))
++		::memcpy(ambe49, DV30_AMBE_SILENCE, 9U);
+ }
+diff --git a/P252DMR/MBEVocoder.h b/P252DMR/MBEVocoder.h
+index 1201995..066d4cc 100644
+--- a/P252DMR/MBEVocoder.h
++++ b/P252DMR/MBEVocoder.h
+@@ -31,9 +31,14 @@ public:
+ 	void decode_2450(int16_t *, uint8_t *);
+ 	void encode_2450(int16_t *, uint8_t *);
+ 	MBEVocoder(void);
++	~MBEVocoder(void);
+ 
+ private:
+ 	imbe_vocoder vocoder;
++	int m_socket;
++	uint8_t m_channel;
++	bool exchange(uint8_t opcode, const uint8_t* input, unsigned int inputLength,
++		uint8_t replyOpcode, uint8_t* output, unsigned int outputLength);
+ };
+ 
+ #endif /* INCLUDED_AMBE_ENCODER_H */
+diff --git a/P252DMR/Makefile b/P252DMR/Makefile
+index 814a258..5dee1b1 100644
+--- a/P252DMR/Makefile
++++ b/P252DMR/Makefile
+@@ -1,7 +1,7 @@
+ CC      ?= gcc
+ CXX     ?= g++
+ CFLAGS  ?= -g -O3 -Wall -std=c++0x -pthread
+-LIBS    = -lm -lpthread -limbe_vocoder -lmd380_vocoder
++LIBS    = -lm -lpthread -limbe_vocoder
+ LDFLAGS ?= -g
+ 
+ OBJECTS = 	BPTC19696.o Conf.o CRC.o DelayBuffer.o DMRData.o DMREMB.o DMREmbeddedData.o \
+@@ -12,7 +12,7 @@ OBJECTS = 	BPTC19696.o Conf.o CRC.o DelayBuffer.o DMRData.o DMREMB.o DMREmbedded
+ all:		P252DMR
+ 
+ P252DMR:	$(OBJECTS)
+-		$(CXX) $(OBJECTS) $(CFLAGS) $(LIBS) -o P252DMR  -Xlinker --section-start=.firmware=0x0800C000 -Xlinker  --section-start=.sram=0x20000000
++		$(CXX) $(OBJECTS) $(CFLAGS) $(LIBS) -o P252DMR
+ 
+ %.o: %.cpp
+ 		$(CXX) $(CFLAGS) -c -o $@ $<
+diff --git a/P252DMR/ModeConv.cpp b/P252DMR/ModeConv.cpp
+index 50becba..cfda10f 100644
+--- a/P252DMR/ModeConv.cpp
++++ b/P252DMR/ModeConv.cpp
+@@ -466,6 +466,7 @@ m_DMR(5000U, "P252DMR")
+ 
+ CModeConv::~CModeConv()
+ {
++	delete m_mbe;
+ }
+ 
+ void CModeConv::putDMR(unsigned char* data)
+@@ -473,17 +474,14 @@ void CModeConv::putDMR(unsigned char* data)
+ 	assert(data != NULL);
+ 	
+ 	int16_t audio[160U];
+-	uint8_t ambe[9U];
+ 	uint8_t v_ambe[9U];
+ 	uint8_t imbe[11U];
+ 	
+ 	::memset(audio, 0, sizeof(audio));
+-	::memset(ambe, 0, sizeof(ambe));
+ 	::memset(v_ambe, 0, sizeof(v_ambe));
+ 	::memset(imbe, 0, sizeof(imbe));
+ 	
+-	decode(data, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, data);
+ 	m_mbe->encode_4400(audio, imbe);
+ 	m_P25.addData(&TAG_DATA, 1U);
+ 	m_P25.addData(imbe, 11U);
+@@ -500,8 +498,7 @@ void CModeConv::putDMR(unsigned char* data)
+ 	for (unsigned int i = 0U; i < 4U; i++)
+ 		v_ambe[i + 5U] = data[i + 11U];
+ 
+-	decode(v_ambe, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, v_ambe);
+ 	m_mbe->encode_4400(audio, imbe);
+ 	m_P25.addData(&TAG_DATA, 1U);
+ 	m_P25.addData(imbe, 11U);
+@@ -509,8 +506,7 @@ void CModeConv::putDMR(unsigned char* data)
+ 	m_p25N += 1U;
+ 	
+ 	data += 15U;;
+-	decode(data, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, data);
+ 	m_mbe->encode_4400(audio, imbe);
+ 	m_P25.addData(&TAG_DATA, 1U);
+ 	m_P25.addData(imbe, 11U);
+@@ -523,11 +519,9 @@ void CModeConv::putP25(unsigned char* data)
+ 	assert(data != NULL);
+ 
+ 	int16_t audio[160U];
+-	uint8_t ambe[9U];
+ 	uint8_t imbe[11U];
+ 	uint8_t vch[10U];
+ 	::memset(audio, 0, sizeof(audio));
+-	::memset(ambe, 0, sizeof(ambe));
+ 	switch (data[0U]) {
+ 	case 0x62U:
+ 		::memcpy(imbe, data + 10U, 11U);
+@@ -588,9 +582,7 @@ void CModeConv::putP25(unsigned char* data)
+ 	}
+ 	
+ 	m_mbe->decode_4400(audio, imbe);
+-	m_mbe->encode_2450(audio, ambe);
+-	
+-	encode(ambe, vch, 0U);
++	m_mbe->encode_2450(audio, vch);
+ 	m_DMR.addData(&TAG_DATA, 1U);
+ 	m_DMR.addData(vch, 9U);
+ 	m_dmrN += 1U;
+

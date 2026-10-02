@@ -1,0 +1,26 @@
+[Unit]
+Description=Yorkshire Link HUB AllStar USRP to DMR TG23530 bridge
+Documentation=https://github.com/ShaYmez/MMDVM_CM
+Wants=network-online.target
+After=network-online.target dvhub-gateway.service
+
+[Service]
+Type=simple
+User=allstarbridge
+Group=allstarbridge
+WorkingDirectory=/var/lib/usrp2dmr
+Environment=DV30_ADDRESS=zx3de49.glddns.com:2468
+ExecStart=/usr/local/bin/USRP2DMR-DV30 /etc/usrp2dmr/USRP2DMR.ini
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/usrp2dmr /var/log/usrp2dmr
+
+[Install]
+WantedBy=multi-user.target

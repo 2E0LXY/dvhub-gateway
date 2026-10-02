@@ -1,0 +1,257 @@
+warning: in the working copy of 'USRP2DMR/Conf.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'USRP2DMR/MBEVocoder.cpp', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'USRP2DMR/MBEVocoder.h', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'USRP2DMR/Makefile', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'USRP2DMR/ModeConv.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/USRP2DMR/Conf.h b/USRP2DMR/Conf.h
+index 0cb430c..2bf18b5 100644
+--- a/USRP2DMR/Conf.h
++++ b/USRP2DMR/Conf.h
+@@ -22,6 +22,7 @@
+ 
+ #include <string>
+ #include <vector>
++#include <cstdint>
+ 
+ class CConf
+ {
+diff --git a/USRP2DMR/MBEVocoder.cpp b/USRP2DMR/MBEVocoder.cpp
+index cc5ef8d..08bda2a 100644
+--- a/USRP2DMR/MBEVocoder.cpp
++++ b/USRP2DMR/MBEVocoder.cpp
+@@ -18,32 +18,101 @@
+ *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ */
+ #include <cstring>
+-#include <md380_vocoder.h>
++#include <cstdlib>
++#include <netdb.h>
++#include <sys/socket.h>
++#include <sys/time.h>
++#include <unistd.h>
++#include <string>
++#include <vector>
+ #include "MBEVocoder.h"
+ 
+ const uint8_t  BIT_MASK_TABLE8[]  = { 0x80U, 0x40U, 0x20U, 0x10U, 0x08U, 0x04U, 0x02U, 0x01U };
+ #define WRITE_BIT8(p,i,b)   p[(i)>>3] = (b) ? (p[(i)>>3] | BIT_MASK_TABLE8[(i)&7]) : (p[(i)>>3] & ~BIT_MASK_TABLE8[(i)&7])
+ #define READ_BIT8(p,i)     (p[(i)>>3] & BIT_MASK_TABLE8[(i)&7])
+ 
+-MBEVocoder::MBEVocoder(void)
++MBEVocoder::MBEVocoder(void) :
++m_socket(-1),
++m_channel(0U)
+ {
+-	m_mbeenc = new MBEEncoder();
+-	m_mbeenc->set_dmr_mode();
+-	m_mbeenc->set_gain_adjust(2.5);
+-	md380_init();
++	const char* endpoint = ::getenv("DV30_ADDRESS");
++	if (endpoint == NULL || *endpoint == '\0')
++		endpoint = "zx3de49.glddns.com:2468";
++	std::string value(endpoint);
++	std::string::size_type separator = value.rfind(':');
++	if (separator == std::string::npos)
++		return;
++	std::string host = value.substr(0U, separator);
++	std::string port = value.substr(separator + 1U);
++	struct addrinfo hints;
++	::memset(&hints, 0, sizeof(hints));
++	hints.ai_family = AF_UNSPEC;
++	hints.ai_socktype = SOCK_DGRAM;
++	struct addrinfo* result = NULL;
++	if (::getaddrinfo(host.c_str(), port.c_str(), &hints, &result) != 0)
++		return;
++	for (struct addrinfo* item = result; item != NULL; item = item->ai_next) {
++		int fd = ::socket(item->ai_family, item->ai_socktype, item->ai_protocol);
++		if (fd < 0)
++			continue;
++		if (::connect(fd, item->ai_addr, item->ai_addrlen) == 0) {
++			m_socket = fd;
++			break;
++		}
++		::close(fd);
++	}
++	::freeaddrinfo(result);
++	if (m_socket >= 0) {
++		struct timeval timeout;
++		timeout.tv_sec = 0;
++		timeout.tv_usec = 250000;
++		::setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
++	}
++}
++
++MBEVocoder::~MBEVocoder(void)
++{
++	if (m_socket >= 0)
++		::close(m_socket);
++}
++
++bool MBEVocoder::exchange(uint8_t opcode, const uint8_t* input, unsigned int inputLength,
++	uint8_t replyOpcode, uint8_t* output, unsigned int outputLength)
++{
++	if (m_socket < 0)
++		return false;
++	const uint8_t channel = ++m_channel;
++	std::vector<uint8_t> request(2U + inputLength);
++	request[0U] = opcode;
++	request[1U] = channel;
++	::memcpy(&request[2U], input, inputLength);
++	if (::send(m_socket, &request[0U], request.size(), 0) != (ssize_t)request.size())
++		return false;
++	uint8_t response[512U];
++	for (;;) {
++		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
++		if (length < 0)
++			return false;
++		if ((unsigned int)length >= outputLength + 2U && response[0U] == replyOpcode && response[1U] == channel) {
++			::memcpy(output, response + 2U, outputLength);
++			return true;
++		}
++	}
+ }
+ 
+ void MBEVocoder::decode_2450(int16_t *pcm, uint8_t *ambe49)
+ {
+-	md380_decode(ambe49, pcm);
++	if (!exchange(0x63U, ambe49, 9U, 0x64U, reinterpret_cast<uint8_t*>(pcm), 320U))
++		::memset(pcm, 0, 320U);
+ }
+ 
+ void MBEVocoder::encode_2450(int16_t *pcm, uint8_t *ambe49)
+ {
+-	md380_encode(ambe49, pcm);
++	encode_dmr(pcm, ambe49);
+ }
+ 
+ void MBEVocoder::encode_dmr(int16_t *pcm, uint8_t *ambe)
+ {
+-	m_mbeenc->encode(pcm, ambe);
++	if (!exchange(0x61U, reinterpret_cast<uint8_t*>(pcm), 320U, 0x62U, ambe, 9U))
++		::memset(ambe, 0, 9U);
+ }
+diff --git a/USRP2DMR/MBEVocoder.h b/USRP2DMR/MBEVocoder.h
+index 226af2e..5436bfa 100644
+--- a/USRP2DMR/MBEVocoder.h
++++ b/USRP2DMR/MBEVocoder.h
+@@ -21,7 +21,6 @@
+ #ifndef INCLUDED_AMBE_ENCODER_H
+ #define INCLUDED_AMBE_ENCODER_H
+ 
+-#include "mbeenc.h"
+ #include <stdint.h>
+ 
+ 
+@@ -31,9 +30,13 @@ public:
+ 	void encode_2450(int16_t *, uint8_t *);
+ 	void encode_dmr(int16_t *, uint8_t *);
+ 	MBEVocoder(void);
++	~MBEVocoder(void);
+ 
+ private:
+-	MBEEncoder *m_mbeenc;
++	int m_socket;
++	uint8_t m_channel;
++	bool exchange(uint8_t opcode, const uint8_t* input, unsigned int inputLength,
++		uint8_t replyOpcode, uint8_t* output, unsigned int outputLength);
+ };
+ 
+ #endif /* INCLUDED_AMBE_ENCODER_H */
+diff --git a/USRP2DMR/Makefile b/USRP2DMR/Makefile
+index cb63268..0b1c3ec 100644
+--- a/USRP2DMR/Makefile
++++ b/USRP2DMR/Makefile
+@@ -1,18 +1,18 @@
+ CC      ?= gcc
+ CXX     ?= g++
+ CFLAGS  ?= -g -O3 -Wall -std=c++0x -pthread
+-LIBS    = -lm -lpthread -lmd380_vocoder -lmbe -limbe_vocoder
++LIBS    = -lm -lpthread
+ LDFLAGS ?= -g
+ 
+ OBJECTS = 	BPTC19696.o Conf.o CRC.o DelayBuffer.o DMRData.o DMREMB.o DMREmbeddedData.o \
+ 			DMRFullLC.o DMRLC.o DMRLookup.o DMRNetwork.o DMRSlotType.o USRPNetwork.o Golay2087.o \
+-			Golay24128.o Hamming.o Log.o mbeenc.o ambe.o MBEVocoder.o ModeConv.o Mutex.o QR1676.o RS129.o \
++			Golay24128.o Hamming.o Log.o MBEVocoder.o ModeConv.o Mutex.o QR1676.o RS129.o \
+ 			SHA256.o StopWatch.o Sync.o Thread.o Timer.o UDPSocket.o Utils.o Reflectors.o USRP2DMR.o 
+ 
+ all:		USRP2DMR
+ 
+ USRP2DMR:	$(OBJECTS)
+-		$(CXX) $(OBJECTS) $(CFLAGS) $(LIBS) -o USRP2DMR  -Xlinker --section-start=.firmware=0x0800C000 -Xlinker  --section-start=.sram=0x20000000
++		$(CXX) $(OBJECTS) $(CFLAGS) $(LIBS) -o USRP2DMR
+ 
+ %.o: %.cpp
+ 		$(CXX) $(CFLAGS) -c -o $@ $<
+diff --git a/USRP2DMR/ModeConv.cpp b/USRP2DMR/ModeConv.cpp
+index a989589..8f8e8c5 100644
+--- a/USRP2DMR/ModeConv.cpp
++++ b/USRP2DMR/ModeConv.cpp
+@@ -470,6 +470,7 @@ m_dmrAttenuate(false)
+ 
+ CModeConv::~CModeConv()
+ {
++	delete m_mbe;
+ }
+ 
+ void CModeConv::setUSRPGainAdjDb(std::string dbstring)
+@@ -520,15 +521,12 @@ void CModeConv::putDMR(unsigned char* data)
+ 	
+ 	int16_t audio[160U];
+ 	int16_t audio_adjusted[160U];
+-	uint8_t ambe[9U];
+ 	uint8_t v_ambe[9U];
+ 	
+ 	::memset(audio, 0, sizeof(audio));
+-	::memset(ambe, 0, sizeof(ambe));
+ 	::memset(v_ambe, 0, sizeof(v_ambe));
+ 	
+-	decode(data, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, data);
+ 	
+ 	for(int i = 0; i < 160; ++i){
+ 		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
+@@ -548,8 +546,7 @@ void CModeConv::putDMR(unsigned char* data)
+ 	for (unsigned int i = 0U; i < 4U; i++)
+ 		v_ambe[i + 5U] = data[i + 11U];
+ 
+-	decode(v_ambe, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, v_ambe);
+ 	
+ 	for(int i = 0; i < 160; ++i){
+ 		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
+@@ -560,8 +557,7 @@ void CModeConv::putDMR(unsigned char* data)
+ 	m_usrpN += 1U;
+ 	
+ 	data += 15U;;
+-	decode(data, ambe, 0U);
+-	m_mbe->decode_2450(audio, ambe);
++	m_mbe->decode_2450(audio, data);
+ 	
+ 	for(int i = 0; i < 160; ++i){
+ 		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
+@@ -606,18 +602,16 @@ void CModeConv::putUSRP(int16_t* data)
+ 	assert(data != NULL);
+ 
+ 	int16_t audio_adjusted[160U];
+-	uint8_t ambe[72U];
+ 	uint8_t vch[10U];
+-	::memset(ambe, 0, sizeof(ambe));
++	::memset(vch, 0, sizeof(vch));
+ 	
+ 	for(int i = 0; i < 160; ++i){
+ 		m_usrpAttenuate ? audio_adjusted[i] = data[i] / m_usrpGainMultiplier : data[i] * m_usrpGainMultiplier;
+ 	}
+ 	
+-	m_mbe->encode_dmr(audio_adjusted, ambe);
+-	encode(ambe, vch, 0U);
++	m_mbe->encode_dmr(audio_adjusted, vch);
+ 	m_DMR.addData(&TAG_DATA, 1U);
+-	m_DMR.addData(ambe, 9U);
++	m_DMR.addData(vch, 9U);
+ 	m_dmrN += 1U;
+ }
+ 
+

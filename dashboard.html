@@ -326,11 +326,11 @@
         </div>
     </header>
 
-    <!-- Tab Navigation -->
+    <!-- Unified dashboard navigation -->
     <nav class="tab-nav">
-        <button class="tab-btn active" onclick="switchTab('dashboard')" id="tab-dashboard">Dashboard</button>
-        <button class="tab-btn" onclick="switchTab('ysf')" id="tab-ysf">YSF Dashboard</button>
-        <button class="tab-btn" onclick="switchTab('admin')" id="tab-admin">Administration</button>
+        <a class="tab-btn active" href="#view-dashboard">Overview</a>
+        <a class="tab-btn" href="#view-ysf">YSF &amp; Connected Gateways</a>
+        <a class="tab-btn" href="#view-admin">Networks &amp; Cross-Mode Control</a>
     </nav>
 
     <!-- Main Container -->
@@ -473,7 +473,8 @@
         </div>
 
         <!-- YSF DASHBOARD VIEW -->
-        <div id="view-ysf" class="space-y-3 view-hidden">
+        <div id="view-ysf" class="space-y-3 view-visible mt-4">
+            <div class="section-header">YSF Reflector 23530 &amp; Connected Gateways</div>
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <div class="section-card"><div class="section-header">Reflector Status</div><div class="p-4"><span id="ysfd-status" class="chip chip-idle">CHECKING</span><div class="text-[9px] text-gray-500 mt-2">Yorkshire Link HUB</div></div></div>
                 <div class="section-card"><div class="section-header">Uptime</div><div class="p-4 text-xl text-green-400 orbitron" id="ysfd-uptime">-</div></div>
@@ -509,7 +510,8 @@
         </div>
         
         <!-- ADMIN VIEW -->
-        <div id="view-admin" class="space-y-3 view-hidden">
+        <div id="view-admin" class="space-y-3 view-visible mt-4">
+            <div class="section-header">Network, Master &amp; Cross-Mode Administration</div>
             
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 
@@ -811,10 +813,11 @@
                     <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-[9px]">
                         <div class="border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">P25 Reflector</span><span id="p25-service-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">DMR Conference Bridge</span><span id="p25-bridge-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
                             <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">41000</span></div>
-                            <div class="data-row"><span class="data-label">Room</span><span class="data-value">Yorkshire Link 23530</span></div>
-                            <div class="text-gray-500">Native P25 single-room reflector endpoint.</div>
+                            <div class="data-row"><span class="data-label">Room / TG</span><span class="data-value">23530</span></div>
+                            <div class="text-gray-500">P25 IMBE is converted to DMR AMBE+2 through the dedicated DV30 hardware path.</div>
                         </div>
                         <div class="border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">NXDN Reflector</span><span id="nxdn-service-status" class="chip chip-idle">CHECKING</span></div>
@@ -824,7 +827,34 @@
                             <div class="data-row"><span class="data-label">Talkgroup</span><span class="data-value">23530</span></div>
                             <div class="text-gray-500">NXDN TG23530 is permanently cross-connected to the DMR/YSF conference without a PCM transcoding generation.</div>
                         </div>
-                        <div class="md:col-span-2 text-yellow-400">P25 remains a native reflector endpoint while its separate hybrid IMBE/DV30 transcoder is prepared. NXDN is live on the TG23530 conference.</div>
+                        <div class="md:col-span-2 border border-green-900/60 p-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">Yorkshire Link DMR Master</span><span id="local-master-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
+                                <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">62030</span></div>
+                                <div class="data-row"><span class="data-label">Conference TG</span><span class="data-value">23530</span></div>
+                            </div>
+                            <div class="text-gray-500">Direct MMDVM/Pi-Star clients authenticate to this master. Transmitting radio IDs must exist in the RadioID database.</div>
+                            <div id="local-master-clients" class="text-[9px] text-gray-500">No directly connected DMR clients.</div>
+                        </div>
+                        <div class="md:col-span-2 border border-green-900/60 p-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">AllStar Link Node 530470</span><span id="allstar-bridge-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <div class="data-row"><span class="data-label">Node</span><span class="data-value">530470</span></div>
+                                <div class="data-row"><span class="data-label">Callsign</span><span class="data-value">2E0LXY</span></div>
+                                <div class="data-row"><span class="data-label">Cross-mode TG</span><span class="data-value">23530</span></div>
+                            </div>
+                            <div class="text-gray-500">Non-registering IAX client → USRP PCM → DV30 AMBE+2 → DMR conference. The existing AllStar registration is preserved.</div>
+                            <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
+                                <div>
+                                    <label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-allstar-password">AllStar IAX Client Password</label>
+                                    <input type="password" class="input-cyber" id="inp-allstar-password" autocomplete="new-password" maxlength="128" placeholder="Stored only in the protected VPS runtime configuration">
+                                </div>
+                                <button class="btn-cyber" id="btn-allstar-connect" type="button" onclick="saveAllStarPassword()">SAVE &amp; CONNECT</button>
+                            </div>
+                            <div id="allstar-bridge-message" class="text-[9px] text-gray-500">Checking IAX connection state…</div>
+                        </div>
+                        <div class="md:col-span-2 text-green-400">P25, NXDN and YSF room/TG 23530 are connected to the DMR TG23530 conference. Cross-mode operation is simplex: one active speaker at a time.</div>
                     </div>
                 </div>
                 
@@ -1180,6 +1210,7 @@
                     chip.className = online ? 'chip chip-ok' : 'chip chip-err';
                 };
                 updateReflectorChip('p25-service-status', Boolean(stats.p25_reflector));
+                updateReflectorChip('p25-bridge-status', Boolean(stats.p25_bridge));
                 updateReflectorChip('nxdn-service-status', Boolean(stats.nxdn_reflector));
                 updateReflectorChip('nxdn-bridge-status', Boolean(stats.nxdn_bridge));
             } catch (err) {
@@ -1188,6 +1219,101 @@
                 document.getElementById('hw-updated').innerText = 'UPDATE FAILED';
             } finally {
                 systemStatsBusy = false;
+            }
+        }
+
+        function formatMasterDuration(seconds) {
+            const value = Math.max(0, Number(seconds) || 0);
+            if (value < 60) return Math.floor(value) + 's';
+            if (value < 3600) return Math.floor(value / 60) + 'm';
+            return Math.floor(value / 3600) + 'h ' + Math.floor((value % 3600) / 60) + 'm';
+        }
+
+        async function updateLocalMaster() {
+            const status = document.getElementById('local-master-status');
+            const clients = document.getElementById('local-master-clients');
+            if (!status || !clients) return;
+            try {
+                const response = await fetch('/api/local_master?_=' + Date.now(), { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const data = await response.json();
+                status.innerText = data.running ? 'RUNNING' : 'OFFLINE';
+                status.className = data.running ? 'chip chip-ok' : 'chip chip-err';
+                const rows = Array.isArray(data.clients) ? data.clients : [];
+                if (!rows.length) {
+                    clients.innerText = 'No directly connected DMR clients.';
+                    return;
+                }
+                clients.innerHTML = rows.map(client => {
+                    const identity = escapeHTML(client.callsign || 'DMR ' + (client.dmr_id || '—'));
+                    const endpoint = escapeHTML(client.address || '—');
+                    return `<div class="data-row"><span class="data-label">${identity} · ${client.repeater_id || '—'}</span><span class="data-value">${escapeHTML(client.state || 'unknown')} · ${endpoint} · idle ${formatMasterDuration(client.idle_seconds)}</span></div>`;
+                }).join('');
+            } catch (error) {
+                status.innerText = 'OFFLINE';
+                status.className = 'chip chip-err';
+                clients.innerText = 'Master status unavailable.';
+            }
+        }
+
+        async function updateAllStarStatus() {
+            const chip = document.getElementById('allstar-bridge-status');
+            const message = document.getElementById('allstar-bridge-message');
+            if (!chip || !message) return;
+            try {
+                const response = await fetch('/api/allstar_config?_=' + Date.now(), { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const status = await response.json();
+                if (status.connected) {
+                    chip.innerText = 'CONNECTED';
+                    chip.className = 'chip chip-ok';
+                } else if (status.state === 'connecting') {
+                    chip.innerText = 'CONNECTING';
+                    chip.className = 'chip chip-idle';
+                } else if (!status.configured) {
+                    chip.innerText = 'PASSWORD REQUIRED';
+                    chip.className = 'chip chip-warn';
+                } else {
+                    chip.innerText = 'LOGIN FAILED';
+                    chip.className = 'chip chip-err';
+                }
+                message.innerText = status.message || 'AllStar status unavailable.';
+            } catch (error) {
+                chip.innerText = 'OFFLINE';
+                chip.className = 'chip chip-err';
+                message.innerText = 'AllStar bridge status unavailable.';
+            }
+        }
+
+        async function saveAllStarPassword() {
+            const input = document.getElementById('inp-allstar-password');
+            const button = document.getElementById('btn-allstar-connect');
+            const message = document.getElementById('allstar-bridge-message');
+            const password = input.value;
+            if (!password) {
+                message.innerText = 'Enter the IAX client password first.';
+                return;
+            }
+            button.disabled = true;
+            button.innerText = 'SAVING…';
+            try {
+                const response = await fetch('/api/allstar_config', {
+                    method: 'POST',
+                    cache: 'no-store',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify({ password })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Unable to configure AllStar');
+                input.value = '';
+                message.innerText = result.message || 'Saved securely; the IAX bridge is connecting.';
+                window.setTimeout(updateAllStarStatus, 1000);
+            } catch (error) {
+                message.innerText = error.message;
+            } finally {
+                button.disabled = false;
+                button.innerText = 'SAVE & CONNECT';
             }
         }
 
@@ -1289,14 +1415,8 @@
         `;
 
         function switchTab(tab) {
-            ['dashboard', 'ysf', 'admin'].forEach(name => {
-                const view = document.getElementById(`view-${name}`);
-                const button = document.getElementById(`tab-${name}`);
-                const selected = name === tab;
-                view.classList.toggle('view-hidden', !selected);
-                view.classList.toggle('view-visible', selected);
-                button.classList.toggle('active', selected);
-            });
+            const view = document.getElementById(`view-${tab}`);
+            if (view) view.scrollIntoView({ behavior: 'smooth', block: 'start' });
             if (tab === 'ysf') updateYSFDashboard();
             if (tab === 'admin') updateYSFIdentity();
         }
@@ -2316,6 +2436,8 @@
             updateYSFStatus();
             updateYSFDashboard();
             updateYSFIdentity();
+            updateLocalMaster();
+            updateAllStarStatus();
             refreshYorkshireStatus();
             refreshNetworkOverview();
             document.getElementById('inp-callsign').value = config.callsign;
@@ -2331,6 +2453,8 @@
             setInterval(updateYSFStatus, 15000);
             setInterval(updateYSFIdentity, 15000);
             setInterval(updateYSFDashboard, 10000);
+            setInterval(updateLocalMaster, 5000);
+            setInterval(updateAllStarStatus, 5000);
             setInterval(refreshYorkshireStatus, 5000);
             setInterval(refreshNetworkOverview, 5000);
             

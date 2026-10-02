@@ -1,0 +1,26 @@
+[Unit]
+Description=Yorkshire Link HUB P25 to DMR TG23530 hybrid DV30 bridge
+Documentation=https://github.com/ShaYmez/MMDVM_CM
+Wants=network-online.target
+After=network-online.target p25reflector.service dvhub-gateway.service
+
+[Service]
+Type=simple
+User=p25bridge
+Group=p25bridge
+WorkingDirectory=/var/lib/p252dmr
+Environment=DV30_ADDRESS=zx3de49.glddns.com:2468
+ExecStart=/usr/local/bin/P252DMR-DV30 /etc/p252dmr/P252DMR.ini
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/p252dmr /var/log/p252dmr
+
+[Install]
+WantedBy=multi-user.target

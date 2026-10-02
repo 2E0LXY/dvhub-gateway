@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/csv"
@@ -30,6 +31,7 @@ import (
 
 const BasePort = 62031
 const MaxUsers = 8
+const LocalMasterPort = 62030
 
 const (
 	ysfConfigPath          = "/etc/ysfreflector/YSFReflector.ini"
@@ -42,6 +44,10 @@ const (
 	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
 	yorkshireConfigPath    = "/etc/dvhub/yorkshire-conference.json"
 	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
+	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
+	allStarTemplatePath    = "/etc/iax-bridge/IAX_Bridge.template"
+	allStarRuntimePath     = "/var/lib/iax-bridge/IAX_Bridge.ini"
+	allStarLogPath         = "/var/log/iax-bridge/IAX_Bridge.log"
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
 )
@@ -211,6 +217,23 @@ type YorkshireConferenceConfig struct {
 	TGIFPassword         string `json:"tgif_password"`
 }
 
+type DMRMasterClient struct {
+	RepeaterID uint32
+	BaseDMRID  uint32
+	Callsign   string
+	Address    *net.UDPAddr
+	Salt       [4]byte
+	Stage      int
+	Connected  time.Time
+	LastSeen   time.Time
+}
+
+const (
+	masterWaitingKey = iota + 1
+	masterWaitingConfig
+	masterRunning
+)
+
 type Gateway struct {
 	HomeAddr            atomic.Value
 	sessions            [MaxUsers]*UserSession
@@ -234,6 +257,9 @@ type Gateway struct {
 	tgMutex             sync.RWMutex
 	rejectedMu          sync.Mutex
 	rejectedDMR         map[uint32]time.Time
+	masterMu            sync.RWMutex
+	masterClients       map[uint32]*DMRMasterClient
+	masterConn          *net.UDPConn
 }
 
 var (
@@ -260,11 +286,12 @@ var (
 
 func main() {
 	gw = &Gateway{
-		clients:     make(map[*WSClient]bool),
-		idDB:        make(map[uint32]RadioIDInfo),
-		tgCache:     make(map[string][]Talkgroup),
-		tgTimes:     make(map[string]time.Time),
-		rejectedDMR: make(map[uint32]time.Time),
+		clients:       make(map[*WSClient]bool),
+		idDB:          make(map[uint32]RadioIDInfo),
+		tgCache:       make(map[string][]Talkgroup),
+		tgTimes:       make(map[string]time.Time),
+		rejectedDMR:   make(map[uint32]time.Time),
+		masterClients: make(map[uint32]*DMRMasterClient),
 	}
 	gw.HomeAddr.Store(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2460})
 
@@ -273,6 +300,7 @@ func main() {
 	go gw.watchdog("home.mysmartagent.uk", 2460)
 	go gw.txWatchdog()
 	go gw.broadcastYSFDashboardLoop()
+	go gw.runLocalDMRMaster()
 
 	defaultDV30 := parseDV30Address("zx3de49.glddns.com:2468")
 	for i := 0; i < MaxUsers; i++ {
@@ -309,6 +337,8 @@ func main() {
 	http.HandleFunc("/api/ysf_identity", gw.handleYSFIdentity)
 	http.HandleFunc("/api/brandmeister/status", gw.handleBrandMeisterStatus)
 	http.HandleFunc("/api/yorkshire_conference", gw.handleYorkshireConference)
+	http.HandleFunc("/api/local_master", gw.handleLocalMasterStatus)
+	http.HandleFunc("/api/allstar_config", gw.handleAllStarConfig)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
 
@@ -410,16 +440,131 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	kernelData, _ := os.ReadFile("/proc/sys/kernel/osrelease")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	allStar := readAllStarStatus()
 	json.NewEncoder(w).Encode(map[string]any{
-		"hostname":       hostname,
-		"kernel":         strings.TrimSpace(string(kernelData)),
-		"platform":       readPlatform(),
-		"cpu_load":       readCPULoad(),
-		"temp_c":         readCPUTemperature(),
-		"p25_reflector":  serviceActive("p25reflector.service"),
-		"nxdn_reflector": serviceActive("nxdnreflector.service"),
-		"nxdn_bridge":    serviceActive("nxdn2dmr.service"),
+		"hostname":         hostname,
+		"kernel":           strings.TrimSpace(string(kernelData)),
+		"platform":         readPlatform(),
+		"cpu_load":         readCPULoad(),
+		"temp_c":           readCPUTemperature(),
+		"p25_reflector":    serviceActive("p25reflector.service"),
+		"p25_bridge":       serviceActive("p252dmr.service"),
+		"nxdn_reflector":   serviceActive("nxdnreflector.service"),
+		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
+		"allstar_bridge":   allStar.Connected,
+		"allstar_services": allStar.ServicesActive,
 	})
+}
+
+type allStarStatus struct {
+	Node           int    `json:"node"`
+	Configured     bool   `json:"configured"`
+	Connected      bool   `json:"connected"`
+	ServicesActive bool   `json:"services_active"`
+	IAXService     bool   `json:"iax_service"`
+	USRPService    bool   `json:"usrp_service"`
+	State          string `json:"state"`
+	Message        string `json:"message"`
+}
+
+func readAllStarStatus() allStarStatus {
+	status := allStarStatus{Node: 530470, State: "not_configured", Message: "Enter the IAX client password to connect"}
+	status.IAXService = serviceActive("iax-bridge.service")
+	status.USRPService = serviceActive("usrp2dmr.service")
+	status.ServicesActive = status.IAXService && status.USRPService
+
+	if runtimeConfig, err := os.ReadFile(allStarRuntimePath); err == nil {
+		text := string(runtimeConfig)
+		status.Configured = strings.Contains(text, "530470=iaxclient:") && !strings.Contains(text, "__ALLSTAR_PASSWORD__")
+	}
+	if !status.Configured {
+		return status
+	}
+	if !status.ServicesActive {
+		status.State = "service_offline"
+		status.Message = "One or more AllStar bridge services are offline"
+		return status
+	}
+
+	logData, err := os.ReadFile(allStarLogPath)
+	if err != nil {
+		status.State = "connecting"
+		status.Message = "Waiting for IAX connection status"
+		return status
+	}
+	logText := string(logData)
+	connectedAt := strings.LastIndex(logText, "Connected to node: 530470")
+	failedAt := strings.LastIndex(logText, "Connection timeout")
+	if disconnected := strings.LastIndex(logText, "Disconnected"); disconnected > failedAt {
+		failedAt = disconnected
+	}
+	if rejected := strings.LastIndex(logText, "Call rejected by remote"); rejected > failedAt {
+		failedAt = rejected
+	}
+	if connectedAt >= 0 && connectedAt > failedAt {
+		status.Connected = true
+		status.State = "connected"
+		status.Message = "AllStar node 530470 is connected to TG23530"
+		return status
+	}
+	if failedAt >= 0 {
+		status.State = "failed"
+		status.Message = "IAX login failed or timed out; check the client password and node permissions"
+		return status
+	}
+	status.State = "connecting"
+	status.Message = "Connecting to AllStar node 530470"
+	return status
+}
+
+func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(readAllStarStatus())
+		return
+	}
+	if r.Method != http.MethodPost || r.Header.Get("X-DVHub-Control") != "1" {
+		http.Error(w, `{"error":"Control request rejected"}`, http.StatusForbidden)
+		return
+	}
+
+	var request struct {
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	if len(request.Password) < 6 || len(request.Password) > 128 || strings.ContainsAny(request.Password, "\r\n:@/") {
+		http.Error(w, `{"error":"Password must be 6-128 characters and cannot contain spaces used by an IAX address"}`, http.StatusBadRequest)
+		return
+	}
+	for _, character := range request.Password {
+		if character < 33 || character > 126 {
+			http.Error(w, `{"error":"Password contains unsupported characters"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	template, err := os.ReadFile(allStarTemplatePath)
+	if err != nil || !strings.Contains(string(template), "__ALLSTAR_PASSWORD__") {
+		http.Error(w, `{"error":"AllStar configuration template is unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	runtimeConfig := strings.ReplaceAll(string(template), "__ALLSTAR_PASSWORD__", request.Password)
+	if err := writeAtomicFile(allStarRuntimePath, []byte(runtimeConfig), 0640); err != nil {
+		http.Error(w, `{"error":"Unable to save the protected AllStar configuration"}`, http.StatusInternalServerError)
+		return
+	}
+	if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "restart", "iax-bridge.service").CombinedOutput(); err != nil {
+		_ = output // Never return service output because the IAX program may echo its node mapping.
+		http.Error(w, `{"error":"AllStar configuration saved, but the IAX bridge could not restart"}`, http.StatusInternalServerError)
+		return
+	}
+	time.Sleep(500 * time.Millisecond)
+	_ = json.NewEncoder(w).Encode(readAllStarStatus())
 }
 
 type dv30HealthPayload struct {
@@ -1014,6 +1159,277 @@ func bridgeEndpoints(route BridgeRoute) map[int]uint32 {
 	return endpoints
 }
 
+func baseRepeaterDMRID(repeaterID uint32) uint32 {
+	if repeaterID > 99999999 {
+		return repeaterID / 100
+	}
+	if repeaterID > 9999999 {
+		return repeaterID / 10
+	}
+	return repeaterID
+}
+
+func localMasterSecret() string {
+	data, err := os.ReadFile(localMasterSecretPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func sameUDPAddress(left, right *net.UDPAddr) bool {
+	return left != nil && right != nil && left.Port == right.Port && left.IP.Equal(right.IP)
+}
+
+func (g *Gateway) writeMasterPacket(address *net.UDPAddr, packet []byte) {
+	g.masterMu.RLock()
+	conn := g.masterConn
+	g.masterMu.RUnlock()
+	if conn != nil && address != nil {
+		_, _ = conn.WriteToUDP(packet, address)
+	}
+}
+
+func masterControlID(data []byte) uint32 {
+	if len(data) < 8 {
+		return 0
+	}
+	return binary.BigEndian.Uint32(data[4:8])
+}
+
+func (g *Gateway) rejectMaster(address *net.UDPAddr, repeaterID uint32) {
+	packet := append([]byte("MSTNAK"), writeUint32BE(repeaterID)...)
+	g.writeMasterPacket(address, packet)
+}
+
+func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
+	if len(data) < 4 || address == nil {
+		return false
+	}
+
+	switch {
+	case len(data) >= 8 && string(data[:4]) == "RPTL":
+		repeaterID := masterControlID(data)
+		baseID := baseRepeaterDMRID(repeaterID)
+		if repeaterID == 0 || !g.registeredDMRID(baseID) || localMasterSecret() == "" {
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		client := &DMRMasterClient{RepeaterID: repeaterID, BaseDMRID: baseID, Address: address, Stage: masterWaitingKey, Connected: time.Now(), LastSeen: time.Now()}
+		if _, err := cryptorand.Read(client.Salt[:]); err != nil {
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		g.masterMu.Lock()
+		if len(g.masterClients) >= 32 {
+			for id, existing := range g.masterClients {
+				if time.Since(existing.LastSeen) > 90*time.Second {
+					delete(g.masterClients, id)
+				}
+			}
+		}
+		if len(g.masterClients) >= 32 {
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		g.masterClients[repeaterID] = client
+		g.masterMu.Unlock()
+		packet := append([]byte("RPTACK"), client.Salt[:]...)
+		g.writeMasterPacket(address, packet)
+		return true
+
+	case len(data) >= 40 && string(data[:4]) == "RPTK":
+		repeaterID := masterControlID(data)
+		g.masterMu.Lock()
+		client := g.masterClients[repeaterID]
+		if client == nil || client.Stage != masterWaitingKey || !sameUDPAddress(client.Address, address) {
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		payload := append(append([]byte{}, client.Salt[:]...), []byte(localMasterSecret())...)
+		expected := sha256.Sum256(payload)
+		if !equalBytes(expected[:], data[8:40]) {
+			delete(g.masterClients, repeaterID)
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		client.Stage = masterWaitingConfig
+		client.LastSeen = time.Now()
+		g.masterMu.Unlock()
+		g.writeMasterPacket(address, []byte("RPTACK"))
+		return true
+
+	case len(data) >= 8 && string(data[:4]) == "RPTC":
+		repeaterID := masterControlID(data)
+		g.masterMu.Lock()
+		client := g.masterClients[repeaterID]
+		if client == nil || client.Stage < masterWaitingConfig || !sameUDPAddress(client.Address, address) {
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
+		}
+		if len(data) >= 16 {
+			client.Callsign = strings.TrimSpace(string(data[8:16]))
+		}
+		client.Stage = masterRunning
+		client.LastSeen = time.Now()
+		g.masterMu.Unlock()
+		g.writeMasterPacket(address, []byte("RPTACK"))
+		return true
+
+	case len(data) >= 8 && string(data[:4]) == "RPTO":
+		repeaterID := masterControlID(data)
+		g.masterMu.Lock()
+		client := g.masterClients[repeaterID]
+		if client != nil && sameUDPAddress(client.Address, address) {
+			client.Stage = masterRunning
+			client.LastSeen = time.Now()
+		}
+		g.masterMu.Unlock()
+		g.writeMasterPacket(address, []byte("RPTACK"))
+		return true
+
+	case len(data) >= 11 && string(data[:7]) == "RPTPING":
+		repeaterID := binary.BigEndian.Uint32(data[7:11])
+		g.masterMu.Lock()
+		client := g.masterClients[repeaterID]
+		valid := client != nil && client.Stage == masterRunning && sameUDPAddress(client.Address, address)
+		if valid {
+			client.LastSeen = time.Now()
+		}
+		g.masterMu.Unlock()
+		if valid {
+			g.writeMasterPacket(address, append([]byte("MSTPONG"), writeUint32BE(repeaterID)...))
+		} else {
+			g.rejectMaster(address, repeaterID)
+		}
+		return true
+
+	case len(data) >= 9 && string(data[:5]) == "RPTCL":
+		repeaterID := binary.BigEndian.Uint32(data[5:9])
+		g.masterMu.Lock()
+		delete(g.masterClients, repeaterID)
+		g.masterMu.Unlock()
+		return true
+	}
+	return false
+}
+
+func equalBytes(left, right []byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	var difference byte
+	for index := range left {
+		difference |= left[index] ^ right[index]
+	}
+	return difference == 0
+}
+
+func (g *Gateway) authenticatedMasterClient(repeaterID uint32, address *net.UDPAddr) *DMRMasterClient {
+	g.masterMu.RLock()
+	defer g.masterMu.RUnlock()
+	client := g.masterClients[repeaterID]
+	if client == nil || client.Stage != masterRunning || !sameUDPAddress(client.Address, address) || time.Since(client.LastSeen) > 90*time.Second {
+		return nil
+	}
+	copy := *client
+	return &copy
+}
+
+func (g *Gateway) broadcastMasterFrame(data []byte, exceptRepeaterID uint32) {
+	g.masterMu.RLock()
+	clients := make([]*DMRMasterClient, 0, len(g.masterClients))
+	for _, client := range g.masterClients {
+		if client.Stage == masterRunning && client.RepeaterID != exceptRepeaterID && time.Since(client.LastSeen) <= 90*time.Second {
+			copy := *client
+			clients = append(clients, &copy)
+		}
+	}
+	g.masterMu.RUnlock()
+	for _, client := range clients {
+		g.writeMasterPacket(client.Address, data)
+	}
+}
+
+func (g *Gateway) runLocalDMRMaster() {
+	address := &net.UDPAddr{IP: net.IPv4zero, Port: LocalMasterPort}
+	conn, err := net.ListenUDP("udp", address)
+	if err != nil {
+		fmt.Printf("[MASTER] DMR listener failed: %v\n", err)
+		return
+	}
+	g.masterMu.Lock()
+	g.masterConn = conn
+	g.masterMu.Unlock()
+	fmt.Printf("[MASTER] Yorkshire Link DMR master listening on UDP %d\n", LocalMasterPort)
+
+	buffer := make([]byte, 2048)
+	for {
+		n, remote, readErr := conn.ReadFromUDP(buffer)
+		if readErr != nil {
+			continue
+		}
+		packet := append([]byte(nil), buffer[:n]...)
+		if g.handleMasterControl(packet, remote) {
+			continue
+		}
+		if len(packet) < 55 || string(packet[:4]) != "DMRD" {
+			continue
+		}
+		repeaterID := binary.BigEndian.Uint32(packet[11:15])
+		client := g.authenticatedMasterClient(repeaterID, remote)
+		if client == nil {
+			g.rejectMaster(remote, repeaterID)
+			continue
+		}
+		sourceID := uint32(packet[5])<<16 | uint32(packet[6])<<8 | uint32(packet[7])
+		if !g.registeredDMRID(sourceID) {
+			g.reportRejectedDMR(sourceID)
+			continue
+		}
+		g.masterMu.Lock()
+		if current := g.masterClients[repeaterID]; current != nil {
+			current.LastSeen = time.Now()
+		}
+		g.masterMu.Unlock()
+		g.forwardBridgeFrameFrom(-1, dmrDestination(packet), repeaterID, packet)
+	}
+}
+
+func (g *Gateway) handleLocalMasterStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	g.masterMu.Lock()
+	clients := make([]map[string]any, 0, len(g.masterClients))
+	for id, client := range g.masterClients {
+		if time.Since(client.LastSeen) > 90*time.Second {
+			delete(g.masterClients, id)
+			continue
+		}
+		state := "authenticating"
+		if client.Stage == masterRunning {
+			state = "connected"
+		}
+		clients = append(clients, map[string]any{
+			"repeater_id":       client.RepeaterID,
+			"dmr_id":            client.BaseDMRID,
+			"callsign":          client.Callsign,
+			"address":           client.Address.String(),
+			"state":             state,
+			"connected_seconds": int64(time.Since(client.Connected).Seconds()),
+			"idle_seconds":      int64(time.Since(client.LastSeen).Seconds()),
+		})
+	}
+	running := g.masterConn != nil && localMasterSecret() != ""
+	g.masterMu.Unlock()
+	sort.Slice(clients, func(i, j int) bool { return clients[i]["repeater_id"].(uint32) < clients[j]["repeater_id"].(uint32) })
+	json.NewEncoder(w).Encode(map[string]any{"running": running, "port": LocalMasterPort, "talkgroup": 23530, "clients": clients})
+}
+
 func dmrDestination(data []byte) uint32 {
 	if len(data) < 20 || string(data[:4]) != "DMRD" {
 		return 0
@@ -1039,6 +1455,13 @@ func dmrFingerprint(data []byte) [32]byte {
 }
 
 func (g *Gateway) forwardBridgeFrame(source *UserSession, data []byte) {
+	source.mu.RLock()
+	sourceTG := source.TG
+	source.mu.RUnlock()
+	g.forwardBridgeFrameFrom(source.ID, sourceTG, 0, data)
+}
+
+func (g *Gateway) forwardBridgeFrameFrom(sourceNode int, sourceTG uint32, sourceRepeaterID uint32, data []byte) {
 	if len(data) < 55 || string(data[:4]) != "DMRD" {
 		return
 	}
@@ -1062,12 +1485,19 @@ func (g *Gateway) forwardBridgeFrame(source *UserSession, data []byte) {
 	streamID := dmrStreamID(data)
 	now := time.Now()
 	endpoints := bridgeEndpoints(*route)
-	sourceTG, sourceOK := endpoints[source.ID]
-	if !sourceOK {
+	if sourceNode > 0 {
+		configuredTG, sourceOK := endpoints[sourceNode]
+		if !sourceOK {
+			g.bridgeMu.Unlock()
+			return
+		}
+		sourceTG = configuredTG
+	}
+	if sourceTG == 0 {
 		g.bridgeMu.Unlock()
 		return
 	}
-	if suppression, ok := route.Suppress[source.ID]; ok && suppression.Stream == streamID && now.Before(suppression.Until) {
+	if suppression, ok := route.Suppress[sourceNode]; ok && suppression.Stream == streamID && now.Before(suppression.Until) {
 		g.bridgeMu.Unlock()
 		return
 	}
@@ -1075,7 +1505,11 @@ func (g *Gateway) forwardBridgeFrame(source *UserSession, data []byte) {
 		g.bridgeMu.Unlock()
 		return
 	}
-	if route.ActiveNode != 0 && route.ActiveNode != source.ID && now.Before(route.ActiveUntil) {
+	if route.ActiveNode != 0 && route.ActiveNode != sourceNode && now.Before(route.ActiveUntil) {
+		g.bridgeMu.Unlock()
+		return
+	}
+	if route.ActiveNode == sourceNode && route.ActiveStream != 0 && route.ActiveStream != streamID && now.Before(route.ActiveUntil) {
 		g.bridgeMu.Unlock()
 		return
 	}
@@ -1093,18 +1527,19 @@ func (g *Gateway) forwardBridgeFrame(source *UserSession, data []byte) {
 		return
 	}
 	route.Fingerprints[fingerprint] = now.Add(4 * time.Second)
-	route.ActiveNode = source.ID
+	route.ActiveNode = sourceNode
 	route.ActiveStream = streamID
 	route.ActiveUntil = now.Add(2 * time.Second)
 	targets := make(map[int]uint32, len(endpoints)-1)
 	for targetNode, targetTG := range endpoints {
-		if targetNode == source.ID {
+		if targetNode == sourceNode {
 			continue
 		}
 		targets[targetNode] = targetTG
 		route.Suppress[targetNode] = BridgeSuppression{Stream: streamID, Until: now.Add(5 * time.Second)}
 	}
 	g.bridgeMu.Unlock()
+	g.broadcastMasterFrame(data, sourceRepeaterID)
 	for targetNode, targetTG := range targets {
 		target := g.sessionByID(targetNode)
 		if target == nil {
