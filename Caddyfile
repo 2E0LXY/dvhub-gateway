@@ -26,7 +26,7 @@
     file_server
 }
 
-ai.2e0lxy.uk {
+ai.2e0lxy.uk, https://194.146.49.25 {
     import dvhub-common
     log {
         output file /var/log/caddy/dvhub-access.log

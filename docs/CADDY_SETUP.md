@@ -61,9 +61,10 @@ Add the following override, then save it:
 EnvironmentFile=/etc/caddy/dvhub.env
 ```
 
-The tracked Caddyfile already uses `ai.2e0lxy.uk`, proxies only to the
-loopback gateway at `127.0.0.1:8080`, and leaves only the read-only YSF page
-and feed public.
+The tracked Caddyfile serves both `ai.2e0lxy.uk` and the IP address
+`194.146.49.25`, proxies only to the loopback gateway at `127.0.0.1:8080`,
+and leaves only the read-only YSF page and feed public. Current Caddy and
+Let's Encrypt releases can obtain the required short-lived IP certificate.
 
 ### 3. Validate Config
 ```bash
