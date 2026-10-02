@@ -418,6 +418,7 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"temp_c":         readCPUTemperature(),
 		"p25_reflector":  serviceActive("p25reflector.service"),
 		"nxdn_reflector": serviceActive("nxdnreflector.service"),
+		"nxdn_bridge":    serviceActive("nxdn2dmr.service"),
 	})
 }
 

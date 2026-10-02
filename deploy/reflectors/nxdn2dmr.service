@@ -1,0 +1,25 @@
+[Unit]
+Description=Yorkshire Link HUB NXDN to DMR TG23530 bridge
+Documentation=https://github.com/ShaYmez/MMDVM_CM
+Wants=network-online.target
+After=network-online.target nxdnreflector.service dvhub-gateway.service
+
+[Service]
+Type=simple
+User=nxdnbridge
+Group=nxdnbridge
+WorkingDirectory=/var/lib/nxdn2dmr
+ExecStart=/usr/local/bin/NXDN2DMR /etc/nxdn2dmr/NXDN2DMR.ini
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/nxdn2dmr /var/log/nxdn2dmr
+
+[Install]
+WantedBy=multi-user.target

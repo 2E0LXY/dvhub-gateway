@@ -9,3 +9,5 @@ ExecStart=/usr/bin/curl -fsS --retry 3 --connect-timeout 15 --max-time 120 -o /v
 ExecStart=/usr/bin/install -o nxdnreflector -g nxdnreflector -m 0644 /var/lib/nxdnreflector/NXDN.csv.tmp /var/lib/nxdnreflector/NXDN.csv
 ExecStart=/usr/bin/rm -f /var/lib/nxdnreflector/NXDN.csv.tmp
 ExecStart=/usr/bin/install -o p25reflector -g p25reflector -m 0644 /var/lib/dvgateway/dmrid.dat /var/lib/p25reflector/DMRIds.dat
+ExecStart=/usr/bin/install -o nxdnbridge -g nxdnbridge -m 0644 /var/lib/dvgateway/dmrid.dat /var/lib/nxdn2dmr/DMRIds.dat
+ExecStart=/usr/bin/install -o nxdnbridge -g nxdnbridge -m 0644 /var/lib/nxdnreflector/NXDN.csv /var/lib/nxdn2dmr/NXDN.csv

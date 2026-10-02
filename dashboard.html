@@ -818,12 +818,13 @@
                         </div>
                         <div class="border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">NXDN Reflector</span><span id="nxdn-service-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">DMR Conference Bridge</span><span id="nxdn-bridge-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
                             <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">41400</span></div>
                             <div class="data-row"><span class="data-label">Talkgroup</span><span class="data-value">23530</span></div>
-                            <div class="text-gray-500">Native NXDN single-talkgroup reflector endpoint.</div>
+                            <div class="text-gray-500">NXDN TG23530 is permanently cross-connected to the DMR/YSF conference without a PCM transcoding generation.</div>
                         </div>
-                        <div class="md:col-span-2 text-yellow-400">These native reflector endpoints are installed independently. Cross-mode P25/NXDN audio routing into the DMR/YSF TG23530 conference requires the corresponding protocol gateway converters.</div>
+                        <div class="md:col-span-2 text-yellow-400">P25 remains a native reflector endpoint while its separate hybrid IMBE/DV30 transcoder is prepared. NXDN is live on the TG23530 conference.</div>
                     </div>
                 </div>
                 
@@ -1180,6 +1181,7 @@
                 };
                 updateReflectorChip('p25-service-status', Boolean(stats.p25_reflector));
                 updateReflectorChip('nxdn-service-status', Boolean(stats.nxdn_reflector));
+                updateReflectorChip('nxdn-bridge-status', Boolean(stats.nxdn_bridge));
             } catch (err) {
                 console.error('[SYS] Telemetry update failed:', err);
                 document.getElementById('hw-cpu').innerText = '-';
