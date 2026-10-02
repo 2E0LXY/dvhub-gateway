@@ -650,7 +650,7 @@
                                 <button id="btn-voc-hybrid" onclick="setVocoder('hybrid')" class="btn-cyber active flex-1">HYBRID</button>
                                 <button id="btn-voc-hw" onclick="setVocoder('hw')" class="btn-cyber flex-1">HARDWARE</button>
                             </div>
-                            <p class="text-[8px] text-gray-600 mt-1">Hybrid prioritises the DV30 and automatically uses software for a busy or unavailable hardware frame.</p>
+                            <p class="text-[8px] text-gray-600 mt-1">Hybrid shares one or two DV30 devices across browser, P25 and AllStar audio, using software for busy or unavailable hardware.</p>
                         </div>
                     </div>
                 </div>
@@ -1379,7 +1379,8 @@
                 const version = health.version ? ` ${health.version}` : '';
                 const rtt = Number(health.round_trip_ms).toFixed(1);
                 const engine = health.hardware_enabled ? 'HW ACTIVE' : 'HW STANDBY';
-                detail.textContent = `${product}${version} · ${rtt} ms RTT · ${engine} · ENC ${health.encoded || 0} / DEC ${health.decoded || 0} · ERR ${health.errors || 0}`;
+                const devices = `${health.online_devices || 0}/${health.configured_devices || 0} DEVICES`;
+                detail.textContent = `${product}${version} · ${rtt} ms RTT · ${engine} · ${devices} · ENC ${health.encoded || 0} / DEC ${health.decoded || 0} · ERR ${health.errors || 0}`;
             } catch (err) {
                 chip.className = 'chip chip-err';
                 chip.textContent = '♥ OFFLINE';

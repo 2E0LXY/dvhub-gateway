@@ -140,6 +140,47 @@ func TestParseDV30AddressAcceptsHostnameURLAndRejectsEmpty(t *testing.T) {
 	}
 }
 
+func TestSessionVocoderTargetsUsesConfiguredSecondDevice(t *testing.T) {
+	session := &UserSession{}
+	primary := parseDV30Address("127.0.0.1:2468")
+	secondary := parseDV30Address("127.0.0.1:2469")
+	session.DV30Addr.Store(primary)
+	session.DV30Addr2.Store(secondary)
+	session.DV30Count.Store(2)
+	targets := sessionVocoderTargets(session)
+	if len(targets) != 2 || targets[0].String() != primary.String() || targets[1].String() != secondary.String() {
+		t.Fatalf("unexpected two-device target pool: %#v", targets)
+	}
+	session.DV30Count.Store(1)
+	if targets = sessionVocoderTargets(session); len(targets) != 1 || targets[0].String() != primary.String() {
+		t.Fatalf("single-device target pool = %#v", targets)
+	}
+}
+
+func TestLocalVocoderBrokerSoftwareProtocol(t *testing.T) {
+	session := &UserSession{}
+	session.DV30Addr.Store((*net.UDPAddr)(nil))
+	session.DV30Addr2.Store((*net.UDPAddr)(nil))
+	session.DV30Count.Store(1)
+	gateway := &Gateway{}
+	gateway.sessions[0] = session
+
+	encodeRequest := append([]byte{0x61, 0x42}, make([]byte, 320)...)
+	if response := gateway.handleLocalVocoderRequest(encodeRequest); len(response) != 11 || response[0] != 0x62 || response[1] != 0x42 {
+		t.Fatalf("invalid broker encode response: %x", response)
+	}
+	decodeRequest := append([]byte{0x63, 0x43}, make([]byte, 9)...)
+	if response := gateway.handleLocalVocoderRequest(decodeRequest); len(response) != 322 || response[0] != 0x64 || response[1] != 0x43 {
+		t.Fatalf("invalid broker decode response: length=%d response=%x", len(response), response)
+	}
+	if response := gateway.handleLocalVocoderRequest([]byte{0x70}); len(response) < 2 || response[0] != 0x71 {
+		t.Fatalf("invalid broker health response: %x", response)
+	}
+	if response := gateway.handleLocalVocoderRequest(nil); len(response) != 2 || response[0] != 0x7f {
+		t.Fatalf("invalid broker error response: %x", response)
+	}
+}
+
 func TestConfiguredDMRHostsCanBeLoaded(t *testing.T) {
 	if _, err := os.Stat(dmrHostsPath); os.IsNotExist(err) {
 		t.Skip("live DMR_Hosts.txt is not installed in this test environment")

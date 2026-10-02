@@ -100,11 +100,14 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             val tg = (b.talkgroupSpinner.selectedItem as? Talkgroup)?.id ?: currentTg
             val pass = b.networkPassword.text.toString()
             if (!linkActive && currentNetwork.requiresUserPassword && pass.isBlank()) { toast("Enter your user/hotspot credential"); return@setOnClickListener }
-            linkActive = !linkActive; currentTg = tg
-            if (!client.nodeState(currentNetwork, linkActive, tg, pass, b.dmrOptions.text.toString())) {
-                linkActive = false; toast("WebSocket is not connected")
+            val requested = !linkActive
+            currentTg = tg
+            if (!client.nodeState(currentNetwork, requested, tg, pass, b.dmrOptions.text.toString())) {
+                toast("WebSocket is not connected")
+            } else {
+                b.linkButton.isEnabled = false
+                b.linkStatus.text = if (requested) "Connection requested…" else "Disconnection requested…"
             }
-            updateLinkUi(b)
         }
         b.pttButton.setOnTouchListener { _, event ->
             when (event.actionMasked) {
@@ -166,7 +169,10 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                     client.nodeState(GatewayNetworks.all[0], true, 23530, "")
                     client.nodeState(GatewayNetworks.all[1], true, 23530, b.bmPassword.text.toString())
                     client.nodeState(GatewayNetworks.all[3], true, 23530, b.tgifPassword.text.toString())
-                    client.bridge(true, 1, 2, 4, 23530, 23530, 23530); settings = original
+                    client.bridge(true, 1, 2, 4, 23530, 23530, 23530)
+                    settings = original
+                    client.configure(original)
+                    client.connect()
                     b.bmPassword.text.clear(); b.tgifPassword.text.clear()
                     b.legStatus.text = "Conference test active · TG 23530 · automatic stop in ${seconds}s"
                 }, 800)
@@ -256,7 +262,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     }
 
     private fun setupMatrix(b: ViewConferenceBinding) {
-        val networks = GatewayNetworks.all.filter { it.nodeId in 1..5 }
+        val networks = GatewayNetworks.all
         val third = listOf(Network(0, "No third leg", "none", "")) + networks
         b.matrixNetworkA.adapter = darkAdapter(networks); b.matrixNetworkB.adapter = darkAdapter(networks); b.matrixNetworkB.setSelection(1)
         b.matrixNetworkC.adapter = darkAdapter(third)
@@ -303,7 +309,8 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             val product = first(json, "product") ?: "AMBE device"
             val hardwareFrames = first(json, "hardware_frames") ?: "0"
             val fallbacks = first(json, "software_fallbacks") ?: "0"
-            dashboard?.multimodeSummary?.append("\nVocoder $mode · $product $online · HW frames $hardwareFrames · SW fallback $fallbacks")
+            val devices = "${first(json, "online_devices") ?: "0"}/${first(json, "configured_devices") ?: "0"} devices"
+            dashboard?.multimodeSummary?.append("\nVocoder $mode · $product $online · $devices · HW frames $hardwareFrames · SW fallback $fallbacks")
         } } }
     }
 
@@ -371,7 +378,13 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     override fun onConnection(connected: Boolean, message: String) = runOnUiThread {
         shell.connectionBadge.text = if (connected) "ONLINE" else "OFFLINE"
         shell.connectionBadge.setTextColor(ContextCompat.getColor(this, if (connected) R.color.dv_green else R.color.dv_warning))
-        link?.linkStatus?.let { if (!connected) it.text = message }; settingsView?.settingsStatus?.text = message
+        if (!connected) {
+            linkActive = false
+            link?.linkButton?.isEnabled = true
+            link?.linkButton?.text = "Connect link"
+            link?.linkStatus?.text = message
+        }
+        settingsView?.settingsStatus?.text = message
     }
 
     override fun onJson(json: JsonObject) = runOnUiThread {
@@ -388,6 +401,27 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                     link?.linkStatus?.text = "RX only · transmitter in use by ${first(json, "callsign", "dmr_id") ?: "another operator"}"
                 }
                 "idle" -> if (!audioIsTransmitting()) updateLinkUi(link ?: return@runOnUiThread)
+            }
+        }
+        if (kind == "network_status" && first(json, "node_id")?.toIntOrNull() == currentNetwork.nodeId) {
+            val state = first(json, "state") ?: "unknown"
+            when (state) {
+                "connected" -> {
+                    linkActive = true
+                    link?.linkButton?.isEnabled = true
+                    updateLinkUi(link ?: return@runOnUiThread)
+                }
+                "disconnected", "rejected", "error" -> {
+                    linkActive = false
+                    link?.linkButton?.isEnabled = true
+                    link?.linkButton?.text = "Connect link"
+                    link?.linkStatus?.text = first(json, "message") ?: state.replaceFirstChar { it.uppercase() }
+                    link?.linkStatus?.setTextColor(ContextCompat.getColor(this, if (state == "disconnected") R.color.dv_muted else R.color.dv_warning))
+                }
+                "connecting" -> {
+                    link?.linkButton?.isEnabled = false
+                    link?.linkStatus?.text = first(json, "message") ?: "Connecting…"
+                }
             }
         }
         if (kind.contains("traffic", true) || json.has("callsign") || json.has("source_id")) {

@@ -306,7 +306,7 @@ AMBE Frame (9 bytes = 72 bits)
 ```json
 {
   "cmd": "set_vocoder",
-  "type": "sw"  // or "hw"
+  "type": "hybrid"
 }
 ```
 
@@ -314,7 +314,9 @@ AMBE Frame (9 bytes = 72 bits)
 ```json
 {
   "cmd": "set_dv30",
-  "addr": "zx3de49.glddns.com:2468"
+  "count": 2,
+  "addr1": "zx3de49.glddns.com:2468",
+  "addr2": "192.168.1.132:2468"
 }
 ```
 

@@ -19,13 +19,12 @@ The runtime config contains a placeholder for the FreeSTAR master password.
 Deployment replaces it from the existing protected server configuration; the
 secret must never be committed.
 
-## AllStar 530470 to DMR
+## Native AllStar 530471 to DMR
 
-`IAX_Bridge` runs as a non-registering IAX client so it cannot replace the
-live AllStar registration for node 530470. It exchanges PCM audio with the
-patched `USRP2DMR`, which uses the same remote DV30 hardware protocol as the
-P25 bridge and logs into FreeSTAR TG23530 with hotspot suffix 04. The AllStar
-FreeSTAR master password is substituted only on the server. The IAX client
-password is entered through the authenticated dashboard, expanded from
-`IAX_Bridge.ini` as a template, and written to the protected runtime path
-`/var/lib/iax-bridge/IAX_Bridge.ini`. The API never returns the password.
+The hub runs native ASL3/Asterisk node `530471`; the retired `IAX_Bridge`
+client is no longer part of the deployment. Patched `USRP2DMR` exchanges audio
+with ASL3 and connects to FreeSTAR TG23530 with hotspot suffix 04. Its AMBE
+traffic goes to the gateway's loopback hybrid broker at `127.0.0.1:2461`, so
+browser, P25 and AllStar frames share both configured DV30 devices and use the
+software codec whenever the hardware pool is busy or unavailable. Network
+passwords remain only in protected server-side configuration.

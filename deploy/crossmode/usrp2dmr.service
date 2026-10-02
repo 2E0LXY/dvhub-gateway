@@ -9,7 +9,7 @@ Type=simple
 User=allstarbridge
 Group=allstarbridge
 WorkingDirectory=/var/lib/usrp2dmr
-Environment=DV30_ADDRESS=zx3de49.glddns.com:2468
+Environment=DV30_ADDRESS=127.0.0.1:2461
 ExecStart=/usr/local/bin/USRP2DMR-DV30 /etc/usrp2dmr/USRP2DMR.ini
 Restart=on-failure
 RestartSec=3

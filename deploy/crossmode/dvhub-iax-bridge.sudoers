@@ -1,1 +1,0 @@
-dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl restart iax-bridge.service

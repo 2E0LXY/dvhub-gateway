@@ -320,6 +320,7 @@ func main() {
 		gw.sessions[i].HybridVocoder.Store(true)
 		go gw.runUDPListener(gw.sessions[i])
 	}
+	go gw.runLocalVocoderBroker("127.0.0.1:2461")
 	go gw.runYorkshireConferenceSupervisor()
 
 	http.HandleFunc("/ws", gw.handleWS)
@@ -609,51 +610,59 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 		"software_fallbacks": dv30SoftwareFallbacks.Load(),
 		"message":            "No heartbeat reply",
 	}
-	target, _ := g.sessions[0].DV30Addr.Load().(*net.UDPAddr)
-	if target == nil {
+	targets := sessionVocoderTargets(g.sessions[0])
+	response["configured_devices"] = len(targets)
+	if len(targets) == 0 {
 		response["message"] = "AMBE device is not configured"
 		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
-
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
-	if err != nil {
-		response["message"] = "Heartbeat probe unavailable"
-		_ = json.NewEncoder(w).Encode(response)
-		return
-	}
-	defer conn.Close()
-
-	started := time.Now()
-	if _, err = conn.WriteToUDP([]byte{0x70}, target); err == nil {
-		_ = conn.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
-		packet := make([]byte, 2048)
-		var n int
-		var peer *net.UDPAddr
-		n, peer, err = conn.ReadFromUDP(packet)
-		if err == nil && peer != nil && peer.IP.Equal(target.IP) && peer.Port == target.Port && n > 1 && packet[0] == 0x71 {
-			var health dv30HealthPayload
-			if json.Unmarshal(packet[1:n], &health) == nil && health.Status == "ok" {
-				response = map[string]any{
-					"online":             true,
-					"state":              "online",
-					"hardware_enabled":   g.sessions[0].UseHWVocoder.Load(),
-					"mode":               vocoderMode(g.sessions[0]),
-					"hardware_frames":    dv30HardwareFrames.Load(),
-					"software_fallbacks": dv30SoftwareFallbacks.Load(),
-					"round_trip_ms":      math.Round(float64(time.Since(started).Microseconds())/10) / 100,
-					"product":            health.Product,
-					"version":            health.Version,
-					"uptime_seconds":     health.UptimeSeconds,
-					"encoded":            health.Encoded,
-					"decoded":            health.Decoded,
-					"errors":             health.Errors,
-					"last_latency_ms":    health.LastLatencyMS,
-				}
+	devices := make([]map[string]any, 0, len(targets))
+	onlineCount := 0
+	for index, target := range targets {
+		health, rtt, online := probeDV30Health(target)
+		device := map[string]any{"device": index + 1, "online": online, "state": "offline"}
+		if online {
+			onlineCount++
+			device["state"], device["product"], device["version"], device["round_trip_ms"] = "online", health.Product, health.Version, rtt
+			if onlineCount == 1 {
+				response["product"], response["version"], response["round_trip_ms"] = health.Product, health.Version, rtt
+				response["uptime_seconds"], response["encoded"], response["decoded"] = health.UptimeSeconds, health.Encoded, health.Decoded
+				response["errors"], response["last_latency_ms"] = health.Errors, health.LastLatencyMS
 			}
 		}
+		devices = append(devices, device)
+	}
+	response["devices"], response["online_devices"] = devices, onlineCount
+	response["online"] = onlineCount > 0
+	if onlineCount > 0 {
+		response["state"], response["message"] = "online", fmt.Sprintf("%d of %d AMBE devices online", onlineCount, len(targets))
 	}
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func probeDV30Health(target *net.UDPAddr) (dv30HealthPayload, float64, bool) {
+	var health dv30HealthPayload
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+	if err != nil {
+		return health, 0, false
+	}
+	defer conn.Close()
+	started := time.Now()
+	if _, err = conn.WriteToUDP([]byte{0x70}, target); err != nil {
+		return health, 0, false
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(750 * time.Millisecond))
+	packet := make([]byte, 2048)
+	n, peer, err := conn.ReadFromUDP(packet)
+	if err != nil || peer == nil || !peer.IP.Equal(target.IP) || peer.Port != target.Port || n < 2 || packet[0] != 0x71 {
+		return health, 0, false
+	}
+	if json.Unmarshal(packet[1:n], &health) != nil || health.Status != "ok" {
+		return health, 0, false
+	}
+	rtt := math.Round(float64(time.Since(started).Microseconds())/10) / 100
+	return health, rtt, true
 }
 
 func (g *Gateway) txWatchdog() {
@@ -1857,9 +1866,9 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 
 				if useHW {
 					// Hardware vocoder via DV30
-					dv30Addr := s.DV30Addr.Load().(*net.UDPAddr)
-					if dv30Addr != nil {
-						voiceData = encodeVocoderFrame(pcmData, dv30Addr, s.HybridVocoder.Load())
+					targets := sessionVocoderTargets(s)
+					if len(targets) > 0 {
+						voiceData = encodeVocoderFrame(pcmData, targets, s.HybridVocoder.Load())
 					} else {
 						voiceData = encodeMBE(pcmData) // Fallback to SW
 					}
@@ -1967,9 +1976,9 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 			if len(pcmData) > 0 {
 				var decodedPCM []byte
 				if s.UseHWVocoder.Load() {
-					dv30Addr := s.DV30Addr.Load().(*net.UDPAddr)
-					if dv30Addr != nil {
-						decodedPCM = decodeVocoderFrame(pcmData, dv30Addr, s.HybridVocoder.Load())
+					targets := sessionVocoderTargets(s)
+					if len(targets) > 0 {
+						decodedPCM = decodeVocoderFrame(pcmData, targets, s.HybridVocoder.Load())
 					}
 				}
 				if len(decodedPCM) == 0 {
@@ -2312,9 +2321,10 @@ func quantizeMagnitude(mag float64) byte {
 // DV30 HARDWARE VOCODER CLIENT
 // ============================================================================
 
-var dv30HardwareSlot = make(chan struct{}, 1)
+var dv30HardwareSlots sync.Map // endpoint string -> chan struct{}
 var dv30HardwareFrames atomic.Uint64
 var dv30SoftwareFallbacks atomic.Uint64
+var dv30TargetCursor atomic.Uint64
 
 func vocoderMode(session *UserSession) string {
 	if !session.UseHWVocoder.Load() {
@@ -2326,45 +2336,148 @@ func vocoderMode(session *UserSession) string {
 	return "hardware"
 }
 
-// Hybrid mode treats the single DV30 as the priority hardware slot. If another
-// browser stream already owns that slot, or the hardware request times out, the
-// frame is processed by the software codec immediately instead of blocking the
-// real-time audio pipeline. A call continues to observe the same preference,
-// while every frame remains independently recoverable during a hardware outage.
-func encodeVocoderFrame(pcm []byte, target *net.UDPAddr, hybrid bool) []byte {
+func sessionVocoderTargets(session *UserSession) []*net.UDPAddr {
+	count := int(session.DV30Count.Load())
+	primary, _ := session.DV30Addr.Load().(*net.UDPAddr)
+	secondary, _ := session.DV30Addr2.Load().(*net.UDPAddr)
+	targets := make([]*net.UDPAddr, 0, 2)
+	if primary != nil {
+		targets = append(targets, primary)
+	}
+	if count > 1 && secondary != nil && (primary == nil || secondary.String() != primary.String()) {
+		targets = append(targets, secondary)
+	}
+	return targets
+}
+
+func orderedVocoderTargets(targets []*net.UDPAddr) []*net.UDPAddr {
+	if len(targets) < 2 {
+		return targets
+	}
+	start := int(dv30TargetCursor.Add(1)-1) % len(targets)
+	ordered := make([]*net.UDPAddr, 0, len(targets))
+	ordered = append(ordered, targets[start:]...)
+	ordered = append(ordered, targets[:start]...)
+	return ordered
+}
+
+func acquireVocoderTarget(target *net.UDPAddr, hybrid bool) (func(), bool) {
+	value, _ := dv30HardwareSlots.LoadOrStore(target.String(), make(chan struct{}, 1))
+	slot := value.(chan struct{})
 	if hybrid {
 		select {
-		case dv30HardwareSlot <- struct{}{}:
-			defer func() { <-dv30HardwareSlot }()
+		case slot <- struct{}{}:
+			return func() { <-slot }, true
 		default:
-			dv30SoftwareFallbacks.Add(1)
-			return encodeMBE(pcm)
+			return nil, false
 		}
 	}
-	if encoded, ok := encodeDV30Hardware(pcm, target); ok {
-		dv30HardwareFrames.Add(1)
-		return encoded
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, true
+	case <-timer.C:
+		return nil, false
+	}
+}
+
+// Every gateway stream and local cross-mode converter uses the same endpoint
+// slots. With two configured devices, frames are spread across both. Hybrid
+// mode immediately uses software when all hardware slots are busy or offline.
+func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr, hybrid bool) []byte {
+	for _, target := range orderedVocoderTargets(targets) {
+		release, acquired := acquireVocoderTarget(target, hybrid)
+		if !acquired {
+			continue
+		}
+		encoded, ok := encodeDV30Hardware(pcm, target)
+		release()
+		if ok {
+			dv30HardwareFrames.Add(1)
+			return encoded
+		}
 	}
 	dv30SoftwareFallbacks.Add(1)
 	return encodeMBE(pcm)
 }
 
-func decodeVocoderFrame(ambe []byte, target *net.UDPAddr, hybrid bool) []byte {
-	if hybrid {
-		select {
-		case dv30HardwareSlot <- struct{}{}:
-			defer func() { <-dv30HardwareSlot }()
-		default:
-			dv30SoftwareFallbacks.Add(1)
-			return decodeMBE(ambe)
+func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr, hybrid bool) []byte {
+	for _, target := range orderedVocoderTargets(targets) {
+		release, acquired := acquireVocoderTarget(target, hybrid)
+		if !acquired {
+			continue
 		}
-	}
-	if decoded, ok := decodeDV30Hardware(ambe, target); ok {
-		dv30HardwareFrames.Add(1)
-		return decoded
+		decoded, ok := decodeDV30Hardware(ambe, target)
+		release()
+		if ok {
+			dv30HardwareFrames.Add(1)
+			return decoded
+		}
 	}
 	dv30SoftwareFallbacks.Add(1)
 	return decodeMBE(ambe)
+}
+
+func (g *Gateway) runLocalVocoderBroker(address string) {
+	local, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		fmt.Printf("[VOC] Local broker address failed: %v\n", err)
+		return
+	}
+	conn, err := net.ListenUDP("udp", local)
+	if err != nil {
+		fmt.Printf("[VOC] Local broker listener failed: %v\n", err)
+		return
+	}
+	defer conn.Close()
+	fmt.Printf("[VOC] Shared hybrid broker listening on udp://%s\n", address)
+	buffer := make([]byte, 2048)
+	for {
+		n, peer, readErr := conn.ReadFromUDP(buffer)
+		if readErr != nil || peer == nil || n < 1 {
+			continue
+		}
+		request := append([]byte(nil), buffer[:n]...)
+		go func() {
+			_, _ = conn.WriteToUDP(g.handleLocalVocoderRequest(request), peer)
+		}()
+	}
+}
+
+func (g *Gateway) handleLocalVocoderRequest(request []byte) []byte {
+	var response []byte
+	session := g.sessions[0]
+	targets := sessionVocoderTargets(session)
+	useHardware := session.UseHWVocoder.Load() && len(targets) > 0
+	switch {
+	case len(request) == 322 && request[0] == 0x61:
+		encoded := encodeMBE(request[2:])
+		if useHardware {
+			encoded = encodeVocoderFrame(request[2:], targets, true)
+		}
+		response = append([]byte{0x62, request[1]}, encoded...)
+	case len(request) == 11 && request[0] == 0x63:
+		decoded := decodeMBE(request[2:])
+		if useHardware {
+			decoded = decodeVocoderFrame(request[2:], targets, true)
+		}
+		response = append([]byte{0x64, request[1]}, decoded...)
+	case len(request) > 0 && request[0] == 0x70:
+		health, _ := json.Marshal(map[string]any{
+			"status": "ok", "product": "DVHub hybrid broker", "version": "2.1",
+			"encoded": dv30HardwareFrames.Load(), "decoded": dv30HardwareFrames.Load(),
+			"errors": 0, "hardware_devices": len(targets), "software_fallbacks": dv30SoftwareFallbacks.Load(),
+		})
+		response = append([]byte{0x71}, health...)
+	default:
+		channel := byte(0)
+		if len(request) > 1 {
+			channel = request[1]
+		}
+		response = []byte{0x7f, channel}
+	}
+	return response
 }
 
 func parseDV30Address(value string) *net.UDPAddr {

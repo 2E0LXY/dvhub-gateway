@@ -46,11 +46,24 @@ sudo caddy install
 sudo cp Caddyfile /etc/caddy/Caddyfile
 ```
 
-### 2. Edit Domain
+### 2. Configure authentication
 ```bash
-sudo nano /etc/caddy/Caddyfile
-# Change: dvhub.yourdomain.com → your-actual-domain.com
+HASH="$(caddy hash-password)"
+sudo install -m 600 /dev/null /etc/caddy/dvhub.env
+sudo sh -c 'printf "%s\n" "DVHUB_USER=2E0LXY" "DVHUB_PASSWORD_HASH=$1" > /etc/caddy/dvhub.env' sh "$HASH"
+sudo systemctl edit caddy
 ```
+
+Add the following override, then save it:
+
+```ini
+[Service]
+EnvironmentFile=/etc/caddy/dvhub.env
+```
+
+The tracked Caddyfile already uses `ai.2e0lxy.uk`, proxies only to the
+loopback gateway at `127.0.0.1:8080`, and leaves only the read-only YSF page
+and feed public.
 
 ### 3. Validate Config
 ```bash
@@ -74,12 +87,12 @@ sudo journalctl -u caddy -f
 **Before starting Caddy, ensure DNS is configured:**
 
 ```
-A Record: dvhub.yourdomain.com → your-server-ip
+A Record: ai.2e0lxy.uk → your-server-ip
 ```
 
 **Wait for DNS propagation:**
 ```bash
-dig dvhub.yourdomain.com +short
+dig ai.2e0lxy.uk +short
 # Should return your server IP
 ```
 
