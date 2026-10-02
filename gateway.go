@@ -34,22 +34,21 @@ const MaxUsers = 8
 const LocalMasterPort = 62030
 
 const (
-	ysfConfigPath          = "/etc/ysfreflector/YSFReflector.ini"
-	ysfIdentityLockPath    = "/var/lib/dvgateway/ysf-identity.lock"
-	ysfDVRefRegisteredPath = "/var/lib/dvgateway/ysf-dvref-registration"
-	dvrefTokenPath         = "/etc/dvhub/dvref.token"
-	refCheckTokenPath      = "/etc/dvhub/refcheck.token"
-	ysf2dmrConfigPath      = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
-	dmrHostsPath           = "/var/lib/dvgateway/DMR_Hosts.txt"
-	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
-	yorkshireConfigPath    = "/etc/dvhub/yorkshire-conference.json"
-	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
-	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
-	allStarTemplatePath    = "/etc/iax-bridge/IAX_Bridge.template"
-	allStarRuntimePath     = "/var/lib/iax-bridge/IAX_Bridge.ini"
-	allStarLogPath         = "/var/log/iax-bridge/IAX_Bridge.log"
-	ysfNetworkName         = "YORKSHIRELINK"
-	ysfDescription         = "YORKSHIRE HUB"
+	ysfConfigPath           = "/etc/ysfreflector/YSFReflector.ini"
+	ysfIdentityLockPath     = "/var/lib/dvgateway/ysf-identity.lock"
+	ysfDVRefRegisteredPath  = "/var/lib/dvgateway/ysf-dvref-registration"
+	dvrefTokenPath          = "/etc/dvhub/dvref.token"
+	refCheckTokenPath       = "/etc/dvhub/refcheck.token"
+	ysf2dmrConfigPath       = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
+	dmrHostsPath            = "/var/lib/dvgateway/DMR_Hosts.txt"
+	brandMeisterTokenPath   = "/etc/dvhub/brandmeister-api.token"
+	yorkshireConfigPath     = "/etc/dvhub/yorkshire-conference.json"
+	yorkshirePausedPath     = "/var/lib/dvgateway/yorkshire-conference.paused"
+	localMasterSecretPath   = "/etc/dvhub/local-master.secret"
+	allStarRegistrationPath = "/etc/asterisk/rpt_http_registrations.conf"
+	allStarSecretStagePath  = "/var/lib/dvgateway/allstar-node.secret"
+	ysfNetworkName          = "YORKSHIRELINK"
+	ysfDescription          = "YORKSHIRE HUB"
 )
 
 const (
@@ -451,69 +450,73 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"p25_bridge":       serviceActive("p252dmr.service"),
 		"nxdn_reflector":   serviceActive("nxdnreflector.service"),
 		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
-		"allstar_bridge":   allStar.Connected,
+		"allstar_bridge":   allStar.Registered,
 		"allstar_services": allStar.ServicesActive,
 	})
 }
 
 type allStarStatus struct {
-	Node           int    `json:"node"`
-	Configured     bool   `json:"configured"`
-	Connected      bool   `json:"connected"`
-	ServicesActive bool   `json:"services_active"`
-	IAXService     bool   `json:"iax_service"`
-	USRPService    bool   `json:"usrp_service"`
-	State          string `json:"state"`
-	Message        string `json:"message"`
+	Node            int      `json:"node"`
+	Configured      bool     `json:"configured"`
+	Registered      bool     `json:"registered"`
+	Connected       bool     `json:"connected"`
+	ServicesActive  bool     `json:"services_active"`
+	AsteriskService bool     `json:"asterisk_service"`
+	USRPService     bool     `json:"usrp_service"`
+	Links           []string `json:"links"`
+	State           string   `json:"state"`
+	Message         string   `json:"message"`
 }
 
 func readAllStarStatus() allStarStatus {
-	status := allStarStatus{Node: 530470, State: "not_configured", Message: "Enter the IAX client password to connect"}
-	status.IAXService = serviceActive("iax-bridge.service")
+	status := allStarStatus{Node: 530471, Links: []string{}, State: "not_configured", Message: "Enter the AllStar node password to register node 530471"}
+	status.AsteriskService = serviceActive("asterisk.service")
 	status.USRPService = serviceActive("usrp2dmr.service")
-	status.ServicesActive = status.IAXService && status.USRPService
+	status.ServicesActive = status.AsteriskService && status.USRPService
 
-	if runtimeConfig, err := os.ReadFile(allStarRuntimePath); err == nil {
-		text := string(runtimeConfig)
-		status.Configured = strings.Contains(text, "530470=iaxclient:") && !strings.Contains(text, "__ALLSTAR_PASSWORD__")
+	if registration, err := os.ReadFile(allStarRegistrationPath); err == nil {
+		status.Configured = strings.Contains(string(registration), "register => 530471:")
 	}
 	if !status.Configured {
 		return status
 	}
 	if !status.ServicesActive {
 		status.State = "service_offline"
-		status.Message = "One or more AllStar bridge services are offline"
+		status.Message = "Asterisk or the USRP cross-mode service is offline"
 		return status
 	}
 
-	logData, err := os.ReadFile(allStarLogPath)
+	output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-status").CombinedOutput()
 	if err != nil {
-		status.State = "connecting"
-		status.Message = "Waiting for IAX connection status"
+		status.State = "registering"
+		status.Message = "Waiting for the AllStar registration status"
 		return status
 	}
-	logText := string(logData)
-	connectedAt := strings.LastIndex(logText, "Connected to node: 530470")
-	failedAt := strings.LastIndex(logText, "Connection timeout")
-	if disconnected := strings.LastIndex(logText, "Disconnected"); disconnected > failedAt {
-		failedAt = disconnected
+	statusText := string(output)
+	registrationSection := strings.SplitN(statusText, "LINKS", 2)[0]
+	registeredLine := regexp.MustCompile(`(?im)^.*\b530471\b.*\bRegistered\b.*$`).FindString(registrationSection)
+	status.Registered = registeredLine != "" && !strings.Contains(strings.ToLower(registeredLine), "unregistered")
+	if parts := strings.SplitN(statusText, "LINKS", 2); len(parts) == 2 {
+		linksSection := strings.SplitN(parts[1], "STATS", 2)[0]
+		seen := make(map[string]bool)
+		for _, node := range regexp.MustCompile(`\b[0-9]{4,7}\b`).FindAllString(linksSection, -1) {
+			if node != "530471" && !seen[node] {
+				seen[node] = true
+				status.Links = append(status.Links, node)
+			}
+		}
 	}
-	if rejected := strings.LastIndex(logText, "Call rejected by remote"); rejected > failedAt {
-		failedAt = rejected
-	}
-	if connectedAt >= 0 && connectedAt > failedAt {
-		status.Connected = true
-		status.State = "connected"
-		status.Message = "AllStar node 530470 is connected to TG23530"
+	status.Connected = len(status.Links) > 0
+	if status.Registered {
+		status.State = "registered"
+		status.Message = "AllStar node 530471 is registered and ready"
+		if status.Connected {
+			status.Message = "AllStar node 530471 is linked to " + strings.Join(status.Links, ", ")
+		}
 		return status
 	}
-	if failedAt >= 0 {
-		status.State = "failed"
-		status.Message = "IAX login failed or timed out; check the client password and node permissions"
-		return status
-	}
-	status.State = "connecting"
-	status.Message = "Connecting to AllStar node 530470"
+	status.State = "registering"
+	status.Message = "AllStar node 530471 is waiting to register; verify its node password"
 	return status
 }
 
@@ -531,37 +534,49 @@ func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
 
 	var request struct {
 		Password string `json:"password"`
+		Action   string `json:"action"`
+		Node     int    `json:"node"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	if err := decoder.Decode(&request); err != nil {
 		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
 		return
 	}
-	if len(request.Password) < 6 || len(request.Password) > 128 || strings.ContainsAny(request.Password, "\r\n:@/") {
-		http.Error(w, `{"error":"Password must be 6-128 characters and cannot contain spaces used by an IAX address"}`, http.StatusBadRequest)
-		return
-	}
-	for _, character := range request.Password {
-		if character < 33 || character > 126 {
-			http.Error(w, `{"error":"Password contains unsupported characters"}`, http.StatusBadRequest)
+	if request.Action != "" {
+		if request.Action != "connect" && request.Action != "disconnect" {
+			http.Error(w, `{"error":"Unsupported AllStar action"}`, http.StatusBadRequest)
 			return
 		}
-	}
-
-	template, err := os.ReadFile(allStarTemplatePath)
-	if err != nil || !strings.Contains(string(template), "__ALLSTAR_PASSWORD__") {
-		http.Error(w, `{"error":"AllStar configuration template is unavailable"}`, http.StatusInternalServerError)
-		return
-	}
-	runtimeConfig := strings.ReplaceAll(string(template), "__ALLSTAR_PASSWORD__", request.Password)
-	if err := writeAtomicFile(allStarRuntimePath, []byte(runtimeConfig), 0640); err != nil {
-		http.Error(w, `{"error":"Unable to save the protected AllStar configuration"}`, http.StatusInternalServerError)
-		return
-	}
-	if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "restart", "iax-bridge.service").CombinedOutput(); err != nil {
-		_ = output // Never return service output because the IAX program may echo its node mapping.
-		http.Error(w, `{"error":"AllStar configuration saved, but the IAX bridge could not restart"}`, http.StatusInternalServerError)
-		return
+		if request.Node < 2000 || request.Node > 9999999 || request.Node == 530471 {
+			http.Error(w, `{"error":"Enter a valid remote AllStar node number"}`, http.StatusBadRequest)
+			return
+		}
+		if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-control", request.Action, strconv.Itoa(request.Node)).CombinedOutput(); err != nil {
+			_ = output
+			http.Error(w, `{"error":"AllStar link control failed"}`, http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if len(request.Password) < 6 || len(request.Password) > 128 {
+			http.Error(w, `{"error":"Password must be 6-128 letters, numbers or . _ - characters"}`, http.StatusBadRequest)
+			return
+		}
+		for _, character := range request.Password {
+			if !(character >= 'a' && character <= 'z') && !(character >= 'A' && character <= 'Z') && !(character >= '0' && character <= '9') && !strings.ContainsRune("._-", character) {
+				http.Error(w, `{"error":"Password may contain only letters, numbers, dot, underscore and hyphen"}`, http.StatusBadRequest)
+				return
+			}
+		}
+		if err := writeAtomicFile(allStarSecretStagePath, []byte(request.Password+"\n"), 0600); err != nil {
+			http.Error(w, `{"error":"Unable to stage the protected AllStar password"}`, http.StatusInternalServerError)
+			return
+		}
+		defer os.Remove(allStarSecretStagePath)
+		if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-configure-allstar-node").CombinedOutput(); err != nil {
+			_ = output
+			http.Error(w, `{"error":"AllStar password could not be installed"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 	time.Sleep(500 * time.Millisecond)
 	_ = json.NewEncoder(w).Encode(readAllStarStatus())

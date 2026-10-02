@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+echo REGISTRATIONS
+/usr/sbin/asterisk -rx 'rpt show registrations' 2>/dev/null || true
+echo LINKS
+/usr/sbin/asterisk -rx 'rpt nodes 530471' 2>/dev/null || true
+echo STATS
+/usr/sbin/asterisk -rx 'rpt stats 530471' 2>/dev/null || true

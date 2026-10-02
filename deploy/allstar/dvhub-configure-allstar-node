@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+staging=/var/lib/dvgateway/allstar-node.secret
+destination=/etc/asterisk/rpt_http_registrations.conf
+
+cleanup() {
+    rm -f "$staging"
+}
+trap cleanup EXIT HUP INT TERM
+
+test -f "$staging"
+secret=$(cat "$staging")
+case "$secret" in
+    ''|*[!A-Za-z0-9._-]*) exit 2 ;;
+esac
+test "${#secret}" -ge 6
+test "${#secret}" -le 128
+
+temporary=$(mktemp /etc/asterisk/.rpt_http_registrations.XXXXXX)
+backup=$(mktemp /etc/asterisk/.rpt_http_registrations.backup.XXXXXX)
+cp -a "$destination" "$backup"
+trap 'rm -f "$temporary" "$backup"; cleanup' EXIT HUP INT TERM
+umask 077
+{
+    printf '%s\n' '[general]'
+    printf '%s\n\n' 'register_interval = 180'
+    printf '%s\n' '[registrations]'
+    printf 'register => 530471:%s@register.allstarlink.org\n' "$secret"
+} > "$temporary"
+chown root:asterisk "$temporary"
+chmod 0640 "$temporary"
+mv -f "$temporary" "$destination"
+unset secret
+if ! systemctl restart asterisk.service || ! systemctl is-active --quiet asterisk.service; then
+    cp -a "$backup" "$destination"
+    systemctl restart asterisk.service
+    echo "AllStar registration configuration failed; the previous configuration was restored" >&2
+    exit 1
+fi

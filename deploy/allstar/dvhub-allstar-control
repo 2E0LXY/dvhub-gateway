@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+action=${1:-}
+target=${2:-}
+case "$target" in
+    ''|*[!0-9]*) exit 2 ;;
+esac
+test "$target" -ge 2000
+test "$target" -le 9999999
+test "$target" -ne 530471
+
+case "$action" in
+    connect) command="*3$target" ;;
+    disconnect) command="*1$target" ;;
+    *) exit 2 ;;
+esac
+
+exec /usr/sbin/asterisk -rx "rpt fun 530471 $command"

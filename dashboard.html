@@ -838,21 +838,30 @@
                             <div id="local-master-clients" class="text-[9px] text-gray-500">No directly connected DMR clients.</div>
                         </div>
                         <div class="md:col-span-2 border border-green-900/60 p-3 space-y-2">
-                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">AllStar Link Node 530470</span><span id="allstar-bridge-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">AllStar Link Node 530471</span><span id="allstar-bridge-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                <div class="data-row"><span class="data-label">Node</span><span class="data-value">530470</span></div>
+                                <div class="data-row"><span class="data-label">Node</span><span class="data-value">530471</span></div>
                                 <div class="data-row"><span class="data-label">Callsign</span><span class="data-value">2E0LXY</span></div>
                                 <div class="data-row"><span class="data-label">Cross-mode TG</span><span class="data-value">23530</span></div>
                             </div>
-                            <div class="text-gray-500">Non-registering IAX client → USRP PCM → DV30 AMBE+2 → DMR conference. The existing AllStar registration is preserved.</div>
+                            <div class="text-gray-500">Native ASL3/app_rpt node → USRP PCM → DV30 AMBE+2 → DMR/YSF/P25/NXDN conference. It registers directly with AllStar Link and remains available as its own node.</div>
                             <div class="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 items-end">
                                 <div>
-                                    <label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-allstar-password">AllStar IAX Client Password</label>
-                                    <input type="password" class="input-cyber" id="inp-allstar-password" autocomplete="new-password" maxlength="128" placeholder="Stored only in the protected VPS runtime configuration">
+                                    <label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-allstar-password">AllStar Node Password</label>
+                                    <input type="password" class="input-cyber" id="inp-allstar-password" autocomplete="new-password" maxlength="128" placeholder="Stored only in the protected Asterisk configuration">
                                 </div>
-                                <button class="btn-cyber" id="btn-allstar-connect" type="button" onclick="saveAllStarPassword()">SAVE &amp; CONNECT</button>
+                                <button class="btn-cyber" id="btn-allstar-connect" type="button" onclick="saveAllStarPassword()">SAVE &amp; REGISTER</button>
                             </div>
-                            <div id="allstar-bridge-message" class="text-[9px] text-gray-500">Checking IAX connection state…</div>
+                            <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 items-end">
+                                <div>
+                                    <label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-allstar-target">Remote AllStar Node</label>
+                                    <input type="number" class="input-cyber" id="inp-allstar-target" min="2000" max="9999999" value="530470">
+                                </div>
+                                <button class="btn-cyber" type="button" onclick="controlAllStar('connect')">CONNECT</button>
+                                <button class="btn-cyber danger" type="button" onclick="controlAllStar('disconnect')">DISCONNECT</button>
+                            </div>
+                            <div id="allstar-links" class="text-[9px] text-gray-500">Linked nodes: none</div>
+                            <div id="allstar-bridge-message" class="text-[9px] text-gray-500">Checking AllStar registration state…</div>
                         </div>
                         <div class="md:col-span-2 text-green-400">P25, NXDN and YSF room/TG 23530 are connected to the DMR TG23530 conference. Cross-mode operation is simplex: one active speaker at a time.</div>
                     </div>
@@ -1259,16 +1268,17 @@
         async function updateAllStarStatus() {
             const chip = document.getElementById('allstar-bridge-status');
             const message = document.getElementById('allstar-bridge-message');
+            const links = document.getElementById('allstar-links');
             if (!chip || !message) return;
             try {
                 const response = await fetch('/api/allstar_config?_=' + Date.now(), { cache: 'no-store', credentials: 'include' });
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 const status = await response.json();
-                if (status.connected) {
-                    chip.innerText = 'CONNECTED';
+                if (status.registered) {
+                    chip.innerText = status.connected ? 'LINKED' : 'REGISTERED';
                     chip.className = 'chip chip-ok';
-                } else if (status.state === 'connecting') {
-                    chip.innerText = 'CONNECTING';
+                } else if (status.state === 'registering') {
+                    chip.innerText = 'REGISTERING';
                     chip.className = 'chip chip-idle';
                 } else if (!status.configured) {
                     chip.innerText = 'PASSWORD REQUIRED';
@@ -1277,11 +1287,13 @@
                     chip.innerText = 'LOGIN FAILED';
                     chip.className = 'chip chip-err';
                 }
+                if (links) links.innerText = 'Linked nodes: ' + ((status.links || []).join(', ') || 'none');
                 message.innerText = status.message || 'AllStar status unavailable.';
             } catch (error) {
                 chip.innerText = 'OFFLINE';
                 chip.className = 'chip chip-err';
-                message.innerText = 'AllStar bridge status unavailable.';
+                if (links) links.innerText = 'Linked nodes: unavailable';
+                message.innerText = 'AllStar node status unavailable.';
             }
         }
 
@@ -1291,7 +1303,7 @@
             const message = document.getElementById('allstar-bridge-message');
             const password = input.value;
             if (!password) {
-                message.innerText = 'Enter the IAX client password first.';
+                message.innerText = 'Enter the AllStar node password first.';
                 return;
             }
             button.disabled = true;
@@ -1307,13 +1319,35 @@
                 const result = await response.json().catch(() => ({}));
                 if (!response.ok) throw new Error(result.error || 'Unable to configure AllStar');
                 input.value = '';
-                message.innerText = result.message || 'Saved securely; the IAX bridge is connecting.';
+                message.innerText = result.message || 'Saved securely; node 530471 is registering.';
                 window.setTimeout(updateAllStarStatus, 1000);
             } catch (error) {
                 message.innerText = error.message;
             } finally {
                 button.disabled = false;
-                button.innerText = 'SAVE & CONNECT';
+                button.innerText = 'SAVE & REGISTER';
+            }
+        }
+
+        async function controlAllStar(action) {
+            const target = Number(document.getElementById('inp-allstar-target').value);
+            const message = document.getElementById('allstar-bridge-message');
+            if (!Number.isInteger(target) || target < 2000 || target > 9999999 || target === 530471) {
+                message.innerText = 'Enter a valid remote AllStar node number.';
+                return;
+            }
+            try {
+                const response = await fetch('/api/allstar_config', {
+                    method: 'POST', cache: 'no-store', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify({ action, node: target })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'AllStar link control failed');
+                message.innerText = `${action === 'connect' ? 'Connect' : 'Disconnect'} command sent for node ${target}.`;
+                window.setTimeout(updateAllStarStatus, 1000);
+            } catch (error) {
+                message.innerText = error.message;
             }
         }
 
