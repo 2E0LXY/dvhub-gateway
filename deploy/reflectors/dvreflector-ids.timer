@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Yorkshire Link HUB reflector identity update
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

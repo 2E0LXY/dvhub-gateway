@@ -1,0 +1,24 @@
+[Unit]
+Description=Yorkshire Link HUB P25 Reflector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=p25reflector
+Group=p25reflector
+WorkingDirectory=/var/lib/p25reflector
+ExecStart=/usr/local/bin/P25Reflector /etc/p25reflector/P25Reflector.ini
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/p25reflector /var/log/p25reflector
+
+[Install]
+WantedBy=multi-user.target

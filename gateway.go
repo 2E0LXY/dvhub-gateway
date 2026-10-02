@@ -411,11 +411,13 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]any{
-		"hostname": hostname,
-		"kernel":   strings.TrimSpace(string(kernelData)),
-		"platform": readPlatform(),
-		"cpu_load": readCPULoad(),
-		"temp_c":   readCPUTemperature(),
+		"hostname":       hostname,
+		"kernel":         strings.TrimSpace(string(kernelData)),
+		"platform":       readPlatform(),
+		"cpu_load":       readCPULoad(),
+		"temp_c":         readCPUTemperature(),
+		"p25_reflector":  serviceActive("p25reflector.service"),
+		"nxdn_reflector": serviceActive("nxdnreflector.service"),
 	})
 }
 

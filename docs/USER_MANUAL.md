@@ -685,7 +685,7 @@ A: Yes, both as server and client (browser).
 A: AMBE+2 (software implementation) or hardware via DV30.
 
 **Q: Can I use this for P25 or NXDN?**  
-A: Not currently. DMR and YSF only.
+A: Native Yorkshire Link P25 and NXDN reflector endpoints are available on UDP ports 41000 and 41400. They currently operate independently; cross-mode routing into the DMR/YSF TG23530 conference requires the corresponding protocol gateway converters.
 
 **Q: What's the audio quality?**  
 A: 85-90% with software, 100% with hardware vocoder.
