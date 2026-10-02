@@ -34,21 +34,20 @@ const MaxUsers = 8
 const LocalMasterPort = 62030
 
 const (
-	ysfConfigPath           = "/etc/ysfreflector/YSFReflector.ini"
-	ysfIdentityLockPath     = "/var/lib/dvgateway/ysf-identity.lock"
-	ysfDVRefRegisteredPath  = "/var/lib/dvgateway/ysf-dvref-registration"
-	dvrefTokenPath          = "/etc/dvhub/dvref.token"
-	refCheckTokenPath       = "/etc/dvhub/refcheck.token"
-	ysf2dmrConfigPath       = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
-	dmrHostsPath            = "/var/lib/dvgateway/DMR_Hosts.txt"
-	brandMeisterTokenPath   = "/etc/dvhub/brandmeister-api.token"
-	yorkshireConfigPath     = "/etc/dvhub/yorkshire-conference.json"
-	yorkshirePausedPath     = "/var/lib/dvgateway/yorkshire-conference.paused"
-	localMasterSecretPath   = "/etc/dvhub/local-master.secret"
-	allStarRegistrationPath = "/etc/asterisk/rpt_http_registrations.conf"
-	allStarSecretStagePath  = "/var/lib/dvgateway/allstar-node.secret"
-	ysfNetworkName          = "YORKSHIRELINK"
-	ysfDescription          = "YORKSHIRE HUB"
+	ysfConfigPath          = "/etc/ysfreflector/YSFReflector.ini"
+	ysfIdentityLockPath    = "/var/lib/dvgateway/ysf-identity.lock"
+	ysfDVRefRegisteredPath = "/var/lib/dvgateway/ysf-dvref-registration"
+	dvrefTokenPath         = "/etc/dvhub/dvref.token"
+	refCheckTokenPath      = "/etc/dvhub/refcheck.token"
+	ysf2dmrConfigPath      = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
+	dmrHostsPath           = "/var/lib/dvgateway/DMR_Hosts.txt"
+	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
+	yorkshireConfigPath    = "/etc/dvhub/yorkshire-conference.json"
+	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
+	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
+	allStarSecretStagePath = "/var/lib/dvgateway/allstar-node.secret"
+	ysfNetworkName         = "YORKSHIRELINK"
+	ysfDescription         = "YORKSHIRE HUB"
 )
 
 const (
@@ -87,6 +86,7 @@ type UserSession struct {
 	AuthPassword         string
 	RequiresUserPassword bool
 	UseHWVocoder         atomic.Bool
+	HybridVocoder        atomic.Bool
 	DV30Addr             atomic.Value // primary *net.UDPAddr
 	DV30Addr2            atomic.Value // secondary *net.UDPAddr, reserved for D-Star -> DMR
 	DV30Count            atomic.Int32
@@ -317,6 +317,7 @@ func main() {
 		gw.sessions[i].DV30Addr2.Store((*net.UDPAddr)(nil))
 		gw.sessions[i].DV30Count.Store(1)
 		gw.sessions[i].UseHWVocoder.Store(true)
+		gw.sessions[i].HybridVocoder.Store(true)
 		go gw.runUDPListener(gw.sessions[i])
 	}
 	go gw.runYorkshireConferenceSupervisor()
@@ -474,9 +475,9 @@ func readAllStarStatus() allStarStatus {
 	status.USRPService = serviceActive("usrp2dmr.service")
 	status.ServicesActive = status.AsteriskService && status.USRPService
 
-	if registration, err := os.ReadFile(allStarRegistrationPath); err == nil {
-		status.Configured = strings.Contains(string(registration), "register => 530471:")
-	}
+	output, statusErr := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-status").CombinedOutput()
+	statusText := string(output)
+	status.Configured = strings.Contains(statusText, "CONFIGURED yes")
 	if !status.Configured {
 		return status
 	}
@@ -486,13 +487,11 @@ func readAllStarStatus() allStarStatus {
 		return status
 	}
 
-	output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-status").CombinedOutput()
-	if err != nil {
+	if statusErr != nil {
 		status.State = "registering"
 		status.Message = "Waiting for the AllStar registration status"
 		return status
 	}
-	statusText := string(output)
 	registrationSection := strings.SplitN(statusText, "LINKS", 2)[0]
 	registeredLine := regexp.MustCompile(`(?im)^.*\b530471\b.*\bRegistered\b.*$`).FindString(registrationSection)
 	status.Registered = registeredLine != "" && !strings.Contains(strings.ToLower(registeredLine), "unregistered")
@@ -602,10 +601,13 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"online":           false,
-		"state":            "offline",
-		"hardware_enabled": g.sessions[0].UseHWVocoder.Load(),
-		"message":          "No heartbeat reply",
+		"online":             false,
+		"state":              "offline",
+		"hardware_enabled":   g.sessions[0].UseHWVocoder.Load(),
+		"mode":               vocoderMode(g.sessions[0]),
+		"hardware_frames":    dv30HardwareFrames.Load(),
+		"software_fallbacks": dv30SoftwareFallbacks.Load(),
+		"message":            "No heartbeat reply",
 	}
 	target, _ := g.sessions[0].DV30Addr.Load().(*net.UDPAddr)
 	if target == nil {
@@ -633,17 +635,20 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 			var health dv30HealthPayload
 			if json.Unmarshal(packet[1:n], &health) == nil && health.Status == "ok" {
 				response = map[string]any{
-					"online":           true,
-					"state":            "online",
-					"hardware_enabled": g.sessions[0].UseHWVocoder.Load(),
-					"round_trip_ms":    math.Round(float64(time.Since(started).Microseconds())/10) / 100,
-					"product":          health.Product,
-					"version":          health.Version,
-					"uptime_seconds":   health.UptimeSeconds,
-					"encoded":          health.Encoded,
-					"decoded":          health.Decoded,
-					"errors":           health.Errors,
-					"last_latency_ms":  health.LastLatencyMS,
+					"online":             true,
+					"state":              "online",
+					"hardware_enabled":   g.sessions[0].UseHWVocoder.Load(),
+					"mode":               vocoderMode(g.sessions[0]),
+					"hardware_frames":    dv30HardwareFrames.Load(),
+					"software_fallbacks": dv30SoftwareFallbacks.Load(),
+					"round_trip_ms":      math.Round(float64(time.Since(started).Microseconds())/10) / 100,
+					"product":            health.Product,
+					"version":            health.Version,
+					"uptime_seconds":     health.UptimeSeconds,
+					"encoded":            health.Encoded,
+					"decoded":            health.Decoded,
+					"errors":             health.Errors,
+					"last_latency_ms":    health.LastLatencyMS,
 				}
 			}
 		}
@@ -966,11 +971,17 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 					g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "This client does not own the transmitter"})
 				}
 			} else if req["cmd"] == "set_vocoder" {
-				vocType := req["type"].(string)
+				vocType, _ := req["type"].(string)
+				if vocType != "sw" && vocType != "hw" && vocType != "hybrid" {
+					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "Unsupported vocoder mode"})
+					continue
+				}
 				for _, s := range g.sessions {
-					s.UseHWVocoder.Store(vocType == "hw")
+					s.UseHWVocoder.Store(vocType != "sw")
+					s.HybridVocoder.Store(vocType == "hybrid")
 				}
 				fmt.Printf("[VOC] Switched to %s vocoder\n", strings.ToUpper(vocType))
+				g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "active", "mode": vocType})
 			} else if req["cmd"] == "set_dv30" {
 				addr1, _ := req["addr1"].(string)
 				if addr1 == "" {
@@ -1848,7 +1859,7 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 					// Hardware vocoder via DV30
 					dv30Addr := s.DV30Addr.Load().(*net.UDPAddr)
 					if dv30Addr != nil {
-						voiceData = encodeDV30(pcmData, dv30Addr, s.ID)
+						voiceData = encodeVocoderFrame(pcmData, dv30Addr, s.HybridVocoder.Load())
 					} else {
 						voiceData = encodeMBE(pcmData) // Fallback to SW
 					}
@@ -1958,7 +1969,7 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 				if s.UseHWVocoder.Load() {
 					dv30Addr := s.DV30Addr.Load().(*net.UDPAddr)
 					if dv30Addr != nil {
-						decodedPCM = decodeDV30(pcmData, dv30Addr, s.ID)
+						decodedPCM = decodeVocoderFrame(pcmData, dv30Addr, s.HybridVocoder.Load())
 					}
 				}
 				if len(decodedPCM) == 0 {
@@ -2301,6 +2312,61 @@ func quantizeMagnitude(mag float64) byte {
 // DV30 HARDWARE VOCODER CLIENT
 // ============================================================================
 
+var dv30HardwareSlot = make(chan struct{}, 1)
+var dv30HardwareFrames atomic.Uint64
+var dv30SoftwareFallbacks atomic.Uint64
+
+func vocoderMode(session *UserSession) string {
+	if !session.UseHWVocoder.Load() {
+		return "software"
+	}
+	if session.HybridVocoder.Load() {
+		return "hybrid"
+	}
+	return "hardware"
+}
+
+// Hybrid mode treats the single DV30 as the priority hardware slot. If another
+// browser stream already owns that slot, or the hardware request times out, the
+// frame is processed by the software codec immediately instead of blocking the
+// real-time audio pipeline. A call continues to observe the same preference,
+// while every frame remains independently recoverable during a hardware outage.
+func encodeVocoderFrame(pcm []byte, target *net.UDPAddr, hybrid bool) []byte {
+	if hybrid {
+		select {
+		case dv30HardwareSlot <- struct{}{}:
+			defer func() { <-dv30HardwareSlot }()
+		default:
+			dv30SoftwareFallbacks.Add(1)
+			return encodeMBE(pcm)
+		}
+	}
+	if encoded, ok := encodeDV30Hardware(pcm, target); ok {
+		dv30HardwareFrames.Add(1)
+		return encoded
+	}
+	dv30SoftwareFallbacks.Add(1)
+	return encodeMBE(pcm)
+}
+
+func decodeVocoderFrame(ambe []byte, target *net.UDPAddr, hybrid bool) []byte {
+	if hybrid {
+		select {
+		case dv30HardwareSlot <- struct{}{}:
+			defer func() { <-dv30HardwareSlot }()
+		default:
+			dv30SoftwareFallbacks.Add(1)
+			return decodeMBE(ambe)
+		}
+	}
+	if decoded, ok := decodeDV30Hardware(ambe, target); ok {
+		dv30HardwareFrames.Add(1)
+		return decoded
+	}
+	dv30SoftwareFallbacks.Add(1)
+	return decodeMBE(ambe)
+}
+
 func parseDV30Address(value string) *net.UDPAddr {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -2378,34 +2444,45 @@ func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte
 }
 
 func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
+	if encoded, ok := encodeDV30Hardware(pcm, target); ok {
+		return encoded
+	}
+	return encodeMBE(pcm)
+}
+
+func encodeDV30Hardware(pcm []byte, target *net.UDPAddr) ([]byte, bool) {
 	if len(pcm) != 320 {
-		return encodeMBE(pcm)
+		return nil, false
 	}
 	channel := nextDV30Channel()
 	request := make([]byte, 2+len(pcm))
 	request[0], request[1] = 0x61, channel
 	copy(request[2:], pcm)
 	if response := exchangeDV30(request, target, 0x62, channel, 11); response != nil {
-		return append([]byte(nil), response[2:11]...)
+		return append([]byte(nil), response[2:11]...), true
 	}
-
-	// Fallback to software if HW fails.
-	return encodeMBE(pcm)
+	return nil, false
 }
 
 func decodeDV30(ambe []byte, target *net.UDPAddr, _ int) []byte {
+	if decoded, ok := decodeDV30Hardware(ambe, target); ok {
+		return decoded
+	}
+	return decodeMBE(ambe)
+}
+
+func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
 	if len(ambe) != 9 {
-		return decodeMBE(ambe)
+		return nil, false
 	}
 	channel := nextDV30Channel()
 	request := make([]byte, 2+len(ambe))
 	request[0], request[1] = 0x63, channel
 	copy(request[2:], ambe)
 	if response := exchangeDV30(request, target, 0x64, channel, 322); response != nil {
-		return append([]byte(nil), response[2:322]...)
+		return append([]byte(nil), response[2:322]...), true
 	}
-
-	return decodeMBE(ambe)
+	return nil, false
 }
 
 // ============================================================================

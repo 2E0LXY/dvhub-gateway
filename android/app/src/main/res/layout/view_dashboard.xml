@@ -20,5 +20,20 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="YORKSHIRE TG23530" android:textColor="@color/dv_cyan" android:textStyle="bold" />
             <TextView android:id="@+id/conferenceSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:textColor="@color/dv_text" />
         </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="14dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="ALLSTAR NODE 530471" android:textColor="@color/dv_cyan" android:textStyle="bold" />
+            <TextView android:id="@+id/allstarSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Loading AllStar status…" android:textColor="@color/dv_text" />
+            <EditText android:id="@+id/allstarPassword" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="AllStar node password" android:inputType="textPassword" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+            <Button android:id="@+id/allstarRegister" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Save securely &amp; register" />
+            <EditText android:id="@+id/allstarTarget" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Remote AllStar node" android:inputType="number" android:text="530470" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <Button android:id="@+id/allstarConnect" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Connect" />
+                <Button android:id="@+id/allstarDisconnect" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Disconnect" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="12dp" android:background="@drawable/bg_card" android:orientation="vertical" android:padding="14dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="MULTIMODE SERVICES" android:textColor="@color/dv_cyan" android:textStyle="bold" />
+            <TextView android:id="@+id/multimodeSummary" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Loading P25, NXDN and vocoder status…" android:textColor="@color/dv_text" />
+        </LinearLayout>
     </LinearLayout>
 </ScrollView>

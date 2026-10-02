@@ -1,0 +1,23 @@
+[Unit]
+Description=Yorkshire Link HUB DV Gateway
+Documentation=https://github.com/2E0LXY/dvhub-gateway
+Wants=network-online.target
+After=network-online.target ysfreflector.service
+
+[Service]
+Type=simple
+User=dvhub
+Group=dvhub
+WorkingDirectory=/opt/dvhub-gateway
+ExecStart=/usr/local/bin/dvhub-gateway
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dvgateway /var/log/ysf2dmr /etc/asterisk
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

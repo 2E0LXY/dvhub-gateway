@@ -1,6 +1,11 @@
 #!/bin/sh
 set -eu
 
+if grep -q '^register => 530471:' /etc/asterisk/rpt_http_registrations.conf 2>/dev/null; then
+    echo 'CONFIGURED yes'
+else
+    echo 'CONFIGURED no'
+fi
 echo REGISTRATIONS
 /usr/sbin/asterisk -rx 'rpt show registrations' 2>/dev/null || true
 echo LINKS

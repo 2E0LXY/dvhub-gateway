@@ -4,7 +4,7 @@ Native Android controller for the 2E0LXY DVHub gateway. It uses the gateway's au
 
 ## Download
 
-**[Download Yorkshire Link HUB 1.0.3 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.3/Yorkshire-Link-HUB-1.0.3.apk)**
+**[Download Yorkshire Link HUB 1.0.6 APK](https://github.com/2E0LXY/dvhub-gateway/releases/download/android-v1.0.6/Yorkshire-Link-HUB-1.0.6.apk)**
 
 ## Install
 
@@ -21,5 +21,8 @@ Gateway credentials are encrypted with a non-exportable Android Keystore key. Pa
 - Connect the link before holding PTT. Releasing PTT stops microphone capture; a 90-second safety timer also stops it.
 - Received 48 kHz mono PCM from the gateway plays through the device voice audio path.
 - The TG 23530 bridge screen can start a 60-second test or a 15-minute session and has an explicit disconnect-all control.
+- The status screen configures and controls native AllStar node 530471 and reports linked nodes without exposing its node password.
+- P25, NXDN and DV30 health are visible in the multimode summary.
+- Hybrid vocoder mode prioritises the DV30 while using the software codec for immediate overflow and hardware-failure fallback.
 
 Use radio-network access only in accordance with the licence conditions and network policies applicable to your callsign.

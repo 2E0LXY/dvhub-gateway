@@ -18,6 +18,7 @@
         <EditText android:id="@+id/dv30Address1" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DV30 / DV3000 address 1 (host:port or serial)" android:inputType="text" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
         <EditText android:id="@+id/dv30Address2" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DV30 / DV3000 address 2 (optional)" android:inputType="text" android:textColor="@color/dv_text" android:textColorHint="@color/dv_muted" />
         <Button android:id="@+id/useHardwareVocoder" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use DV30 / DV3000 hardware" />
+        <Button android:id="@+id/useHybridVocoder" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use DV30 + software hybrid" />
         <Button android:id="@+id/useSoftwareVocoder" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use software vocoder" />
         <TextView android:id="@+id/vocoderStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:padding="8dp" android:text="Software vocoder selected" android:textColor="@color/dv_muted" />
     </LinearLayout>

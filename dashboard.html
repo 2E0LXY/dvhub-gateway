@@ -646,9 +646,11 @@
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Vocoder Mode</label>
                             <div class="flex gap-2">
-                                <button id="btn-voc-sw" onclick="setVocoder('sw')" class="btn-cyber active flex-1">SOFTWARE</button>
+                                <button id="btn-voc-sw" onclick="setVocoder('sw')" class="btn-cyber flex-1">SOFTWARE</button>
+                                <button id="btn-voc-hybrid" onclick="setVocoder('hybrid')" class="btn-cyber active flex-1">HYBRID</button>
                                 <button id="btn-voc-hw" onclick="setVocoder('hw')" class="btn-cyber flex-1">HARDWARE</button>
                             </div>
+                            <p class="text-[8px] text-gray-600 mt-1">Hybrid prioritises the DV30 and automatically uses software for a busy or unavailable hardware frame.</p>
                         </div>
                     </div>
                 </div>
@@ -909,7 +911,7 @@
         let isTransmitting = false;
         let totSeconds = 90;
         let totTimerObj = null;
-        let activeVocoder = 'hw';
+        let activeVocoder = 'hybrid';
         let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
         const TRAFFIC_RETENTION_MS = 5 * 60 * 1000;
@@ -1456,7 +1458,7 @@
         }
 
         function setVocoder(mode) {
-            if (mode === 'hw') {
+            if (mode === 'hw' || mode === 'hybrid') {
                 updateAdminParams();
                 if (!validVocoderAddress(dv30Config.addrA)) {
                     alert('Enter a valid Device 1 hostname/address and optional UDP port before enabling hardware vocoding.');
@@ -1471,9 +1473,10 @@
             localStorage.setItem('dv_hub_voc', mode);
             
             document.getElementById('btn-voc-sw').classList.toggle('active', mode === 'sw');
+            document.getElementById('btn-voc-hybrid').classList.toggle('active', mode === 'hybrid');
             document.getElementById('btn-voc-hw').classList.toggle('active', mode === 'hw');
-            document.getElementById('vocoder-mode').innerText = mode === 'sw' ? 'SW VOCODER' : 'HW VOCODER';
-            document.getElementById('svc-vocoder').innerText = mode === 'sw' ? 'SOFTWARE' : 'HARDWARE';
+            document.getElementById('vocoder-mode').innerText = mode === 'sw' ? 'SW VOCODER' : mode === 'hybrid' ? 'HYBRID VOCODER' : 'HW VOCODER';
+            document.getElementById('svc-vocoder').innerText = mode === 'sw' ? 'SOFTWARE' : mode === 'hybrid' ? 'DV30 + SW' : 'HARDWARE';
             
             if(ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: 'set_vocoder', type: mode }));
         }
@@ -2547,8 +2550,8 @@
             const hardwareMigrationDone = localStorage.getItem('dv_hub_hw_ready_v1') === '1';
             if (!hardwareMigrationDone && savedHardwareReady) {
                 localStorage.setItem('dv_hub_hw_ready_v1', '1');
-                setVocoder('hw');
-            } else if (savedVoc === 'hw' && !savedHardwareReady) setVocoder('sw');
+                setVocoder('hybrid');
+            } else if ((savedVoc === 'hw' || savedVoc === 'hybrid') && !savedHardwareReady) setVocoder('sw');
             else if (savedVoc) setVocoder(savedVoc);
             
             // Connect WebSocket

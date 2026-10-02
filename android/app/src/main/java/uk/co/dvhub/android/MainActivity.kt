@@ -79,7 +79,11 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private fun showDashboard(): Boolean {
         val b = ViewDashboardBinding.inflate(layoutInflater); dashboard = b; replace(b.root)
         b.ysfStart.setOnClickListener { ysfControl("start") }; b.ysfRestart.setOnClickListener { ysfControl("restart") }
-        b.ysfStop.setOnClickListener { ysfControl("stop") }; refreshStatus(); return true
+        b.ysfStop.setOnClickListener { ysfControl("stop") }
+        b.allstarRegister.setOnClickListener { configureAllStar(b) }
+        b.allstarConnect.setOnClickListener { controlAllStar(b, "connect") }
+        b.allstarDisconnect.setOnClickListener { controlAllStar(b, "disconnect") }
+        refreshStatus(); return true
     }
 
     private fun showLink(): Boolean {
@@ -206,6 +210,12 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             val ok = client.setDv30(count, first, second) && client.setVocoder("hw")
             b.vocoderStatus.text = if (ok) "Hardware vocoder selected · $count device(s)" else "Gateway WebSocket is offline"
         }
+        b.useHybridVocoder.setOnClickListener {
+            val first = b.dv30Address1.text.toString().trim(); val second = b.dv30Address2.text.toString().trim(); val count = b.dv30Count.selectedItemPosition + 1
+            if (first.isBlank() || (count == 2 && second.isBlank())) { b.vocoderStatus.text = "Enter the required hardware address(es)"; return@setOnClickListener }
+            val ok = client.setDv30(count, first, second) && client.setVocoder("hybrid")
+            b.vocoderStatus.text = if (ok) "Hybrid active · DV30 priority with software overflow/failover" else "Gateway WebSocket is offline"
+        }
         b.useSoftwareVocoder.setOnClickListener { b.vocoderStatus.text = if (client.setVocoder("sw")) "Software vocoder selected" else "Gateway WebSocket is offline" }
         b.saveSettings.setOnClickListener { saveSettings(b, true) }
         b.testSettings.setOnClickListener { saveSettings(b, false); client.get("/api/system") { result -> runOnUiThread {
@@ -276,6 +286,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         client.get("/api/system") { result -> result.onSuccess { json -> runOnUiThread {
             dashboard?.systemSummary?.text = systemText(json)
             dashboard?.serviceSummary?.text = servicesText(json)
+            dashboard?.multimodeSummary?.text = multimodeText(json)
         } } }
         client.get("/api/ysf_dashboard") { result -> result.onSuccess { json -> runOnUiThread {
             dashboard?.ysfSummary?.text = ysfText(json)
@@ -283,6 +294,36 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         client.get("/api/yorkshire_conference") { result -> result.onSuccess { json -> runOnUiThread {
             val status = conferenceText(json); dashboard?.conferenceSummary?.text = status; conference?.legStatus?.text = status
         } } }
+        client.get("/api/allstar_config") { result -> result.onSuccess { json -> runOnUiThread {
+            dashboard?.allstarSummary?.text = allStarText(json)
+        } } }
+        client.get("/api/vocoder/health") { result -> result.onSuccess { json -> runOnUiThread {
+            val mode = first(json, "mode") ?: if (json.get("hardware_enabled")?.asBoolean == true) "hardware" else "software"
+            val online = first(json, "state") ?: "unknown"
+            val product = first(json, "product") ?: "AMBE device"
+            val hardwareFrames = first(json, "hardware_frames") ?: "0"
+            val fallbacks = first(json, "software_fallbacks") ?: "0"
+            dashboard?.multimodeSummary?.append("\nVocoder $mode · $product $online · HW frames $hardwareFrames · SW fallback $fallbacks")
+        } } }
+    }
+
+    private fun configureAllStar(b: ViewDashboardBinding) {
+        val password = b.allstarPassword.text.toString()
+        if (password.length < 6) { b.allstarSummary.text = "Enter the valid node password first"; return }
+        client.post("/api/allstar_config", JsonObject().apply { addProperty("password", password) }) { result -> runOnUiThread {
+            b.allstarPassword.text.clear()
+            b.allstarSummary.text = result.fold(::allStarText) { "Registration failed: ${it.message}" }
+            handler.postDelayed({ refreshStatus() }, 1200)
+        } }
+    }
+
+    private fun controlAllStar(b: ViewDashboardBinding, action: String) {
+        val target = b.allstarTarget.text.toString().toIntOrNull()
+        if (target == null || target < 2000 || target == 530471) { b.allstarSummary.text = "Enter a valid remote AllStar node"; return }
+        client.post("/api/allstar_config", JsonObject().apply { addProperty("action", action); addProperty("node", target) }) { result -> runOnUiThread {
+            b.allstarSummary.text = if (result.isSuccess) "${action.replaceFirstChar(Char::uppercase)} command sent to $target" else "AllStar control failed: ${result.exceptionOrNull()?.message}"
+            handler.postDelayed({ refreshStatus() }, 1000)
+        } }
     }
 
     private fun ysfControl(action: String) {
@@ -315,6 +356,12 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
 
     private fun systemText(j: JsonObject): String = "Host ${first(j,"hostname","host") ?: "gateway"}  ·  CPU ${first(j,"cpu_load","cpu","load") ?: "—"}%\nMemory ${first(j,"memory","memory_used","ram") ?: "—"}  ·  Uptime ${first(j,"uptime") ?: "—"}"
     private fun servicesText(j: JsonObject): String = "Gateway ${deep(j,"dvhub-gateway") ?: deep(j,"gateway") ?: "online"}  ·  YSF ${deep(j,"ysfreflector") ?: "—"}  ·  Caddy ${deep(j,"caddy") ?: "—"}"
+    private fun multimodeText(j: JsonObject): String = "P25 reflector ${first(j,"p25_reflector") ?: "—"} · bridge ${first(j,"p25_bridge") ?: "—"}\nNXDN reflector ${first(j,"nxdn_reflector") ?: "—"} · bridge ${first(j,"nxdn_bridge") ?: "—"}"
+    private fun allStarText(j: JsonObject): String {
+        val state = first(j, "state") ?: "unknown"
+        val links = j.getAsJsonArray("links")?.joinToString(", ") { it.asString }.orEmpty().ifBlank { "none" }
+        return "State $state · linked nodes $links\n${first(j,"message") ?: "Node 530471 status unavailable"}"
+    }
     private fun ysfText(j: JsonObject): String = "${first(j,"name","reflector_name") ?: "Yorkshire Link HUB"}  ·  ID ${first(j,"id","reflector_id","number") ?: "not registered"}\nStatus ${first(j,"status","state") ?: "—"}  ·  Clients ${first(j,"clients","client_count","connected_count") ?: "0"}  ·  TX today ${first(j,"transmissions_today") ?: "0"}\n${first(j,"host") ?: settings.serverUrl} : ${first(j,"port") ?: "42000"}  ·  Uptime ${first(j,"uptime_seconds") ?: "—"}s"
     private fun conferenceText(j: JsonObject): String {
         val mode = if (j.get("permanent")?.asBoolean == true) "permanent" else "temporary"
