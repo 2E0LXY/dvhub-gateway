@@ -268,6 +268,7 @@ func main() {
 	gw.HomeAddr.Store(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2460})
 
 	go gw.updateRegistriesDaily()
+	go gw.updateYSFRegistryHourly()
 	go gw.watchdog("home.mysmartagent.uk", 2460)
 	go gw.txWatchdog()
 	go gw.broadcastYSFDashboardLoop()
@@ -2171,7 +2172,6 @@ func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint3
 func (g *Gateway) updateRegistriesDaily() {
 	g.downloadFile("https://radioid.net/static/dmrid.dat", "/var/lib/dvgateway/dmrid.dat")
 	g.downloadFile("https://database.radioid.net/static/user.csv", "/var/lib/dvgateway/radioid-users.csv")
-	g.downloadYSFRegistry()
 	g.downloadFile("https://www.pistar.uk/downloads/DMR_Hosts.txt", "/var/lib/dvgateway/DMR_Hosts.txt")
 	g.downloadFile("https://www.pistar.uk/downloads/XLXHosts.txt", "/var/lib/dvgateway/XLXHosts.txt")
 	g.loadLocalDBAsync()
@@ -2180,10 +2180,18 @@ func (g *Gateway) updateRegistriesDaily() {
 		time.Sleep(24 * time.Hour)
 		g.downloadFile("https://radioid.net/static/dmrid.dat", "/var/lib/dvgateway/dmrid.dat")
 		g.downloadFile("https://database.radioid.net/static/user.csv", "/var/lib/dvgateway/radioid-users.csv")
-		g.downloadYSFRegistry()
 		g.downloadFile("https://www.pistar.uk/downloads/DMR_Hosts.txt", "/var/lib/dvgateway/DMR_Hosts.txt")
 		g.downloadFile("https://www.pistar.uk/downloads/XLXHosts.txt", "/var/lib/dvgateway/XLXHosts.txt")
 		g.loadLocalDBAsync()
+	}
+}
+
+func (g *Gateway) updateYSFRegistryHourly() {
+	g.downloadYSFRegistry()
+	ticker := time.NewTicker(65 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		g.downloadYSFRegistry()
 	}
 }
 
@@ -2196,20 +2204,31 @@ func writeAtomicFile(dest string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmpDest, dest)
 }
 
-// downloadYSFRegistry uses DVRef's authenticated API when an operator token is
-// configured server-side. Pi-Star remains a safe fallback until that token is
-// supplied; credentials are never sent to, or stored by, the browser.
+// downloadYSFRegistry uses RefCheck.Radio's authenticated hostfile API when an
+// operator token is configured server-side. Pi-Star remains a safe fallback
+// until that token is supplied; credentials are never sent to, or stored by,
+// the browser.
 func (g *Gateway) downloadYSFRegistry() {
 	tokenBytes, tokenErr := os.ReadFile(dvrefTokenPath)
 	token := strings.TrimSpace(string(tokenBytes))
 	if tokenErr == nil && token != "" {
-		req, _ := http.NewRequest(http.MethodGet, "https://dvref.com/api/v2/ysf/reflectors/", nil)
+		const attemptPath = "/var/lib/dvgateway/YSF_Hosts.refcheck.last_attempt"
+		if info, err := os.Stat(attemptPath); err == nil && time.Since(info.ModTime()) < 65*time.Minute {
+			return
+		}
+		_ = writeAtomicFile(attemptPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
+		req, _ := http.NewRequest(http.MethodGet, "https://refcheck.radio/api/hostfile-gate/fetch/json/ysf/", nil)
 		req.Header.Set("Authorization", "Token "+token)
 		req.Header.Set("User-Agent", "DVHub-Gateway/2.0 (2E0LXY; amateur radio reflector)")
 		client := &http.Client{Timeout: 30 * time.Second}
 		if resp, err := client.Do(req); err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
+				type refCheckMetadata struct {
+					Generated string `json:"generated"`
+					Processor string `json:"processor"`
+					License   string `json:"license"`
+				}
 				type reflectorRecord struct {
 					Designator  string `json:"designator"`
 					Name        string `json:"name"`
@@ -2219,19 +2238,21 @@ func (g *Gateway) downloadYSFRegistry() {
 					Port        int    `json:"port"`
 				}
 				var payload struct {
+					Metadata   refCheckMetadata  `json:"_refcheck_metadata"`
 					Reflectors []reflectorRecord `json:"reflectors"`
-					Data       struct {
-						Reflectors []reflectorRecord `json:"reflectors"`
-					} `json:"data"`
 				}
 				if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload) == nil {
 					reflectors := payload.Reflectors
-					if len(reflectors) == 0 {
-						reflectors = payload.Data.Reflectors
-					}
 					if len(reflectors) > 100 {
 						sort.Slice(reflectors, func(i, j int) bool { return reflectors[i].Designator < reflectors[j].Designator })
 						var output strings.Builder
+						fmt.Fprintln(&output, "# RefCheck.Radio hostfile feed: https://hostfiles.refcheck.radio/")
+						if license := strings.TrimSpace(payload.Metadata.License); license != "" {
+							fmt.Fprintf(&output, "# %s\n", license)
+						}
+						if generated := strings.TrimSpace(payload.Metadata.Generated); generated != "" {
+							fmt.Fprintf(&output, "# Generated: %s\n", generated)
+						}
 						for _, reflector := range reflectors {
 							host := strings.TrimSpace(reflector.DNS)
 							if host == "" {
@@ -2243,7 +2264,7 @@ func (g *Gateway) downloadYSFRegistry() {
 							fmt.Fprintf(&output, "%s;%s;%s;%s;%d;000;\n", reflector.Designator, reflector.Name, reflector.Description, host, reflector.Port)
 						}
 						if writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.txt", []byte(output.String()), 0644) == nil {
-							_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("DVRef API\n"), 0644)
+							_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("RefCheck.Radio API (DVRef data)\n"), 0644)
 							return
 						}
 					}
@@ -2253,7 +2274,7 @@ func (g *Gateway) downloadYSFRegistry() {
 	}
 
 	g.downloadFile("https://www.pistar.uk/downloads/YSF_Hosts.txt", "/var/lib/dvgateway/YSF_Hosts.txt")
-	_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("Pi-Star fallback (DVRef token not configured or API unavailable)\n"), 0644)
+	_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("Pi-Star fallback (RefCheck token not configured or API unavailable)\n"), 0644)
 }
 
 func (g *Gateway) downloadFile(url, dest string) {
