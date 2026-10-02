@@ -36,6 +36,7 @@ const (
 	ysfIdentityLockPath    = "/var/lib/dvgateway/ysf-identity.lock"
 	ysfDVRefRegisteredPath = "/var/lib/dvgateway/ysf-dvref-registration"
 	dvrefTokenPath         = "/etc/dvhub/dvref.token"
+	refCheckTokenPath      = "/etc/dvhub/refcheck.token"
 	ysf2dmrConfigPath      = "/var/lib/dvgateway/ysf2dmr-runtime.ini"
 	dmrHostsPath           = "/var/lib/dvgateway/DMR_Hosts.txt"
 	brandMeisterTokenPath  = "/etc/dvhub/brandmeister-api.token"
@@ -2204,77 +2205,145 @@ func writeAtomicFile(dest string, data []byte, mode os.FileMode) error {
 	return os.Rename(tmpDest, dest)
 }
 
-// downloadYSFRegistry uses RefCheck.Radio's authenticated hostfile API when an
-// operator token is configured server-side. Pi-Star remains a safe fallback
-// until that token is supplied; credentials are never sent to, or stored by,
-// the browser.
+// downloadYSFRegistry prefers DVRef's authenticated v2 directory API, falls
+// back to the RefCheck.Radio hostfile API, then uses Pi-Star as a final public
+// fallback. Credentials remain server-side and are never exposed to browsers.
 func (g *Gateway) downloadYSFRegistry() {
-	tokenBytes, tokenErr := os.ReadFile(dvrefTokenPath)
-	token := strings.TrimSpace(string(tokenBytes))
-	if tokenErr == nil && token != "" {
-		const attemptPath = "/var/lib/dvgateway/YSF_Hosts.refcheck.last_attempt"
-		if info, err := os.Stat(attemptPath); err == nil && time.Since(info.ModTime()) < 65*time.Minute {
-			return
+	type reflectorRecord struct {
+		Designator  string `json:"designator"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		DNS         string `json:"dns"`
+		IPv4        string `json:"ipv4"`
+		Port        int    `json:"port"`
+	}
+	writeRegistry := func(reflectors []reflectorRecord, headers []string, source string) bool {
+		if len(reflectors) < 100 {
+			return false
 		}
-		_ = writeAtomicFile(attemptPath, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
-		req, _ := http.NewRequest(http.MethodGet, "https://refcheck.radio/api/hostfile-gate/fetch/json/ysf/", nil)
-		req.Header.Set("Authorization", "Token "+token)
-		req.Header.Set("User-Agent", "DVHub-Gateway/2.0 (2E0LXY; amateur radio reflector)")
-		client := &http.Client{Timeout: 30 * time.Second}
-		if resp, err := client.Do(req); err == nil {
-			defer resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				type refCheckMetadata struct {
-					Generated string `json:"generated"`
-					Processor string `json:"processor"`
-					License   string `json:"license"`
-				}
-				type reflectorRecord struct {
-					Designator  string `json:"designator"`
-					Name        string `json:"name"`
-					Description string `json:"description"`
-					DNS         string `json:"dns"`
-					IPv4        string `json:"ipv4"`
-					Port        int    `json:"port"`
-				}
+		sort.Slice(reflectors, func(i, j int) bool { return reflectors[i].Designator < reflectors[j].Designator })
+		var output strings.Builder
+		for _, header := range headers {
+			header = strings.TrimSpace(strings.ReplaceAll(header, "\n", " "))
+			if header != "" {
+				fmt.Fprintf(&output, "# %s\n", header)
+			}
+		}
+		for _, reflector := range reflectors {
+			host := strings.TrimSpace(reflector.DNS)
+			if host == "" {
+				host = strings.TrimSpace(reflector.IPv4)
+			}
+			if host == "" || reflector.Port < 1 || reflector.Port > 65535 {
+				continue
+			}
+			fmt.Fprintf(&output, "%s;%s;%s;%s;%d;000;\n", reflector.Designator, reflector.Name, reflector.Description, host, reflector.Port)
+		}
+		if writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.txt", []byte(output.String()), 0644) != nil {
+			return false
+		}
+		_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte(source+"\n"), 0644)
+		return true
+	}
+	attemptDue := func(path string) bool {
+		if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < 65*time.Minute {
+			return false
+		}
+		_ = writeAtomicFile(path, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0644)
+		return true
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	if tokenBytes, err := os.ReadFile(dvrefTokenPath); err == nil {
+		token := strings.TrimSpace(string(tokenBytes))
+		if token != "" {
+			if !attemptDue("/var/lib/dvgateway/YSF_Hosts.dvref.last_attempt") {
+				return
+			}
+			const dvrefFetchScript = `import sys, urllib.request
+token = open(sys.argv[1], encoding="utf-8").read().strip()
+request = urllib.request.Request(
+    "https://dvref.com/api/v2/ysf/reflectors/",
+    headers={
+        "Authorization": "Token " + token,
+        "User-Agent": "DVHub-Gateway/2.0 (2E0LXY; https://ai.2e0lxy.uk)",
+        "X-DVRef-Callsign": "2E0LXY",
+        "X-DVRef-Contact": "https://ai.2e0lxy.uk",
+    },
+)
+with urllib.request.urlopen(request, timeout=30) as response:
+    sys.stdout.buffer.write(response.read(16777217))
+`
+			if body, requestErr := exec.Command("/usr/bin/python3", "-c", dvrefFetchScript, dvrefTokenPath).Output(); requestErr == nil {
 				var payload struct {
-					Metadata   refCheckMetadata  `json:"_refcheck_metadata"`
+					GeneratedAt string `json:"generated_at"`
+					Metadata    struct {
+						License struct {
+							Name   string `json:"name"`
+							SPDXID string `json:"spdx_id"`
+							URL    string `json:"url"`
+						} `json:"license"`
+						Attribution string `json:"attribution"`
+						AUPURL      string `json:"aup_url"`
+					} `json:"_dvref_metadata"`
+					Data struct {
+						Reflectors []reflectorRecord `json:"reflectors"`
+					} `json:"data"`
+				}
+				var decodeErr error
+				if len(body) > 16<<20 {
+					decodeErr = fmt.Errorf("response exceeds 16 MiB")
+				} else {
+					decodeErr = json.Unmarshal(body, &payload)
+				}
+				fmt.Printf("[REG] DVRef YSF records=%d decode=%v\n", len(payload.Data.Reflectors), decodeErr)
+				if decodeErr == nil && writeRegistry(payload.Data.Reflectors, []string{
+					"DVRef API v2: https://dvref.com/api/v2/",
+					payload.Metadata.Attribution,
+					"License: " + payload.Metadata.License.Name + " (" + payload.Metadata.License.SPDXID + ") " + payload.Metadata.License.URL,
+					"AUP: " + payload.Metadata.AUPURL,
+					"Generated: " + payload.GeneratedAt,
+				}, "DVRef API v2") {
+					return
+				}
+			} else {
+				fmt.Printf("[REG] DVRef YSF request failed: %v\n", requestErr)
+			}
+		}
+	}
+
+	if tokenBytes, err := os.ReadFile(refCheckTokenPath); err == nil {
+		token := strings.TrimSpace(string(tokenBytes))
+		if token != "" && attemptDue("/var/lib/dvgateway/YSF_Hosts.refcheck.last_attempt") {
+			req, _ := http.NewRequest(http.MethodGet, "https://refcheck.radio/api/hostfile-gate/fetch/json/ysf/", nil)
+			req.Header.Set("Authorization", "Token "+token)
+			req.Header.Set("User-Agent", "DVHub-Gateway/2.0 (2E0LXY; https://ai.2e0lxy.uk)")
+			if resp, requestErr := client.Do(req); requestErr == nil {
+				var payload struct {
+					Metadata struct {
+						Generated string `json:"generated"`
+						License   string `json:"license"`
+					} `json:"_refcheck_metadata"`
 					Reflectors []reflectorRecord `json:"reflectors"`
 				}
-				if json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload) == nil {
-					reflectors := payload.Reflectors
-					if len(reflectors) > 100 {
-						sort.Slice(reflectors, func(i, j int) bool { return reflectors[i].Designator < reflectors[j].Designator })
-						var output strings.Builder
-						fmt.Fprintln(&output, "# RefCheck.Radio hostfile feed: https://hostfiles.refcheck.radio/")
-						if license := strings.TrimSpace(payload.Metadata.License); license != "" {
-							fmt.Fprintf(&output, "# %s\n", license)
-						}
-						if generated := strings.TrimSpace(payload.Metadata.Generated); generated != "" {
-							fmt.Fprintf(&output, "# Generated: %s\n", generated)
-						}
-						for _, reflector := range reflectors {
-							host := strings.TrimSpace(reflector.DNS)
-							if host == "" {
-								host = strings.TrimSpace(reflector.IPv4)
-							}
-							if host == "" || reflector.Port < 1 || reflector.Port > 65535 {
-								continue
-							}
-							fmt.Fprintf(&output, "%s;%s;%s;%s;%d;000;\n", reflector.Designator, reflector.Name, reflector.Description, host, reflector.Port)
-						}
-						if writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.txt", []byte(output.String()), 0644) == nil {
-							_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("RefCheck.Radio API (DVRef data)\n"), 0644)
-							return
-						}
-					}
+				decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&payload)
+				resp.Body.Close()
+				fmt.Printf("[REG] RefCheck YSF status=%d records=%d decode=%v\n", resp.StatusCode, len(payload.Reflectors), decodeErr)
+				if resp.StatusCode == http.StatusOK && decodeErr == nil && writeRegistry(payload.Reflectors, []string{
+					"RefCheck.Radio hostfile feed: https://hostfiles.refcheck.radio/",
+					payload.Metadata.License,
+					"Generated: " + payload.Metadata.Generated,
+				}, "RefCheck.Radio API (DVRef data)") {
+					return
 				}
+			} else {
+				fmt.Printf("[REG] RefCheck YSF request failed: %v\n", requestErr)
 			}
 		}
 	}
 
 	g.downloadFile("https://www.pistar.uk/downloads/YSF_Hosts.txt", "/var/lib/dvgateway/YSF_Hosts.txt")
-	_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("Pi-Star fallback (RefCheck token not configured or API unavailable)\n"), 0644)
+	_ = writeAtomicFile("/var/lib/dvgateway/YSF_Hosts.source", []byte("Pi-Star fallback (DVRef and RefCheck unavailable)\n"), 0644)
 }
 
 func (g *Gateway) downloadFile(url, dest string) {
