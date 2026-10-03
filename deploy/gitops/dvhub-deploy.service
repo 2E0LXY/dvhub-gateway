@@ -1,0 +1,24 @@
+[Unit]
+Description=Deploy a CI-verified Yorkshire Link HUB revision
+Documentation=https://github.com/2E0LXY/dvhub-gateway/tree/main/deploy/gitops
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/dvhub/deploy.env
+ExecStart=/usr/local/sbin/dvhub-deploy
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

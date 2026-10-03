@@ -373,6 +373,17 @@ go build -o dvhub-gateway gateway.go
 ./dvhub-gateway
 ```
 
+### CI-gated VPS updates
+
+Production can follow `main` automatically without storing radio credentials in
+Git. The deploy timer requires successful Go and Android checks, builds and
+validates in staging, installs only the gateway binary, dashboards, Caddyfile
+and gateway unit, and rolls back if the local socket health check fails.
+
+See [deploy/gitops/README.md](deploy/gitops/README.md). Reflector, cross-mode,
+AllStar and conference services are preserved and are never restarted by the
+automatic update.
+
 ## 📝 License
 
 MIT License - see [LICENSE](LICENSE) file for details.

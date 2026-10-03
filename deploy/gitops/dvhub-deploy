@@ -1,0 +1,179 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly REPO_URL="${DVHUB_REPO_URL:-https://github.com/2E0LXY/dvhub-gateway.git}"
+readonly REPO_SLUG="${DVHUB_REPO_SLUG:-2E0LXY/dvhub-gateway}"
+readonly BRANCH="${DVHUB_DEPLOY_BRANCH:-main}"
+readonly STATE_DIR="${DVHUB_DEPLOY_STATE_DIR:-/var/lib/dvhub-deploy}"
+readonly REPO_DIR="$STATE_DIR/repository.git"
+readonly BACKUP_DIR="$STATE_DIR/backups"
+readonly CURRENT_SHA_FILE="$STATE_DIR/current-sha"
+readonly LOCK_FILE="/run/lock/dvhub-deploy.lock"
+readonly WEB_ROOT="/var/www/dvhub"
+readonly BINARY="/usr/local/bin/dvhub-gateway"
+readonly UNIT="/etc/systemd/system/dvhub-gateway.service"
+readonly CADDYFILE="/etc/caddy/Caddyfile"
+readonly DEPLOYER="/usr/local/sbin/dvhub-deploy"
+readonly DEPLOY_UNIT="/etc/systemd/system/dvhub-deploy.service"
+readonly DEPLOY_TIMER="/etc/systemd/system/dvhub-deploy.timer"
+readonly REQUIRED_CHECKS="${DVHUB_REQUIRED_CHECKS:-verify build}"
+
+force=false
+if [[ "${1:-}" == "--force" ]]; then
+    force=true
+elif [[ $# -gt 0 ]]; then
+    echo "usage: $0 [--force]" >&2
+    exit 64
+fi
+
+if [[ $EUID -ne 0 ]]; then
+    echo "dvhub-deploy must run as root" >&2
+    exit 77
+fi
+
+install -d -m 0750 "$STATE_DIR" "$BACKUP_DIR"
+exec 9>"$LOCK_FILE"
+flock -n 9 || { echo "another DVHub deployment is running"; exit 0; }
+
+work_dir="$(mktemp -d "$STATE_DIR/stage.XXXXXX")"
+rollback_dir=""
+cleanup() { rm -rf -- "$work_dir"; }
+trap cleanup EXIT
+
+if [[ ! -d "$REPO_DIR" ]]; then
+    git clone --mirror "$REPO_URL" "$REPO_DIR"
+else
+    git -C "$REPO_DIR" remote set-url origin "$REPO_URL"
+fi
+git -C "$REPO_DIR" fetch --prune origin "+refs/heads/$BRANCH:refs/heads/$BRANCH"
+target_sha="$(git -C "$REPO_DIR" rev-parse "refs/heads/$BRANCH^{commit}")"
+current_sha="$(cat "$CURRENT_SHA_FILE" 2>/dev/null || true)"
+
+if [[ "$target_sha" == "$current_sha" ]]; then
+    echo "DVHub is already at $target_sha"
+    exit 0
+fi
+
+verify_checks() {
+    TARGET_SHA="$target_sha" REPO_SLUG="$REPO_SLUG" REQUIRED_CHECKS="$REQUIRED_CHECKS" python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.request
+
+url = f"https://api.github.com/repos/{os.environ['REPO_SLUG']}/commits/{os.environ['TARGET_SHA']}/check-runs"
+request = urllib.request.Request(url, headers={
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "Yorkshire-Link-HUB-deployer/1.0",
+    "X-GitHub-Api-Version": "2022-11-28",
+})
+with urllib.request.urlopen(request, timeout=20) as response:
+    payload = json.load(response)
+
+runs = {}
+for run in payload.get("check_runs", []):
+    # GitHub returns newest runs first. Keep the first result for a check name
+    # so a superseded failed re-run cannot mask its successful replacement.
+    runs.setdefault(run.get("name", ""), (run.get("status"), run.get("conclusion")))
+
+failed = []
+for name in os.environ["REQUIRED_CHECKS"].split():
+    status, conclusion = runs.get(name, (None, None))
+    if status != "completed" or conclusion != "success":
+        failed.append(f"{name}={status or 'missing'}/{conclusion or 'missing'}")
+if failed:
+    print("CI gate not satisfied: " + ", ".join(failed), file=sys.stderr)
+    sys.exit(1)
+print("CI gate passed: " + ", ".join(os.environ["REQUIRED_CHECKS"].split()))
+PY
+}
+
+if ! $force; then
+    verify_checks
+else
+    echo "WARNING: CI gate bypassed for manual deployment of $target_sha" >&2
+fi
+
+git -C "$REPO_DIR" archive "$target_sha" | tar -x -C "$work_dir"
+
+pushd "$work_dir" >/dev/null
+go test ./...
+go vet ./...
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dvhub-gateway ./gateway.go
+bash -n deploy/gitops/dvhub-deploy deploy/gitops/install.sh
+DVHUB_PASSWORD_HASH='$2a$14$P5LqhL5moJlgYzNdw9PeH.U.U4gCiQZl7WfxWJI5fKoh85QBWK0xW' \
+    caddy validate --config "$work_dir/Caddyfile" --adapter caddyfile
+systemd-analyze verify "$work_dir/deploy/dvhub-gateway.service"
+popd >/dev/null
+
+rollback_dir="$BACKUP_DIR/${current_sha:-pre-gitops}-$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 0750 "$rollback_dir/web"
+[[ -e "$BINARY" ]] && cp -a -- "$BINARY" "$rollback_dir/dvhub-gateway"
+[[ -e "$WEB_ROOT/dashboard.html" ]] && cp -a -- "$WEB_ROOT/dashboard.html" "$rollback_dir/web/dashboard.html"
+[[ -e "$WEB_ROOT/ysf-status.html" ]] && cp -a -- "$WEB_ROOT/ysf-status.html" "$rollback_dir/web/ysf-status.html"
+[[ -e "$UNIT" ]] && cp -a -- "$UNIT" "$rollback_dir/dvhub-gateway.service"
+[[ -e "$CADDYFILE" ]] && cp -a -- "$CADDYFILE" "$rollback_dir/Caddyfile"
+[[ -e "$DEPLOYER" ]] && cp -a -- "$DEPLOYER" "$rollback_dir/dvhub-deploy"
+[[ -e "$DEPLOY_UNIT" ]] && cp -a -- "$DEPLOY_UNIT" "$rollback_dir/dvhub-deploy.service"
+[[ -e "$DEPLOY_TIMER" ]] && cp -a -- "$DEPLOY_TIMER" "$rollback_dir/dvhub-deploy.timer"
+
+rollback() {
+    status=$?
+    trap - ERR
+    echo "Deployment failed; restoring $rollback_dir" >&2
+    [[ -e "$rollback_dir/dvhub-gateway" ]] && install -m 0755 "$rollback_dir/dvhub-gateway" "$BINARY"
+    [[ -e "$rollback_dir/web/dashboard.html" ]] && install -m 0644 "$rollback_dir/web/dashboard.html" "$WEB_ROOT/dashboard.html"
+    [[ -e "$rollback_dir/web/ysf-status.html" ]] && install -m 0644 "$rollback_dir/web/ysf-status.html" "$WEB_ROOT/ysf-status.html"
+    [[ -e "$rollback_dir/dvhub-gateway.service" ]] && install -m 0644 "$rollback_dir/dvhub-gateway.service" "$UNIT"
+    [[ -e "$rollback_dir/Caddyfile" ]] && install -m 0644 "$rollback_dir/Caddyfile" "$CADDYFILE"
+    [[ -e "$rollback_dir/dvhub-deploy" ]] && install -m 0755 "$rollback_dir/dvhub-deploy" "$DEPLOYER"
+    [[ -e "$rollback_dir/dvhub-deploy.service" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.service" "$DEPLOY_UNIT"
+    [[ -e "$rollback_dir/dvhub-deploy.timer" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.timer" "$DEPLOY_TIMER"
+    systemctl daemon-reload || true
+    systemctl restart dvhub-gateway.service || true
+    systemctl reload caddy.service || true
+    exit "$status"
+}
+trap rollback ERR
+
+install -d -m 0755 "$WEB_ROOT"
+install -m 0755 "$work_dir/dvhub-gateway" "$BINARY.new"
+install -m 0644 "$work_dir/dashboard.html" "$WEB_ROOT/dashboard.html.new"
+install -m 0644 "$work_dir/ysf-status.html" "$WEB_ROOT/ysf-status.html.new"
+install -m 0644 "$work_dir/deploy/dvhub-gateway.service" "$UNIT.new"
+install -m 0644 "$work_dir/Caddyfile" "$CADDYFILE.new"
+install -m 0755 "$work_dir/deploy/gitops/dvhub-deploy" "$DEPLOYER.new"
+install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.service" "$DEPLOY_UNIT.new"
+install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.timer" "$DEPLOY_TIMER.new"
+mv -f -- "$BINARY.new" "$BINARY"
+mv -f -- "$WEB_ROOT/dashboard.html.new" "$WEB_ROOT/dashboard.html"
+mv -f -- "$WEB_ROOT/ysf-status.html.new" "$WEB_ROOT/ysf-status.html"
+mv -f -- "$UNIT.new" "$UNIT"
+mv -f -- "$CADDYFILE.new" "$CADDYFILE"
+mv -f -- "$DEPLOYER.new" "$DEPLOYER"
+mv -f -- "$DEPLOY_UNIT.new" "$DEPLOY_UNIT"
+mv -f -- "$DEPLOY_TIMER.new" "$DEPLOY_TIMER"
+
+systemctl daemon-reload
+systemctl restart dvhub-gateway.service
+systemctl reload caddy.service
+
+for _ in {1..20}; do
+    if systemctl is-active --quiet dvhub-gateway.service \
+        && curl --fail --silent --show-error --max-time 2 \
+            --unix-socket /run/dvhub/gateway.sock \
+            -H 'X-DVHub-Authenticated-User: 2E0LXY' \
+            http://localhost/api/state >/dev/null; then
+        printf '%s\n' "$target_sha" >"$CURRENT_SHA_FILE.new"
+        mv -f -- "$CURRENT_SHA_FILE.new" "$CURRENT_SHA_FILE"
+        trap - ERR
+        find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+            | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf --
+        echo "Deployed DVHub $target_sha successfully"
+        exit 0
+    fi
+    sleep 1
+done
+
+echo "gateway health check failed after deployment" >&2
+false
