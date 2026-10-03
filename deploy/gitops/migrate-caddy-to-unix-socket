@@ -56,13 +56,16 @@ rollback() {
 }
 trap rollback ERR
 
-CADDYFILE="$CADDYFILE" OLD_UPSTREAM="$OLD_UPSTREAM" NEW_UPSTREAM="$NEW_UPSTREAM" python3 - <<'PY'
+DVHUB_MIGRATE_CADDYFILE="$CADDYFILE" \
+    DVHUB_MIGRATE_OLD_UPSTREAM="$OLD_UPSTREAM" \
+    DVHUB_MIGRATE_NEW_UPSTREAM="$NEW_UPSTREAM" \
+    python3 - <<'PY'
 import os
 from pathlib import Path
 
-path = Path(os.environ["CADDYFILE"])
-old = os.environ["OLD_UPSTREAM"]
-new = os.environ["NEW_UPSTREAM"]
+path = Path(os.environ["DVHUB_MIGRATE_CADDYFILE"])
+old = os.environ["DVHUB_MIGRATE_OLD_UPSTREAM"]
+new = os.environ["DVHUB_MIGRATE_NEW_UPSTREAM"]
 text = path.read_text(encoding="utf-8")
 old_count = text.count(old)
 new_count = text.count(new)
