@@ -2634,7 +2634,9 @@ func (g *Gateway) updateYSFRegistryHourly() {
 }
 
 func writeAtomicFile(dest string, data []byte, mode os.FileMode) error {
-	os.MkdirAll(filepath.Dir(dest), 0755)
+	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+		return fmt.Errorf("create destination directory: %w", err)
+	}
 	tmpDest := dest + ".tmp"
 	if err := os.WriteFile(tmpDest, data, mode); err != nil {
 		return err
@@ -2795,7 +2797,10 @@ func (g *Gateway) downloadFile(url, dest string) {
 	}
 	defer resp.Body.Close()
 
-	os.MkdirAll("/var/lib/dvgateway", 0755)
+	if err := os.MkdirAll("/var/lib/dvgateway", 0755); err != nil {
+		fmt.Printf("[REG] create registry directory: %v\n", err)
+		return
+	}
 	tmpDest := dest + ".tmp"
 
 	out, err := os.Create(tmpDest)

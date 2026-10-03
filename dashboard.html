@@ -297,6 +297,15 @@
         
         .view-hidden { display: none !important; }
         .view-visible { display: block !important; }
+
+        .auth-failure-banner {
+            margin: 10px;
+            padding: 12px 14px;
+            border: 1px solid #ef4444;
+            background: rgba(127, 29, 29, 0.92);
+            color: #fee2e2;
+            box-shadow: 0 0 18px rgba(239, 68, 68, 0.25);
+        }
     </style>
 </head>
 <body class="grid-bg">
@@ -325,6 +334,13 @@
             </div>
         </div>
     </header>
+
+    <div id="auth-failure-banner" class="auth-failure-banner hidden" role="alert" aria-live="assertive">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <span><strong>Dashboard session expired.</strong> Live updates have stopped to protect this browser. Reload and sign in again.</span>
+            <button type="button" class="btn-cyber" onclick="window.location.reload()">RELOAD &amp; SIGN IN</button>
+        </div>
+    </div>
 
     <!-- Unified dashboard navigation -->
     <nav class="tab-nav">
@@ -928,6 +944,62 @@
         const TRAFFIC_RETENTION_MS = 5 * 60 * 1000;
         let callsignLookupTimer = null;
         let bridgeConnected = false;
+        let dashboardAuthFailed = false;
+        let wsReconnectTimer = null;
+        let wsReconnectDelay = 2000;
+        const dashboardPollTimers = [];
+        const nativeFetch = window.fetch.bind(window);
+
+        function stopDashboardNetworking() {
+            dashboardPollTimers.splice(0).forEach(timer => clearInterval(timer));
+            clearTimeout(systemStatsTimer);
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+            if (ws) {
+                const closingSocket = ws;
+                ws = null;
+                closingSocket.onclose = null;
+                closingSocket.close();
+            }
+        }
+
+        function handleAuthenticationFailure() {
+            if (dashboardAuthFailed) return;
+            dashboardAuthFailed = true;
+            stopDashboardNetworking();
+            document.getElementById('auth-failure-banner')?.classList.remove('hidden');
+            const indicator = document.getElementById('ws-indicator');
+            if (indicator) indicator.className = 'status-indicator status-err';
+            console.error('[AUTH] Dashboard session rejected; polling and reconnects stopped');
+        }
+
+        window.fetch = async (...args) => {
+            if (dashboardAuthFailed) throw new Error('Dashboard authentication required');
+            const response = await nativeFetch(...args);
+            if (response.status === 401 || response.status === 403) handleAuthenticationFailure();
+            return response;
+        };
+
+        function startPollTimer(callback, interval) {
+            const timer = setInterval(() => {
+                if (!dashboardAuthFailed && !document.hidden) callback();
+            }, interval);
+            dashboardPollTimers.push(timer);
+        }
+
+        async function verifyDashboardSession() {
+            try {
+                const response = await fetch('/api/state?_=' + Date.now(), {
+                    cache: 'no-store',
+                    credentials: 'include'
+                });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return true;
+            } catch (error) {
+                if (!dashboardAuthFailed) console.error('[AUTH] Session preflight failed:', error);
+                return false;
+            }
+        }
 
         const networkByNode = {
             1: { key: 'FreeSTAR-SystemX-UK', label: 'FreeSTAR System X UK', requiresUserPassword: false },
@@ -1419,7 +1491,9 @@
         }
 
         async function pollSystemStats() {
+            if (dashboardAuthFailed) return;
             await updateSystemStats();
+            if (dashboardAuthFailed) return;
             clearTimeout(systemStatsTimer);
             systemStatsTimer = setTimeout(pollSystemStats, 5000);
         }
@@ -2256,6 +2330,7 @@
         }
 
         function connectWS() {
+            if (dashboardAuthFailed || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             
             try {
@@ -2264,6 +2339,9 @@
                 
                 ws.onopen = () => {
                     console.log('[WS] Connected');
+                    clearTimeout(wsReconnectTimer);
+                    wsReconnectTimer = null;
+                    wsReconnectDelay = 2000;
                     document.getElementById('ws-indicator').className = 'status-indicator status-ok';
                     
                     if (linkState.active) {
@@ -2288,11 +2366,15 @@
                 };
                 
                 ws.onclose = () => {
-                    console.log('[WS] Disconnected, reconnecting...');
+                    ws = null;
                     document.getElementById('ws-indicator').className = 'status-indicator status-err';
-                    
                     if(isTransmitting) stopTX();
-                    setTimeout(connectWS, 2000);
+                    if (dashboardAuthFailed) return;
+                    const delay = wsReconnectDelay;
+                    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+                    console.log(`[WS] Disconnected; retrying in ${delay / 1000}s`);
+                    clearTimeout(wsReconnectTimer);
+                    wsReconnectTimer = setTimeout(connectWS, delay);
                 };
                 
                 ws.onerror = (error) => {
@@ -2331,7 +2413,12 @@
             } catch(err) {
                 console.error('[WS] Connection error:', err);
                 document.getElementById('ws-indicator').className = 'status-indicator status-err';
-                setTimeout(connectWS, 2000);
+                if (!dashboardAuthFailed) {
+                    const delay = wsReconnectDelay;
+                    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+                    clearTimeout(wsReconnectTimer);
+                    wsReconnectTimer = setTimeout(connectWS, delay);
+                }
             }
         }
         
@@ -2523,7 +2610,8 @@
             console.log('[PTT] TX stopped');
         }
 
-        window.onload = () => {
+        window.onload = async () => {
+            if (!await verifyDashboardSession()) return;
             // Initialize system info
             pollSystemStats();
             updateAMBEHeartbeat();
@@ -2546,15 +2634,15 @@
             
             // Other live status feeds. System telemetry schedules its next poll only
             // after the current request finishes, so a slow request cannot stall it.
-            setInterval(updateAMBEHeartbeat, 5000);
-            setInterval(updateYSFStatus, 15000);
-            setInterval(updateYSFIdentity, 15000);
-            setInterval(updateYSFDashboard, 10000);
-            setInterval(updateLocalMaster, 5000);
-            setInterval(updateAllStarStatus, 5000);
-            setInterval(updateEchoLinkStatus, 5000);
-            setInterval(refreshYorkshireStatus, 5000);
-            setInterval(refreshNetworkOverview, 5000);
+            startPollTimer(updateAMBEHeartbeat, 5000);
+            startPollTimer(updateYSFStatus, 15000);
+            startPollTimer(updateYSFIdentity, 15000);
+            startPollTimer(updateYSFDashboard, 10000);
+            startPollTimer(updateLocalMaster, 5000);
+            startPollTimer(updateAllStarStatus, 5000);
+            startPollTimer(updateEchoLinkStatus, 5000);
+            startPollTimer(refreshYorkshireStatus, 5000);
+            startPollTimer(refreshNetworkOverview, 5000);
             
             // Restore saved state
             const saved = localStorage.getItem('dv_hub_link');
@@ -2616,7 +2704,7 @@
         };
 
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) pollSystemStats();
+            if (!document.hidden && !dashboardAuthFailed) pollSystemStats();
         });
     </script>
 </body>

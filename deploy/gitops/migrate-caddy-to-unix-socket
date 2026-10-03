@@ -9,6 +9,24 @@ readonly SHA_FILE="/var/lib/dvhub-deploy/current-sha"
 readonly MIGRATION_ROOT="/var/lib/dvhub-deploy/migrations"
 readonly OLD_UPSTREAM="reverse_proxy 127.0.0.1:8080"
 readonly NEW_UPSTREAM="reverse_proxy unix//run/dvhub/gateway.sock"
+readonly DUMMY_PASSWORD_HASH='$2a$14$P5LqhL5moJlgYzNdw9PeH.U.U4gCiQZl7WfxWJI5fKoh85QBWK0xW'
+readonly -a MANAGED_FILES=(
+    /usr/local/bin/dvhub-gateway
+    /var/www/dvhub/dashboard.html
+    /var/www/dvhub/ysf-status.html
+    /etc/systemd/system/dvhub-gateway.service
+    /etc/caddy/Caddyfile
+    /usr/local/sbin/dvhub-deploy
+    /etc/systemd/system/dvhub-deploy.service
+    /etc/systemd/system/dvhub-deploy.timer
+    /usr/local/sbin/dvhub-configure-allstar-node
+    /usr/local/sbin/dvhub-allstar-status
+    /usr/local/sbin/dvhub-allstar-control
+    /usr/local/sbin/dvhub-configure-echolink
+    /usr/local/sbin/dvhub-echolink-status
+    /etc/sudoers.d/dvhub-allstar
+    /var/lib/dvhub-deploy/current-sha
+)
 
 if [[ $EUID -ne 0 ]]; then
     echo "migration must run as root" >&2
@@ -25,36 +43,48 @@ for path in "$CADDYFILE" "$BINARY" "$UNIT"; do
     [[ -e "$path" ]] || { echo "required live file is missing: $path" >&2; exit 66; }
 done
 
-systemctl stop dvhub-deploy.timer
-install -d -m 0750 "$MIGRATION_ROOT"
-backup_dir="$MIGRATION_ROOT/$(date -u +%Y%m%dT%H%M%SZ)"
-install -d -m 0750 "$backup_dir"
-cp -a -- "$CADDYFILE" "$backup_dir/Caddyfile"
-cp -a -- "$BINARY" "$backup_dir/dvhub-gateway"
-cp -a -- "$UNIT" "$backup_dir/dvhub-gateway.service"
-if [[ -e "$SHA_FILE" ]]; then
-    cp -a -- "$SHA_FILE" "$backup_dir/current-sha"
-fi
+timer_was_active=false
+systemctl is-active --quiet dvhub-deploy.timer && timer_was_active=true
+backup_dir=""
+
+restore_timer() {
+    if [[ "$timer_was_active" == "true" ]]; then
+        systemctl start dvhub-deploy.timer || true
+    fi
+}
 
 rollback() {
     status=$?
     trap - ERR
-    echo "Socket migration failed; restoring $backup_dir" >&2
-    install -m 0755 "$backup_dir/dvhub-gateway" "$BINARY"
-    install -m 0644 "$backup_dir/dvhub-gateway.service" "$UNIT"
-    install -m 0644 "$backup_dir/Caddyfile" "$CADDYFILE"
-    if [[ -e "$backup_dir/current-sha" ]]; then
-        install -m 0644 "$backup_dir/current-sha" "$SHA_FILE"
-    else
-        rm -f -- "$SHA_FILE"
+    if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
+        echo "Socket migration failed; restoring $backup_dir" >&2
+        for path in "${MANAGED_FILES[@]}"; do
+            backup_path="$backup_dir/rootfs$path"
+            if [[ -e "$backup_path" ]]; then
+                install -D -m "$(stat -c '%a' "$backup_path")" "$backup_path" "$path"
+            else
+                rm -f -- "$path"
+            fi
+        done
+        systemctl daemon-reload || true
+        systemctl restart dvhub-gateway.service || true
+        systemctl reload caddy.service || true
     fi
-    systemctl daemon-reload || true
-    systemctl restart dvhub-gateway.service || true
-    systemctl reload caddy.service || true
-    echo "Automatic deployment timer remains stopped." >&2
+    restore_timer
+    echo "Automatic deployment timer restored to its previous state." >&2
     exit "$status"
 }
 trap rollback ERR
+
+systemctl stop dvhub-deploy.timer
+install -d -m 0750 "$MIGRATION_ROOT"
+backup_dir="$MIGRATION_ROOT/$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 0750 "$backup_dir/rootfs"
+for path in "${MANAGED_FILES[@]}"; do
+    if [[ -e "$path" ]]; then
+        install -D -m "$(stat -c '%a' "$path")" "$path" "$backup_dir/rootfs$path"
+    fi
+done
 
 DVHUB_MIGRATE_CADDYFILE="$CADDYFILE" \
     DVHUB_MIGRATE_OLD_UPSTREAM="$OLD_UPSTREAM" \
@@ -69,18 +99,78 @@ new = os.environ["DVHUB_MIGRATE_NEW_UPSTREAM"]
 text = path.read_text(encoding="utf-8")
 old_count = text.count(old)
 new_count = text.count(new)
-if old_count == 0 and new_count == 4:
-    print("Caddy upstreams are already staged for the Unix socket")
-elif old_count == 4 and new_count == 0:
-    path.write_text(text.replace(old, new), encoding="utf-8")
-    print("Staged exactly four Caddy upstream replacements")
-else:
+expected_count = old_count or new_count
+if expected_count not in (3, 4) or (old_count and new_count):
     raise SystemExit(
         f"refusing unexpected Caddy layout: tcp={old_count}, unix={new_count}"
     )
+
+lines = text.replace(old, new).splitlines(keepends=True)
+proxy_indexes = [index for index, line in enumerate(lines) if new in line]
+edits = []
+for index in proxy_indexes:
+    proxy_indent = len(lines[index]) - len(lines[index].lstrip())
+    nearest_handle = ""
+    for previous in reversed(lines[:index]):
+        stripped = previous.strip()
+        previous_indent = len(previous) - len(previous.lstrip())
+        if stripped.startswith("handle ") and previous_indent < proxy_indent:
+            nearest_handle = stripped
+            break
+    is_public = nearest_handle.startswith("handle /api/public/ysf_dashboard ")
+    if is_public:
+        continue
+
+    if "{" not in lines[index].split(new, 1)[1]:
+        base_indent = lines[index][:proxy_indent]
+        route = lines[index].rstrip("\r\n") + " {\n"
+        replacement = [
+            route,
+            base_indent + "    header_up -X-DVHub-Authenticated-User\n",
+            base_indent + "    header_up X-DVHub-Authenticated-User {http.auth.user.id}\n",
+            base_indent + "}\n",
+        ]
+        edits.append((index, replacement))
+        continue
+
+    depth = lines[index].count("{") - lines[index].count("}")
+    block = []
+    cursor = index + 1
+    while cursor < len(lines) and depth > 0:
+        block.append(lines[cursor])
+        # Ignore Caddy placeholders while tracking the proxy block braces.
+        structural = lines[cursor].replace("{http.auth.user.id}", "")
+        depth += structural.count("{") - structural.count("}")
+        cursor += 1
+    if depth != 0 or not any(
+        "header_up X-DVHub-Authenticated-User {http.auth.user.id}" in line
+        for line in block
+    ):
+        raise SystemExit(
+            f"protected reverse_proxy on line {index + 1} does not overwrite the authenticated-user header"
+        )
+    if not any("header_up -X-DVHub-Authenticated-User" in line for line in block):
+        header_indent = lines[index][:proxy_indent] + "    "
+        edits.append((index + 1, [header_indent + "header_up -X-DVHub-Authenticated-User\n"]))
+
+for index, replacement in reversed(edits):
+    if index < len(lines) and replacement[0].lstrip().startswith("reverse_proxy"):
+        lines[index:index + 1] = replacement
+    else:
+        lines[index:index] = replacement
+
+updated = "".join(lines)
+tmp = path.with_name(path.name + ".new")
+tmp.write_text(updated, encoding="utf-8")
+os.replace(tmp, path)
+if old_count == 0:
+    print("Caddy upstreams are already staged for the Unix socket")
+else:
+    print(f"Staged exactly {old_count} Caddy upstream replacements")
 PY
 
-caddy validate --config "$CADDYFILE" --adapter caddyfile
+DVHUB_PASSWORD_HASH="$DUMMY_PASSWORD_HASH" \
+    caddy validate --config "$CADDYFILE" --adapter caddyfile
 systemctl reset-failed dvhub-deploy.service
 systemctl start dvhub-deploy.service
 systemctl reload caddy.service
@@ -89,7 +179,7 @@ curl --fail --silent --show-error --max-time 5 \
     --unix-socket /run/dvhub/gateway.sock \
     -H 'X-DVHub-Authenticated-User: 2E0LXY' \
     http://localhost/api/state >/dev/null
-curl --fail --silent --show-error --insecure --max-time 10 \
+curl --fail --silent --show-error --max-time 10 \
     "$HEALTH_URL" >/dev/null
 
 systemctl start dvhub-deploy.timer

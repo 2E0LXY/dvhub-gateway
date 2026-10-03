@@ -172,6 +172,15 @@ DVHUB_PASSWORD_HASH='$2a$14$P5LqhL5moJlgYzNdw9PeH.U.U4gCiQZl7WfxWJI5fKoh85QBWK0x
 systemd-analyze verify "$work_dir/deploy/dvhub-gateway.service"
 popd >/dev/null
 
+if [[ "$DEPLOY_CADDY" == "1" && -e "$CADDYFILE" ]]; then
+    live_proxy_count="$(grep -cE '^[[:space:]]*reverse_proxy[[:space:]]' "$CADDYFILE" || true)"
+    staged_proxy_count="$(grep -cE '^[[:space:]]*reverse_proxy[[:space:]]' "$work_dir/Caddyfile" || true)"
+    if [[ "$live_proxy_count" != "$staged_proxy_count" ]]; then
+        echo "refusing to replace host-specific Caddy routing: live has $live_proxy_count proxy routes, repository has $staged_proxy_count" >&2
+        exit 78
+    fi
+fi
+
 rollback_dir="$BACKUP_DIR/${current_sha:-pre-gitops}-$(date -u +%Y%m%dT%H%M%SZ)"
 install -d -m 0750 "$rollback_dir/web"
 [[ -e "$BINARY" ]] && cp -a -- "$BINARY" "$rollback_dir/dvhub-gateway"
