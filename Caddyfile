@@ -26,6 +26,10 @@
 
     @dashboard path / /dashboard.html
     header @dashboard Cache-Control "no-store, no-cache, must-revalidate"
+    reverse_proxy @dashboard unix//run/dvhub/gateway.sock {
+        header_up -X-DVHub-Authenticated-User
+        header_up X-DVHub-Authenticated-User {http.auth.user.id}
+    }
 
     reverse_proxy /ws unix//run/dvhub/gateway.sock {
         flush_interval -1

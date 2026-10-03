@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="dvhub-ws-ticket" content="">
     <title>Yorkshire Link HUB | Gateway Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -952,6 +953,7 @@
         let callsignLookupTimer = null;
         let bridgeConnected = false;
         let dashboardAuthFailed = false;
+        let recentAuthenticationFailures = [];
         let wsReconnectTimer = null;
         let wsReconnectDelay = 2000;
         let wsReconnectAttempts = 0;
@@ -986,7 +988,14 @@
         window.fetch = async (...args) => {
             if (dashboardAuthFailed) throw new Error('Dashboard authentication required');
             const response = await nativeFetch(...args);
-            if (response.status === 401 || response.status === 403) handleAuthenticationFailure();
+            if (response.status === 401) {
+                const now = Date.now();
+                recentAuthenticationFailures = recentAuthenticationFailures.filter(timestamp => now - timestamp < 10000);
+                recentAuthenticationFailures.push(now);
+                if (recentAuthenticationFailures.length >= 3) handleAuthenticationFailure();
+            } else if (response.ok) {
+                recentAuthenticationFailures = [];
+            }
             return response;
         };
 
@@ -1003,6 +1012,10 @@
                     cache: 'no-store',
                     credentials: 'include'
                 });
+                if (response.status === 401) {
+                    handleAuthenticationFailure();
+                    return false;
+                }
                 if (!response.ok) throw new Error('HTTP ' + response.status);
                 return true;
             } catch (error) {
@@ -1012,6 +1025,12 @@
         }
 
         async function requestWebSocketTicket() {
+            const bootstrap = document.querySelector('meta[name="dvhub-ws-ticket"]');
+            if (bootstrap && /^[a-f0-9]{64}$/.test(bootstrap.content)) {
+                const ticket = bootstrap.content;
+                bootstrap.content = '';
+                return ticket;
+            }
             const response = await fetch('/api/ws_ticket?_=' + Date.now(), {
                 cache: 'no-store',
                 credentials: 'include'

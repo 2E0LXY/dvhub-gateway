@@ -352,7 +352,7 @@ func main() {
 	http.HandleFunc("/api/allstar_config", gw.handleAllStarConfig)
 	http.HandleFunc("/api/echolink_config", gw.handleEchoLinkConfig)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
-	http.Handle("/", noStoreDashboard(http.FileServer(http.Dir("/var/www/dvhub"))))
+	http.Handle("/", gw.dashboardStaticHandler(http.FileServer(http.Dir("/var/www/dvhub"))))
 
 	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - hardware AMBE only")
 	if runtime.GOOS == "windows" {
@@ -902,11 +902,54 @@ func authenticatedUser(r *http.Request) string {
 	return strings.ToUpper(strings.TrimSpace(r.Header.Get("X-DVHub-Authenticated-User")))
 }
 
-func noStoreDashboard(next http.Handler) http.Handler {
+func (g *Gateway) issueWSTicket(user string) (string, error) {
+	random := make([]byte, 32)
+	if _, err := cryptorand.Read(random); err != nil {
+		return "", err
+	}
+	token := fmt.Sprintf("%x", random)
+	now := time.Now()
+	g.wsTicketMu.Lock()
+	defer g.wsTicketMu.Unlock()
+	if g.wsTickets == nil {
+		g.wsTickets = make(map[string]wsTicket)
+	}
+	for existing, ticket := range g.wsTickets {
+		if !ticket.expiresAt.After(now) {
+			delete(g.wsTickets, existing)
+		}
+	}
+	if len(g.wsTickets) >= 256 {
+		return "", fmt.Errorf("too many pending WebSocket connections")
+	}
+	g.wsTickets[token] = wsTicket{user: user, expiresAt: now.Add(30 * time.Second)}
+	return token, nil
+}
+
+func (g *Gateway) dashboardStaticHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/dashboard.html" {
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
+			user := authenticatedUser(r)
+			if user == "" {
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+				return
+			}
+			page, err := os.ReadFile("/var/www/dvhub/dashboard.html")
+			if err != nil {
+				http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
+				return
+			}
+			ticket, err := g.issueWSTicket(user)
+			if err != nil {
+				http.Error(w, "WebSocket capacity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			page = []byte(strings.Replace(string(page), `<meta name="dvhub-ws-ticket" content="">`, `<meta name="dvhub-ws-ticket" content="`+ticket+`">`, 1))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(page)
+			return
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -924,29 +967,11 @@ func (g *Gateway) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
 		return
 	}
-	random := make([]byte, 32)
-	if _, err := cryptorand.Read(random); err != nil {
+	token, err := g.issueWSTicket(user)
+	if err != nil {
 		http.Error(w, `{"error":"Unable to create WebSocket ticket"}`, http.StatusInternalServerError)
 		return
 	}
-	token := fmt.Sprintf("%x", random)
-	now := time.Now()
-	g.wsTicketMu.Lock()
-	if g.wsTickets == nil {
-		g.wsTickets = make(map[string]wsTicket)
-	}
-	for existing, ticket := range g.wsTickets {
-		if !ticket.expiresAt.After(now) {
-			delete(g.wsTickets, existing)
-		}
-	}
-	if len(g.wsTickets) >= 256 {
-		g.wsTicketMu.Unlock()
-		http.Error(w, `{"error":"Too many pending WebSocket connections"}`, http.StatusServiceUnavailable)
-		return
-	}
-	g.wsTickets[token] = wsTicket{user: user, expiresAt: now.Add(30 * time.Second)}
-	g.wsTicketMu.Unlock()
 	_ = json.NewEncoder(w).Encode(map[string]any{"ticket": token, "expires_in_seconds": 30})
 }
 

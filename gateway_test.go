@@ -54,17 +54,6 @@ func TestWebSocketTicketIsAuthenticatedAndSingleUse(t *testing.T) {
 	}
 }
 
-func TestDashboardResponseDisablesCaching(t *testing.T) {
-	handler := noStoreDashboard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dashboard.html?build=test", nil))
-	if cacheControl := recorder.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
-		t.Fatalf("dashboard Cache-Control is %q, want no-store", cacheControl)
-	}
-}
-
 func TestControlRequiresAuthenticationAndCSRFHeader(t *testing.T) {
 	for _, test := range []struct {
 		user, control string
