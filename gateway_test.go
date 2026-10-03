@@ -1,12 +1,59 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestWebSocketRequiresProxyAuthenticatedIdentity(t *testing.T) {
+	gateway := &Gateway{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/ws", nil)
+	gateway.handleWS(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated websocket returned %d, want 401", recorder.Code)
+	}
+}
+
+func TestControlRequiresAuthenticationAndCSRFHeader(t *testing.T) {
+	for _, test := range []struct {
+		user, control string
+		want          int
+	}{{"", "1", http.StatusUnauthorized}, {"2E0LXY", "", http.StatusForbidden}} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/control", nil)
+		request.Header.Set("X-DVHub-Authenticated-User", test.user)
+		request.Header.Set("X-DVHub-Control", test.control)
+		if requireControlAuth(recorder, request) {
+			t.Fatal("invalid control request was accepted")
+		}
+		if recorder.Code != test.want {
+			t.Fatalf("control auth returned %d, want %d", recorder.Code, test.want)
+		}
+	}
+}
+
+func TestStateDoesNotExposeResolvedHomeAddress(t *testing.T) {
+	gateway := &Gateway{}
+	for index := range gateway.sessions {
+		gateway.sessions[index] = &UserSession{ID: index + 1}
+	}
+	recorder := httptest.NewRecorder()
+	gateway.handleState(recorder, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := payload["ip"]; leaked {
+		t.Fatal("state response still exposes the home IP field")
+	}
+}
 
 func TestDMRFingerprintIgnoresNetworkRewrites(t *testing.T) {
 	frameA := make([]byte, 55)
@@ -157,7 +204,7 @@ func TestSessionVocoderTargetsUsesConfiguredSecondDevice(t *testing.T) {
 	}
 }
 
-func TestLocalVocoderBrokerSoftwareProtocol(t *testing.T) {
+func TestLocalVocoderBrokerFailsClosedWithoutHardware(t *testing.T) {
 	session := &UserSession{}
 	session.DV30Addr.Store((*net.UDPAddr)(nil))
 	session.DV30Addr2.Store((*net.UDPAddr)(nil))
@@ -166,11 +213,11 @@ func TestLocalVocoderBrokerSoftwareProtocol(t *testing.T) {
 	gateway.sessions[0] = session
 
 	encodeRequest := append([]byte{0x61, 0x42}, make([]byte, 320)...)
-	if response := gateway.handleLocalVocoderRequest(encodeRequest); len(response) != 11 || response[0] != 0x62 || response[1] != 0x42 {
+	if response := gateway.handleLocalVocoderRequest(encodeRequest); len(response) != 2 || response[0] != 0x7f || response[1] != 0x42 {
 		t.Fatalf("invalid broker encode response: %x", response)
 	}
 	decodeRequest := append([]byte{0x63, 0x43}, make([]byte, 9)...)
-	if response := gateway.handleLocalVocoderRequest(decodeRequest); len(response) != 322 || response[0] != 0x64 || response[1] != 0x43 {
+	if response := gateway.handleLocalVocoderRequest(decodeRequest); len(response) != 2 || response[0] != 0x7f || response[1] != 0x43 {
 		t.Fatalf("invalid broker decode response: length=%d response=%x", len(response), response)
 	}
 	if response := gateway.handleLocalVocoderRequest([]byte{0x70}); len(response) < 2 || response[0] != 0x71 {
@@ -209,17 +256,54 @@ func TestConfiguredDMRHostsCanBeLoaded(t *testing.T) {
 
 func TestRegisteredIdentityMustMatchRadioID(t *testing.T) {
 	gateway := &Gateway{idDB: map[uint32]RadioIDInfo{2344399: {Callsign: "2E0LXY"}}}
+	client := &WSClient{user: "2E0LXY"}
 	session := &UserSession{Mode: "DMR", LinkActive: true, AuthStage: authRunning, DMRID: 2344399, Callsign: "2e0lxy"}
-	if _, ok, reason := gateway.registeredIdentity(session); !ok {
+	if _, ok, reason := gateway.registeredIdentity(client, session); !ok {
 		t.Fatalf("registered matching identity rejected: %s", reason)
 	}
 	session.Callsign = "M0ABC"
-	if _, ok, _ := gateway.registeredIdentity(session); ok {
+	if _, ok, _ := gateway.registeredIdentity(client, session); ok {
 		t.Fatal("mismatched callsign was allowed to transmit")
 	}
 	session.Callsign, session.DMRID = "2E0LXY", 2000000
-	if _, ok, _ := gateway.registeredIdentity(session); ok {
+	if _, ok, _ := gateway.registeredIdentity(client, session); ok {
 		t.Fatal("unregistered DMR ID was allowed to transmit")
+	}
+}
+
+func TestRegisteredIdentityIsBoundToAuthenticatedAccount(t *testing.T) {
+	gateway := &Gateway{idDB: map[uint32]RadioIDInfo{2344399: {Callsign: "2E0LXY"}}}
+	session := &UserSession{Mode: "DMR", LinkActive: true, AuthStage: authRunning, DMRID: 2344399, Callsign: "2E0LXY"}
+	if _, ok, _ := gateway.registeredIdentity(&WSClient{user: "M0ABC"}, session); ok {
+		t.Fatal("another authenticated account was allowed to claim 2E0LXY")
+	}
+}
+
+func TestJSONUint32RejectsWrapAndFractions(t *testing.T) {
+	for _, value := range []any{-1.0, 0.0, 1.5, float64(0x1000000)} {
+		if _, ok := jsonUint32(value, 0xFFFFFF); ok {
+			t.Fatalf("unsafe value %v was accepted", value)
+		}
+	}
+	if got, ok := jsonUint32(23530.0, 0xFFFFFF); !ok || got != 23530 {
+		t.Fatalf("valid talkgroup rejected: %d, %v", got, ok)
+	}
+}
+
+func TestNonCompliantNativeFramersFailClosed(t *testing.T) {
+	if frame := buildDMRFrame(make([]byte, 9), 2344399, 23530, 234439901, 1, 42, nil); frame != nil {
+		t.Fatal("native DMR framer emitted a packet")
+	}
+	if frame := buildYSFFrame(make([]byte, 9), "2E0LXY", nil); frame != nil {
+		t.Fatal("native YSF framer emitted a packet")
+	}
+	request := append([]byte{0x61, 0x01}, make([]byte, 320)...)
+	gateway := &Gateway{}
+	gateway.sessions[0] = &UserSession{}
+	gateway.sessions[0].DV30Addr.Store((*net.UDPAddr)(nil))
+	gateway.sessions[0].DV30Addr2.Store((*net.UDPAddr)(nil))
+	if response := gateway.handleLocalVocoderRequest(request); len(response) != 2 || response[0] != 0x7f {
+		t.Fatalf("hardware outage did not fail closed: %x", response)
 	}
 }
 

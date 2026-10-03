@@ -16,7 +16,7 @@ NoNewPrivileges=false
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/dvgateway /var/log/ysf2dmr /etc/asterisk
+ReadWritePaths=/var/lib/dvgateway /var/log/ysf2dmr /etc/asterisk /etc/dvhub /etc/ysfreflector /etc/ysf2dmr
 RestrictSUIDSGID=true
 
 [Install]

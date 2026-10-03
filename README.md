@@ -7,24 +7,20 @@
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)
 [![Android](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml/badge.svg)](https://github.com/2E0LXY/dvhub-gateway/actions/workflows/android.yml)
 
-A high-performance, production-ready gateway that bridges web browsers to DMR and YSF digital voice networks. Features a built-in AMBE+2 software vocoder achieving 85-90% quality, with optional hardware DV30 support for reference-quality audio.
+A control and monitoring gateway for DMR, YSF and cross-mode digital-voice services. AMBE encode/decode requires an allowlisted DV30/DV3000 hardware service. Browser-native DMR/YSF transmission is deliberately disabled until the native framers implement the full published wire formats; live cross-mode voice uses the MMDVM gateway services.
 
 ## 🎯 Features
 
 ### Core Capabilities
-- **Dual Vocoder System**: Software AMBE+2 codec (pure Go) + optional DV30 hardware support
+- **Hardware Vocoder Pool**: One or two allowlisted DV30/DV3000 services, with hardware failover and no synthetic AMBE fallback
 - **Remote DV30 Server**: Secure-overlay support for a USB DVstick 30 on another Linux machine, with hardware TX encoding and RX decoding
-- **Multi-Protocol**: DMR (ETSI TS 102 361) and YSF (C4FM) framing
+- **Multi-Protocol Control**: DMR, YSF, P25, NXDN and AllStar service monitoring/control
 - **Web Interface**: Modern cyberpunk-themed dashboard with real-time traffic monitoring
-- **Low Latency**: <30ms TX, <100ms RX end-to-end
-- **Production Quality**: 85-90% audio quality (software), 100% (hardware)
-- **Zero Dependencies**: Pure Go implementation, no CGO required
+- **Fail-closed audio**: unavailable hardware returns an error rather than injecting non-AMBE bits
 
 ### Technical Highlights
 - WebSocket binary transport for PCM audio
 - AudioWorklet-based browser DSP (48kHz↔8kHz conversion)
-- DCT-II spectral analysis with autocorrelation pitch detection
-- Harmonic + noise synthesis for natural speech
 - Dead-man's switch (1.5s timeout)
 - TG/Reflector change interlock (800ms teardown)
 - Real-time traffic logging with DMR ID lookup
@@ -93,7 +89,13 @@ go mod download
 go build -o dvhub-gateway gateway.go
 
 # Optional: Install systemd service
-sudo cp dvhub-gateway.service /etc/systemd/system/
+sudo cp deploy/dvhub-gateway.service /etc/systemd/system/
+sudo install -d -o root -g dvhub -m 0750 /etc/dvhub
+sudo install -o root -g dvhub -m 0640 deploy/gateway.json.example /etc/dvhub/gateway.json
+sudo install -o root -g dvhub -m 0640 deploy/vocoder-targets.example /etc/dvhub/vocoder-targets.txt
+sudo install -o root -g root -m 0440 deploy/dvhub-gateway.sudoers /etc/sudoers.d/dvhub-gateway
+sudo visudo -cf /etc/sudoers.d/dvhub-gateway
+# Edit both /etc/dvhub files for this deployment before starting.
 sudo systemctl enable dvhub-gateway
 sudo systemctl start dvhub-gateway
 ```
@@ -133,22 +135,22 @@ The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, bo
 
 The dashboard and Android app use registered DMR ID `2351633` on session/node 7 with ESSID `02` for manual FreeSTAR operation. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using DMR ID `2344399`, ESSID `01`, and TG23530.
 
-Networks are configured in `gateway.go` at line 544:
+Built-in DMR network DNS targets are configured in `dmrNetworkTargets` in `gateway.go`; master passwords and port overrides come from `/var/lib/dvgateway/DMR_Hosts.txt`. Site-specific public identity and vocoder addresses belong in `/etc/dvhub/gateway.json` and `/etc/dvhub/vocoder-targets.txt`; examples are under `deploy/`.
 
 ```go
-networkMap := map[string]string{
-    "BrandMeister": "217.61.0.89:62031",
-    "FreeStarX":    "81.187.165.132:62030",
-    "FreeDMR":      "185.63.140.20:62031",
+dmrNetworkTargets := map[string]string{
+    "FreeSTAR-SystemX-UK":  "dmr.freestar.network:62031",
+    "BrandMeister-UK-2341": "2341.master.brandmeister.network:62031",
+    "DMRPlus-FreeSTAR":     "ipsc2.freestar.network:62031",
+    "TGIF":                 "tgif.network:62031",
+    "FreeDMR-UK":           "hotspot.uk.freedmr.link:62031",
 }
 ```
 
 ### Reverse Proxy (Caddy)
 
 ```caddy
-dvhub.yourdomain.com {
-    reverse_proxy localhost:8080
-}
+Use the repository `Caddyfile`, set `DVHUB_PASSWORD_HASH`, and keep the Go listener bound to `127.0.0.1:8080`. Caddy authenticates protected routes and overwrites the trusted authenticated-user header before proxying.
 ```
 
 Auto HTTPS via Let's Encrypt - no certificates needed!
@@ -246,25 +248,9 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
               └─────────────────────────────────┘
 ```
 
-### Software Vocoder Pipeline
+### Voice pipeline
 
-```
-PCM Audio (160 samples @ 8kHz)
-         ↓
-[1] Hamming Window
-         ↓
-[2] DCT-II Spectral Analysis (56 bands)
-         ↓
-[3] Pitch Detection (Autocorrelation 50-500Hz)
-         ↓
-[4] Harmonic Magnitude Extraction (16 harmonics)
-         ↓
-[5] Voicing Decision (per-band energy threshold)
-         ↓
-[6] Quantization (F0: 7-bit, Magnitudes: 8-bit×8)
-         ↓
-AMBE Frame (9 bytes = 72 bits)
-```
+The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardware is available. It returns an error when every hardware device is busy or offline. The legacy private DCT transform in the source is not AMBE+2 and is not used by live network or broker paths.
 
 ## 🔧 API Reference
 
@@ -315,10 +301,12 @@ AMBE Frame (9 bytes = 72 bits)
 {
   "cmd": "set_dv30",
   "count": 2,
-  "addr1": "zx3de49.glddns.com:2468",
-  "addr2": "192.168.1.132:2468"
+  "addr1": "dv30-a.example.net:2468",
+  "addr2": "dv30-b.example.net:2468"
 }
 ```
+
+Both exact endpoints must first be listed by the server administrator in `/etc/dvhub/vocoder-targets.txt`.
 
 ### Binary Messages
 
@@ -395,7 +383,7 @@ AMBE Frame (9 bytes = 72 bits)
 **Symptoms**: Connected but poor audio quality
 
 **Solutions**:
-1. Test DV30 server health: `printf '\x70' | nc -u -w1 zx3de49.glddns.com 2468`
+1. Test the allowlisted DV30 server health: `printf '\x70' | nc -u -w1 dv30.example.net 2468`
 2. Verify IP:Port in Administration tab
 3. Check DV30 server is running
 4. Ensure network route to DV30 server
@@ -427,15 +415,7 @@ Log prefixes:
 
 ## 📊 Performance
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| TX Latency | <30ms | Mic → Network |
-| RX Latency | <100ms | Network → Speaker |
-| CPU Usage | 3% | Software vocoder @ 1 user |
-| Memory | 18MB | Go runtime |
-| Audio Quality (SW) | 85-90% | PESQ 3.2-3.5 |
-| Audio Quality (HW) | 100% | DVSI reference |
-| Bandwidth | 16 kbps | 8kHz PCM uncompressed |
+Performance and perceived audio quality depend on the selected network, host load, WAN path and AMBE hardware. No PESQ or percentage-quality claim is made without a reproducible benchmark and published samples.
 
 ## 🤝 Contributing
 

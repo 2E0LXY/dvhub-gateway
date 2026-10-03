@@ -19,8 +19,14 @@
 
     reverse_proxy /ws 127.0.0.1:8080 {
         flush_interval -1
+        header_up X-DVHub-Authenticated-User {http.auth.user.id}
     }
-    reverse_proxy /api/* 127.0.0.1:8080
+    reverse_proxy /api/* 127.0.0.1:8080 {
+        header_up X-DVHub-Authenticated-User {http.auth.user.id}
+    }
+    reverse_proxy /talkgroups.js 127.0.0.1:8080 {
+        header_up X-DVHub-Authenticated-User {http.auth.user.id}
+    }
 
     root * /var/www/dvhub
     file_server

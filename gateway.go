@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -45,7 +46,9 @@ const (
 	yorkshireConfigPath    = "/etc/dvhub/yorkshire-conference.json"
 	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
 	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
+	vocoderTargetsPath     = "/etc/dvhub/vocoder-targets.txt"
 	allStarSecretStagePath = "/var/lib/dvgateway/allstar-node.secret"
+	gatewayConfigPath      = "/etc/dvhub/gateway.json"
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
 )
@@ -69,9 +72,16 @@ var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool {
 }}
 
 type WSClient struct {
-	conn    *websocket.Conn
-	send    chan []byte
-	writeMu sync.Mutex
+	conn      *websocket.Conn
+	user      string
+	send      chan WSMessage
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+type WSMessage struct {
+	messageType int
+	data        []byte
 }
 
 type UserSession struct {
@@ -234,7 +244,6 @@ const (
 )
 
 type Gateway struct {
-	HomeAddr            atomic.Value
 	sessions            [MaxUsers]*UserSession
 	clients             map[*WSClient]bool
 	mu                  sync.Mutex
@@ -261,9 +270,17 @@ type Gateway struct {
 	masterConn          *net.UDPConn
 }
 
+type GatewayConfig struct {
+	PublicURL        string `json:"public_url"`
+	PublicHost       string `json:"public_host"`
+	OperatorCallsign string `json:"operator_callsign"`
+	Contact          string `json:"contact"`
+}
+
 var (
 	udpPool           = sync.Pool{New: func() any { b := make([]byte, 2048); return &b }}
 	gw                *Gateway
+	appConfig         GatewayConfig
 	dmrNetworkTargets = map[string]string{
 		"FreeSTAR-SystemX-UK":  "dmr.freestar.network:62031",
 		"BrandMeister-UK-2341": "2341.master.brandmeister.network:62031",
@@ -284,6 +301,7 @@ var (
 )
 
 func main() {
+	appConfig = loadGatewayConfig()
 	gw = &Gateway{
 		clients:       make(map[*WSClient]bool),
 		idDB:          make(map[uint32]RadioIDInfo),
@@ -292,16 +310,13 @@ func main() {
 		rejectedDMR:   make(map[uint32]time.Time),
 		masterClients: make(map[uint32]*DMRMasterClient),
 	}
-	gw.HomeAddr.Store(&net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 2460})
-
 	go gw.updateRegistriesDaily()
 	go gw.updateYSFRegistryHourly()
-	go gw.watchdog("home.mysmartagent.uk", 2460)
 	go gw.txWatchdog()
 	go gw.broadcastYSFDashboardLoop()
 	go gw.runLocalDMRMaster()
 
-	defaultDV30 := parseDV30Address("zx3de49.glddns.com:2468")
+	defaultDV30 := defaultVocoderTarget()
 	for i := 0; i < MaxUsers; i++ {
 		gw.sessions[i] = &UserSession{
 			ID:         i + 1,
@@ -317,7 +332,7 @@ func main() {
 		gw.sessions[i].DV30Addr2.Store((*net.UDPAddr)(nil))
 		gw.sessions[i].DV30Count.Store(1)
 		gw.sessions[i].UseHWVocoder.Store(true)
-		gw.sessions[i].HybridVocoder.Store(true)
+		gw.sessions[i].HybridVocoder.Store(false)
 		go gw.runUDPListener(gw.sessions[i])
 	}
 	go gw.runLocalVocoderBroker("127.0.0.1:2461")
@@ -343,9 +358,35 @@ func main() {
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
 
-	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - Software Vocoder Enabled")
+	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - hardware AMBE only")
 	fmt.Println("[SYS] Listening on :8080")
-	http.ListenAndServe("127.0.0.1:8080", nil)
+	server := &http.Server{
+		Addr:              "127.0.0.1:8080",
+		Handler:           http.DefaultServeMux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	log.Fatal(server.ListenAndServe())
+}
+
+func loadGatewayConfig() GatewayConfig {
+	config := GatewayConfig{
+		PublicURL: "http://localhost/", PublicHost: "127.0.0.1",
+		OperatorCallsign: "N0CALL", Contact: "admin@localhost",
+	}
+	data, err := os.ReadFile(gatewayConfigPath)
+	if err == nil {
+		if decodeErr := json.Unmarshal(data, &config); decodeErr != nil {
+			log.Printf("[CFG] ignoring invalid %s: %v", gatewayConfigPath, decodeErr)
+		}
+	}
+	config.PublicURL = strings.TrimSpace(config.PublicURL)
+	config.PublicHost = strings.TrimSpace(config.PublicHost)
+	config.OperatorCallsign = strings.ToUpper(strings.TrimSpace(config.OperatorCallsign))
+	config.Contact = strings.TrimSpace(config.Contact)
+	return config
 }
 
 func readCPUTimes() (idle, total uint64, err error) {
@@ -527,8 +568,11 @@ func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(readAllStarStatus())
 		return
 	}
-	if r.Method != http.MethodPost || r.Header.Get("X-DVHub-Control") != "1" {
-		http.Error(w, `{"error":"Control request rejected"}`, http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
 		return
 	}
 
@@ -607,7 +651,8 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 		"hardware_enabled":   g.sessions[0].UseHWVocoder.Load(),
 		"mode":               vocoderMode(g.sessions[0]),
 		"hardware_frames":    dv30HardwareFrames.Load(),
-		"software_fallbacks": dv30SoftwareFallbacks.Load(),
+		"software_fallbacks": 0,
+		"hardware_failures":  dv30HardwareFailures.Load(),
 		"message":            "No heartbeat reply",
 	}
 	targets := sessionVocoderTargets(g.sessions[0])
@@ -685,22 +730,51 @@ func (g *Gateway) broadcastText(msg []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for client := range g.clients {
-		client.writeMu.Lock()
-		client.conn.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
-		client.conn.WriteMessage(websocket.TextMessage, msg)
-		client.writeMu.Unlock()
+		client.enqueue(WSMessage{messageType: websocket.TextMessage, data: msg})
 	}
 }
 
 func (g *Gateway) sendClientText(client *WSClient, event map[string]any) {
 	data, _ := json.Marshal(event)
-	client.writeMu.Lock()
-	client.conn.SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
-	_ = client.conn.WriteMessage(websocket.TextMessage, data)
-	client.writeMu.Unlock()
+	client.enqueue(WSMessage{messageType: websocket.TextMessage, data: data})
 }
 
-func (g *Gateway) registeredIdentity(session *UserSession) (RadioIDInfo, bool, string) {
+func (client *WSClient) enqueue(message WSMessage) bool {
+	select {
+	case <-client.done:
+		return false
+	case client.send <- message:
+		return true
+	default:
+		client.shutdown()
+		return false
+	}
+}
+
+func (client *WSClient) shutdown() {
+	client.closeOnce.Do(func() {
+		close(client.done)
+		_ = client.conn.Close()
+	})
+}
+
+func authenticatedUser(r *http.Request) string {
+	return strings.ToUpper(strings.TrimSpace(r.Header.Get("X-DVHub-Authenticated-User")))
+}
+
+func requireControlAuth(w http.ResponseWriter, r *http.Request) bool {
+	if authenticatedUser(r) == "" {
+		http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
+		return false
+	}
+	if r.Header.Get("X-DVHub-Control") != "1" {
+		http.Error(w, `{"error":"Control request rejected"}`, http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (g *Gateway) registeredIdentity(client *WSClient, session *UserSession) (RadioIDInfo, bool, string) {
 	session.mu.RLock()
 	dmrID := session.DMRID
 	callsign := strings.ToUpper(strings.TrimSpace(session.Callsign))
@@ -708,6 +782,9 @@ func (g *Gateway) registeredIdentity(session *UserSession) (RadioIDInfo, bool, s
 	session.mu.RUnlock()
 	if !linked {
 		return RadioIDInfo{}, false, "The selected network is not connected"
+	}
+	if client == nil || client.user == "" || !strings.EqualFold(client.user, callsign) {
+		return RadioIDInfo{}, false, "The authenticated account is not authorised for this callsign"
 	}
 	g.dbMutex.RLock()
 	info, found := g.idDB[dmrID]
@@ -727,7 +804,7 @@ func (g *Gateway) acquireTX(client *WSClient, nodeID int) {
 		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "Unknown gateway node"})
 		return
 	}
-	_, valid, reason := g.registeredIdentity(session)
+	_, valid, reason := g.registeredIdentity(client, session)
 	if !valid {
 		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "node_id": nodeID, "reason": reason})
 		return
@@ -739,31 +816,10 @@ func (g *Gateway) acquireTX(client *WSClient, nodeID int) {
 		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "busy", "reason": "A registered DMR radio stream is active"})
 		return
 	}
-	session.mu.RLock()
-	dmrID, callsign := session.DMRID, session.Callsign
-	session.mu.RUnlock()
-
-	g.txMu.Lock()
-	if g.txOwner != nil && g.txOwner != client {
-		busyCallsign, busyID := g.txCallsign, g.txDMRID
-		g.txMu.Unlock()
-		g.sendClientText(client, map[string]any{"type": "tx_status", "state": "busy", "reason": "Another registered operator is transmitting", "callsign": busyCallsign, "dmr_id": busyID})
-		return
-	}
-	previousNode := g.txNode
-	g.txOwner, g.txNode, g.txDMRID, g.txCallsign = client, nodeID, dmrID, callsign
-	g.txMu.Unlock()
-
-	if previousNode != 0 && previousNode != nodeID {
-		if previous := g.sessionByID(previousNode); previous != nil {
-			previous.IsActive.Store(false)
-			previous.FlushFEC.Store(true)
-		}
-	}
-	session.LastTXFrame.Store(time.Now().UnixMilli())
-	session.IsActive.Store(true)
-	fmt.Printf("[PTT] Node %d TX START by %s (%d)\n", nodeID, callsign, dmrID)
-	g.broadcastTXStatus("active", nodeID, callsign, dmrID, "")
+	// Native browser-to-network framing is intentionally disabled. The previous
+	// implementation emitted non-standard DMR/YSF bursts. Voice must traverse a
+	// standards-compliant MMDVMHost/DMRGateway/YSF2DMR path instead.
+	g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "node_id": nodeID, "reason": "Native browser TX is disabled; use the standards-compliant gateway path"})
 }
 
 func (g *Gateway) releaseTX(client *WSClient, nodeID int, reason string) bool {
@@ -833,6 +889,11 @@ func (g *Gateway) reportRejectedDMR(id uint32) {
 }
 
 func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
+	user := authenticatedUser(r)
+	if user == "" {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -840,7 +901,9 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	client := &WSClient{
 		conn: conn,
-		send: make(chan []byte, 32),
+		user: user,
+		send: make(chan WSMessage, 64),
+		done: make(chan struct{}),
 	}
 
 	g.mu.Lock()
@@ -848,14 +911,16 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 
 	go func() {
-		defer conn.Close()
-		for msg := range client.send {
-			client.writeMu.Lock()
-			client.conn.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
-			err := client.conn.WriteMessage(websocket.BinaryMessage, msg)
-			client.writeMu.Unlock()
-			if err != nil {
+		defer client.shutdown()
+		for {
+			select {
+			case <-client.done:
 				return
+			case msg := <-client.send:
+				_ = client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+				if err := client.conn.WriteMessage(msg.messageType, msg.data); err != nil {
+					return
+				}
 			}
 		}
 	}()
@@ -873,7 +938,7 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if req["cmd"] == "node_state" {
-				nodeValue, nodeOK := req["node_id"].(float64)
+				nodeValue, nodeOK := jsonUint32(req["node_id"], MaxUsers)
 				mode, modeOK := req["mode"].(string)
 				target, targetOK := req["target"].(string)
 				active, _ := req["active"].(bool)
@@ -907,8 +972,8 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 						s.mu.Lock()
 						s.Mode = mode
 						s.Target = target
-						if tg, ok := req["tg"].(float64); ok {
-							s.TG = uint32(tg)
+						if tg, ok := jsonUint32(req["tg"], 0xFFFFFF); ok {
+							s.TG = tg
 						}
 						if pwd, ok := req["password"].(string); ok {
 							s.UserPassword = pwd
@@ -916,11 +981,11 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 						if callsign, ok := req["callsign"].(string); ok {
 							s.Callsign = strings.ToUpper(strings.TrimSpace(callsign))
 						}
-						if dmrID, ok := req["dmr_id"].(float64); ok {
-							s.DMRID = uint32(dmrID)
+						if dmrID, ok := jsonUint32(req["dmr_id"], 999999999); ok {
+							s.DMRID = dmrID
 						}
-						if repeaterID, ok := req["repeater_id"].(float64); ok {
-							s.RepeaterID = uint32(repeaterID)
+						if repeaterID, ok := jsonUint32(req["repeater_id"], 999999999); ok {
+							s.RepeaterID = repeaterID
 						}
 						if options, ok := req["options"].(string); ok {
 							s.Options = strings.TrimSpace(options)
@@ -931,7 +996,16 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 						if mode == "DMR" {
 							g.beginDMRLogin(s)
 						} else {
-							g.sendNetworkStatus(s, "connected", "YSF target selected")
+							remote := resolveNetworkTarget(target)
+							s.mu.Lock()
+							s.RemoteAddr = remote
+							s.LinkActive = remote != nil
+							s.mu.Unlock()
+							if remote == nil {
+								g.sendNetworkStatus(s, "error", "Unable to resolve YSF target")
+							} else {
+								g.sendNetworkStatus(s, "connected", "YSF target selected")
+							}
 						}
 						fmt.Printf("[CFG] Node %d: %s -> %s TG/REF %d\n", nodeID, mode, target, s.TG)
 						break
@@ -946,17 +1020,17 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 					g.sendBridgeStatus("disconnected", "Bridge disconnected")
 					continue
 				}
-				aNode, aOK := req["a_node"].(float64)
-				bNode, bOK := req["b_node"].(float64)
-				aTG, aTGOK := req["a_tg"].(float64)
-				bTG, bTGOK := req["b_tg"].(float64)
-				cNodeValue, cNodeOK := req["c_node"].(float64)
-				cTGValue, cTGOK := req["c_tg"].(float64)
+				aNode, aOK := jsonUint32(req["a_node"], MaxUsers)
+				bNode, bOK := jsonUint32(req["b_node"], MaxUsers)
+				aTG, aTGOK := jsonUint32(req["a_tg"], 0xFFFFFF)
+				bTG, bTGOK := jsonUint32(req["b_tg"], 0xFFFFFF)
+				cNodeValue, cNodeOK := jsonUint32(req["c_node"], MaxUsers)
+				cTGValue, cTGOK := jsonUint32(req["c_tg"], 0xFFFFFF)
 				cNode, cTG := 0, uint32(0)
-				if cNodeOK && int(cNodeValue) > 0 {
-					cNode, cTG = int(cNodeValue), uint32(cTGValue)
+				if cNodeOK && cNodeValue > 0 {
+					cNode, cTG = int(cNodeValue), cTGValue
 				}
-				if !aOK || !bOK || !aTGOK || !bTGOK || int(aNode) == int(bNode) || aTG < 1 || bTG < 1 {
+				if !aOK || !bOK || !aTGOK || !bTGOK || aNode == bNode {
 					g.sendBridgeStatus("error", "Choose two different DMR networks and valid talkgroups")
 					continue
 				}
@@ -965,11 +1039,11 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				g.bridgeMu.Lock()
-				g.bridge = BridgeRoute{Active: true, ANode: int(aNode), ATG: uint32(aTG), BNode: int(bNode), BTG: uint32(bTG), CNode: cNode, CTG: cTG, Suppress: make(map[int]BridgeSuppression), Fingerprints: make(map[[32]byte]time.Time)}
+				g.bridge = BridgeRoute{Active: true, ANode: int(aNode), ATG: aTG, BNode: int(bNode), BTG: bTG, CNode: cNode, CTG: cTG, Suppress: make(map[int]BridgeSuppression), Fingerprints: make(map[[32]byte]time.Time)}
 				g.bridgeMu.Unlock()
 				g.updateBridgeStatus()
 			} else if req["cmd"] == "tx_start" {
-				nodeValue, ok := req["node_id"].(float64)
+				nodeValue, ok := jsonUint32(req["node_id"], MaxUsers)
 				if !ok {
 					g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "Invalid node"})
 					continue
@@ -981,31 +1055,35 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 				}
 			} else if req["cmd"] == "set_vocoder" {
 				vocType, _ := req["type"].(string)
-				if vocType != "sw" && vocType != "hw" && vocType != "hybrid" {
-					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "Unsupported vocoder mode"})
+				if vocType != "hw" && vocType != "hybrid" {
+					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "Software AMBE is unavailable; select hardware or hardware failover"})
 					continue
 				}
 				for _, s := range g.sessions {
-					s.UseHWVocoder.Store(vocType != "sw")
-					s.HybridVocoder.Store(vocType == "hybrid")
+					s.UseHWVocoder.Store(true)
+					s.HybridVocoder.Store(false)
 				}
-				fmt.Printf("[VOC] Switched to %s vocoder\n", strings.ToUpper(vocType))
-				g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "active", "mode": vocType})
+				fmt.Printf("[VOC] Switched to hardware-only vocoder\n")
+				g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "active", "mode": "hw"})
 			} else if req["cmd"] == "set_dv30" {
 				addr1, _ := req["addr1"].(string)
 				if addr1 == "" {
 					addr1, _ = req["addr"].(string)
 				} // backwards compatibility
-				if addr1 == "" || strings.Contains(strings.ToLower(addr1), "ai.2e0lxy.uk") {
-					addr1 = "zx3de49.glddns.com:2468"
-				}
 				addr2, _ := req["addr2"].(string)
 				count := 1
 				if value, ok := req["count"].(float64); ok && int(value) == 2 {
 					count = 2
 				}
-				primary := parseDV30Address(addr1)
-				secondary := parseDV30Address(addr2)
+				primary, primaryOK := allowedVocoderAddress(addr1)
+				secondary, secondaryOK := allowedVocoderAddress(addr2)
+				if !primaryOK || (count == 2 && !secondaryOK) {
+					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "AMBE target is not in the server allowlist"})
+					continue
+				}
+				if count == 1 {
+					secondary = nil
+				}
 				for _, s := range g.sessions {
 					s.DV30Addr.Store(primary)
 					s.DV30Addr2.Store(secondary)
@@ -1030,7 +1108,7 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	delete(g.clients, client)
 	g.mu.Unlock()
-	close(client.send)
+	client.shutdown()
 }
 
 func (g *Gateway) sendNetworkStatus(s *UserSession, state, message string) {
@@ -1074,7 +1152,7 @@ func (g *Gateway) handleBrandMeisterStatus(w http.ResponseWriter, r *http.Reques
 		json.NewEncoder(w).Encode(map[string]any{"configured": false, "verified": false, "status": "not configured"})
 		return
 	}
-	request, err := http.NewRequest(http.MethodGet, "https://api.brandmeister.network/v2/selfcare/byCall?callsign=2E0LXY", nil)
+	request, err := http.NewRequest(http.MethodGet, "https://api.brandmeister.network/v2/selfcare/byCall?callsign="+url.QueryEscape(appConfig.OperatorCallsign), nil)
 	if err != nil {
 		http.Error(w, `{"error":"Unable to prepare API verification"}`, http.StatusInternalServerError)
 		return
@@ -1618,22 +1696,30 @@ func (g *Gateway) writeNetworkPacket(s *UserSession, packet []byte) error {
 }
 
 func (g *Gateway) beginDMRLogin(s *UserSession) {
-	s.mu.Lock()
-	entry, err := loadDMRHost(s.Target)
+	s.mu.RLock()
+	target := s.Target
+	userPassword := s.UserPassword
+	dmrID := s.DMRID
+	repeaterID := s.RepeaterID
+	callsign := s.Callsign
+	s.mu.RUnlock()
+
+	entry, err := loadDMRHost(target)
 	if err != nil {
+		s.mu.Lock()
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.mu.Unlock()
 		g.sendNetworkStatus(s, "error", "DMR master configuration is unavailable")
 		return
 	}
-	s.MasterPassword = entry.Password
-	s.RequiresUserPassword = dmrRequiresUserPassword(s.Target, entry)
-	s.AuthPassword = s.MasterPassword
-	if s.RequiresUserPassword {
-		s.AuthPassword = s.UserPassword
+	requiresUserPassword := dmrRequiresUserPassword(target, entry)
+	authPassword := entry.Password
+	if requiresUserPassword {
+		authPassword = userPassword
 	}
-	if s.DMRID < 1000000 || s.RepeaterID < 1000000 || s.AuthPassword == "" || s.Callsign == "" {
+	if dmrID < 1000000 || repeaterID < 1000000 || authPassword == "" || callsign == "" {
+		s.mu.Lock()
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.mu.Unlock()
@@ -1642,16 +1728,24 @@ func (g *Gateway) beginDMRLogin(s *UserSession) {
 	}
 	remote, err := net.ResolveUDPAddr("udp", net.JoinHostPort(entry.Host, strconv.Itoa(entry.Port)))
 	if err != nil {
+		s.mu.Lock()
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.mu.Unlock()
 		g.sendNetworkStatus(s, "error", "Unable to resolve DMR master")
 		return
 	}
+	s.mu.Lock()
+	if s.Target != target || !s.LinkActive {
+		s.mu.Unlock()
+		return
+	}
+	s.MasterPassword = entry.Password
+	s.RequiresUserPassword = requiresUserPassword
+	s.AuthPassword = authPassword
 	s.RemoteAddr = remote
 	s.AuthStage = authWaitingLogin
 	s.LastNetwork = time.Now()
-	repeaterID := s.RepeaterID
 	s.mu.Unlock()
 
 	packet := append([]byte("RPTL"), writeUint32BE(repeaterID)...)
@@ -1705,7 +1799,7 @@ func (g *Gateway) sendDMRConfig(s *UserSession) {
 	s.mu.RUnlock()
 	config := fmt.Sprintf("%-8.8s%09d%09d%02d%02d%8.8s%9.9s%03d%-20.20s%-19.19s%c%-124.124s%-40.40s%-40.40s",
 		callsign, 435000000, 435000000, 1, 1, "53.80000", "-1.500000", 0,
-		"Yorkshire, UK", "Yorkshire Link HUB", '4', "https://ai.2e0lxy.uk", "20260722", "MMDVM")
+		"Yorkshire, UK", "Yorkshire Link HUB", '4', appConfig.PublicURL, "20260722", "MMDVM")
 	packet := append([]byte("RPTC"), writeUint32BE(repeaterID)...)
 	packet = append(packet, []byte(config)...)
 	_ = g.writeNetworkPacket(s, packet)
@@ -1779,6 +1873,7 @@ func (g *Gateway) handleDMRControl(s *UserSession, data []byte, remote *net.UDPA
 
 	if len(data) >= 6 && string(data[:6]) == "MSTNAK" {
 		s.mu.Lock()
+		network := s.Target
 		s.LinkActive = false
 		s.AuthStage = authDisconnected
 		s.LastRejected = time.Now()
@@ -1786,7 +1881,7 @@ func (g *Gateway) handleDMRControl(s *UserSession, data []byte, remote *net.UDPA
 		s.MasterPassword = ""
 		s.AuthPassword = ""
 		s.mu.Unlock()
-		fmt.Printf("[NET] Node %d login rejected by %s\n", s.ID, s.Target)
+		fmt.Printf("[NET] Node %d login rejected by %s\n", s.ID, network)
 		g.sendNetworkStatus(s, "rejected", "Master rejected the DMR ID or password")
 		g.updateBridgeStatus()
 		return true
@@ -1850,69 +1945,9 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 
 	// TX path: Browser PCM -> Vocoder -> Framer -> Network
 	go func() {
-		var lastFrame []byte
-		for {
-			select {
-			case pcmData := <-s.rtcBuffer:
-				if s.FlushFEC.CompareAndSwap(true, false) {
-					lastFrame = nil
-				}
-
-				var finalPayload []byte
-
-				// Step 1: Vocoding (SW or HW)
-				useHW := s.UseHWVocoder.Load()
-				var voiceData []byte
-
-				if useHW {
-					// Hardware vocoder via DV30
-					targets := sessionVocoderTargets(s)
-					if len(targets) > 0 {
-						voiceData = encodeVocoderFrame(pcmData, targets, s.HybridVocoder.Load())
-					} else {
-						voiceData = encodeMBE(pcmData) // Fallback to SW
-					}
-				} else {
-					// Software vocoder (MBE)
-					voiceData = encodeMBE(pcmData)
-				}
-
-				// Step 2: Protocol framing
-				s.mu.RLock()
-				mode := s.Mode
-				target := s.Target
-				tg := s.TG
-				dmrid := s.DMRID
-				repeaterID := s.RepeaterID
-				connected := s.AuthStage == authRunning
-				remoteAddr := s.RemoteAddr
-				s.mu.RUnlock()
-
-				if mode == "DMR" && connected {
-					s.mu.Lock()
-					s.SeqNo++
-					seqNo := s.SeqNo
-					streamID := s.StreamID
-					s.mu.Unlock()
-					finalPayload = buildDMRFrame(voiceData, dmrid, tg, repeaterID, seqNo, streamID, lastFrame)
-				} else if mode == "YSF" {
-					finalPayload = buildYSFFrame(voiceData, s.Callsign, lastFrame)
-				}
-
-				// Step 3: Transmit to network
-				if len(finalPayload) > 0 {
-					targetAddr := remoteAddr
-					if mode != "DMR" {
-						targetAddr = resolveNetworkTarget(target)
-					}
-					if targetAddr != nil {
-						conn.WriteToUDP(finalPayload, targetAddr)
-					}
-				}
-
-				lastFrame = make([]byte, len(voiceData))
-				copy(lastFrame, voiceData)
-			}
+		for range s.rtcBuffer {
+			// Native browser TX is deliberately fail-closed. Cross-mode voice is
+			// handled by the standards-compliant MMDVM gateway services.
 		}
 	}()
 
@@ -1945,7 +1980,7 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 			mode := s.Mode
 			expected := s.RemoteAddr
 			s.mu.RUnlock()
-			if mode == "DMR" && (expected == nil || !expected.IP.Equal(remoteAddr.IP) || expected.Port != remoteAddr.Port) {
+			if (mode == "DMR" || mode == "YSF") && (expected == nil || remoteAddr == nil || !expected.IP.Equal(remoteAddr.IP) || expected.Port != remoteAddr.Port) {
 				udpPool.Put(bufPtr)
 				continue
 			}
@@ -1981,24 +2016,22 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 						decodedPCM = decodeVocoderFrame(pcmData, targets, s.HybridVocoder.Load())
 					}
 				}
-				if len(decodedPCM) == 0 {
-					decodedPCM = decodeMBE(pcmData)
-				}
-
 				// Send to all connected browsers
-				g.mu.Lock()
-				for client := range g.clients {
-					select {
-					case client.send <- decodedPCM:
-					default:
+				if len(decodedPCM) > 0 {
+					g.mu.Lock()
+					for client := range g.clients {
+						client.enqueue(WSMessage{messageType: websocket.BinaryMessage, data: decodedPCM})
 					}
+					g.mu.Unlock()
 				}
-				g.mu.Unlock()
+			}
 
-				// Traffic logging
-				if sourceID > 0 || sourceName != "" {
-					g.pushTrafficWS(s.ID, mode, s.Target, sourceID, sourceName, dmrMeta)
-				}
+			// Traffic logging is independent of browser audio decode.
+			if sourceID > 0 || sourceName != "" {
+				s.mu.RLock()
+				selectedTarget := s.Target
+				s.mu.RUnlock()
+				g.pushTrafficWS(s.ID, mode, selectedTarget, sourceID, sourceName, dmrMeta)
 			}
 
 			_ = remoteAddr
@@ -2008,8 +2041,11 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 }
 
 // ============================================================================
-// MBE SOFTWARE VOCODER (AMBE+2 Codec - Full Implementation)
+// LEGACY NON-INTEROPERABLE AUDIO TRANSFORM
 // ============================================================================
+
+// This codec is not AMBE/AMBE+2 and is retained only for offline compatibility
+// tests. It is never selected by the network or local-vocoder paths.
 
 // AMBE+2 vocoder parameters
 const (
@@ -2078,7 +2114,7 @@ func init() {
 	}
 }
 
-// encodeMBE: PCM (160 samples @ 8kHz) -> AMBE+2 (9 bytes = 72 bits)
+// encodeMBE converts PCM into DVHub's legacy private 9-byte representation.
 func encodeMBE(pcm []byte) []byte {
 	// Convert PCM bytes to float64 samples
 	samples := make([]float64, ambeFrameSamples)
@@ -2180,7 +2216,7 @@ func encodeMBE(pcm []byte) []byte {
 	return bits
 }
 
-// decodeMBE: AMBE+2 (9 bytes) -> PCM (160 samples @ 8kHz)
+// decodeMBE decodes DVHub's legacy private representation, not AMBE+2.
 func decodeMBE(ambe []byte) []byte {
 	if len(ambe) < 9 {
 		return make([]byte, 320)
@@ -2323,7 +2359,7 @@ func quantizeMagnitude(mag float64) byte {
 
 var dv30HardwareSlots sync.Map // endpoint string -> chan struct{}
 var dv30HardwareFrames atomic.Uint64
-var dv30SoftwareFallbacks atomic.Uint64
+var dv30HardwareFailures atomic.Uint64
 var dv30TargetCursor atomic.Uint64
 
 func vocoderMode(session *UserSession) string {
@@ -2384,7 +2420,8 @@ func acquireVocoderTarget(target *net.UDPAddr, hybrid bool) (func(), bool) {
 
 // Every gateway stream and local cross-mode converter uses the same endpoint
 // slots. With two configured devices, frames are spread across both. Hybrid
-// mode immediately uses software when all hardware slots are busy or offline.
+// mode uses another allowlisted hardware device when a slot is busy or offline.
+// It never substitutes a non-AMBE software bitstream.
 func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr, hybrid bool) []byte {
 	for _, target := range orderedVocoderTargets(targets) {
 		release, acquired := acquireVocoderTarget(target, hybrid)
@@ -2398,8 +2435,8 @@ func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr, hybrid bool) []byte 
 			return encoded
 		}
 	}
-	dv30SoftwareFallbacks.Add(1)
-	return encodeMBE(pcm)
+	dv30HardwareFailures.Add(1)
+	return nil
 }
 
 func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr, hybrid bool) []byte {
@@ -2415,8 +2452,8 @@ func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr, hybrid bool) []byte
 			return decoded
 		}
 	}
-	dv30SoftwareFallbacks.Add(1)
-	return decodeMBE(ambe)
+	dv30HardwareFailures.Add(1)
+	return nil
 }
 
 func (g *Gateway) runLocalVocoderBroker(address string) {
@@ -2452,22 +2489,28 @@ func (g *Gateway) handleLocalVocoderRequest(request []byte) []byte {
 	useHardware := session.UseHWVocoder.Load() && len(targets) > 0
 	switch {
 	case len(request) == 322 && request[0] == 0x61:
-		encoded := encodeMBE(request[2:])
-		if useHardware {
-			encoded = encodeVocoderFrame(request[2:], targets, true)
+		if !useHardware {
+			return []byte{0x7f, request[1]}
+		}
+		encoded := encodeVocoderFrame(request[2:], targets, false)
+		if len(encoded) != 9 {
+			return []byte{0x7f, request[1]}
 		}
 		response = append([]byte{0x62, request[1]}, encoded...)
 	case len(request) == 11 && request[0] == 0x63:
-		decoded := decodeMBE(request[2:])
-		if useHardware {
-			decoded = decodeVocoderFrame(request[2:], targets, true)
+		if !useHardware {
+			return []byte{0x7f, request[1]}
+		}
+		decoded := decodeVocoderFrame(request[2:], targets, false)
+		if len(decoded) != 320 {
+			return []byte{0x7f, request[1]}
 		}
 		response = append([]byte{0x64, request[1]}, decoded...)
 	case len(request) > 0 && request[0] == 0x70:
 		health, _ := json.Marshal(map[string]any{
 			"status": "ok", "product": "DVHub hybrid broker", "version": "2.1",
 			"encoded": dv30HardwareFrames.Load(), "decoded": dv30HardwareFrames.Load(),
-			"errors": 0, "hardware_devices": len(targets), "software_fallbacks": dv30SoftwareFallbacks.Load(),
+			"errors": dv30HardwareFailures.Load(), "hardware_devices": len(targets), "software_fallbacks": 0,
 		})
 		response = append([]byte{0x71}, health...)
 	default:
@@ -2506,6 +2549,55 @@ func parseDV30Address(value string) *net.UDPAddr {
 	return addr
 }
 
+func configuredVocoderTargets() []string {
+	data, err := os.ReadFile(vocoderTargetsPath)
+	if err != nil {
+		return nil
+	}
+	var targets []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		if line == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(line); err != nil {
+			line = net.JoinHostPort(line, "2468")
+		}
+		targets = append(targets, strings.ToLower(line))
+	}
+	return targets
+}
+
+func defaultVocoderTarget() *net.UDPAddr {
+	for _, target := range configuredVocoderTargets() {
+		if parsed := parseDV30Address(target); parsed != nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
+func allowedVocoderAddress(value string) (*net.UDPAddr, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		value = parsed.Host
+	}
+	if _, _, err := net.SplitHostPort(value); err != nil {
+		value = net.JoinHostPort(value, "2468")
+	}
+	normalized := strings.ToLower(value)
+	for _, allowed := range configuredVocoderTargets() {
+		if normalized == allowed {
+			parsed := parseDV30Address(value)
+			return parsed, parsed != nil
+		}
+	}
+	return nil, false
+}
+
 func safeVocoderAddress(addr *net.UDPAddr) string {
 	if addr == nil {
 		return "not-set"
@@ -2513,11 +2605,27 @@ func safeVocoderAddress(addr *net.UDPAddr) string {
 	return addr.String()
 }
 
-var dv30Pool = sync.Pool{
-	New: func() any {
-		conn, _ := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+var (
+	dv30Sockets     chan *net.UDPConn
+	dv30SocketsOnce sync.Once
+)
+
+func acquireDV30Socket() *net.UDPConn {
+	dv30SocketsOnce.Do(func() {
+		dv30Sockets = make(chan *net.UDPConn, 4)
+		for i := 0; i < cap(dv30Sockets); i++ {
+			conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
+			if err == nil {
+				dv30Sockets <- conn
+			}
+		}
+	})
+	select {
+	case conn := <-dv30Sockets:
 		return conn
-	},
+	case <-time.After(300 * time.Millisecond):
+		return nil
+	}
 }
 
 var dv30RequestID atomic.Uint32
@@ -2527,8 +2635,11 @@ func nextDV30Channel() byte {
 }
 
 func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int) []byte {
-	conn := dv30Pool.Get().(*net.UDPConn)
-	defer dv30Pool.Put(conn)
+	conn := acquireDV30Socket()
+	if conn == nil {
+		return nil
+	}
+	defer func() { dv30Sockets <- conn }()
 	// A request that exceeded its deadline can leave a late datagram on a
 	// pooled socket. Drain it before assigning that socket to a new channel.
 	conn.SetReadDeadline(time.Now())
@@ -2560,7 +2671,7 @@ func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
 	if encoded, ok := encodeDV30Hardware(pcm, target); ok {
 		return encoded
 	}
-	return encodeMBE(pcm)
+	return nil
 }
 
 func encodeDV30Hardware(pcm []byte, target *net.UDPAddr) ([]byte, bool) {
@@ -2581,7 +2692,7 @@ func decodeDV30(ambe []byte, target *net.UDPAddr, _ int) []byte {
 	if decoded, ok := decodeDV30Hardware(ambe, target); ok {
 		return decoded
 	}
-	return decodeMBE(ambe)
+	return nil
 }
 
 func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
@@ -2603,42 +2714,23 @@ func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
 // ============================================================================
 
 func buildDMRFrame(voice []byte, srcID, dstID, repeaterID uint32, seqNo uint8, streamID uint32, lastVoice []byte) []byte {
-	// MMDVM/Homebrew DMRD packet: 20-byte header, 33-byte DMR payload, BER and RSSI.
-	frame := make([]byte, 55)
-	copy(frame[0:4], []byte("DMRD"))
-	frame[4] = seqNo
-	frame[5] = byte(srcID >> 16)
-	frame[6] = byte(srcID >> 8)
-	frame[7] = byte(srcID)
-	frame[8] = byte(dstID >> 16)
-	frame[9] = byte(dstID >> 8)
-	frame[10] = byte(dstID)
-	binary.BigEndian.PutUint32(frame[11:15], repeaterID)
-	frame[15] = 0x80 | (seqNo % 6) // Slot 2, group voice burst number.
-	if seqNo%6 == 0 {
-		frame[15] = 0x90 // Slot 2 voice sync.
-	}
-	binary.LittleEndian.PutUint32(frame[16:20], streamID)
-
-	// The software vocoder emits one 9-byte AMBE frame per 20 ms. Populate the
-	// 33-byte network burst with the current and previous frames.
-	copy(frame[20:29], voice[:min(len(voice), 9)])
-	if lastVoice != nil {
-		copy(frame[29:38], lastVoice[:min(len(lastVoice), 9)])
-	}
-	copy(frame[38:47], voice[:min(len(voice), 9)])
-
-	return frame
+	// DMR voice needs LC, sync/EMB, interleave and FEC. The old byte-copy
+	// implementation was not protocol-correct, so native construction is
+	// disabled rather than emitting malformed RF/network traffic.
+	_, _, _, _, _, _, _ = voice, srcID, dstID, repeaterID, seqNo, streamID, lastVoice
+	return nil
 }
 
 func parseDMRFrame(data []byte) ([]byte, uint32) {
 	if len(data) < 55 || string(data[:4]) != "DMRD" {
 		return nil, 0
 	}
-	voice := data[20:29]
 	srcID := uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
 
-	return voice, srcID
+	// A DMRD burst contains three interleaved and FEC-protected AMBE frames.
+	// Returning raw bytes as AMBE was corrupt; extraction is delegated to the
+	// standards-compliant MMDVM gateway path.
+	return nil, srcID
 }
 
 func parseDMRTrafficMeta(data []byte) DMRTrafficMeta {
@@ -2685,55 +2777,20 @@ func parseDMRTrafficMeta(data []byte) DMRTrafficMeta {
 // ============================================================================
 
 func buildYSFFrame(voice []byte, callsign string, lastVoice []byte) []byte {
-	// YSF frame: 120 bytes
-	// [Sync 5][FICH 25][DCH 20][VCH 9x5][CRC 2]
-
-	frame := make([]byte, 120)
-
-	// Sync pattern
-	sync := []byte{0xD4, 0x71, 0xC9, 0x63, 0x4D}
-	copy(frame[0:5], sync)
-
-	// FICH (Frame Information Channel Header)
-	fich := make([]byte, 25)
-	fich[0] = 0x01 // V/D Mode 1
-	fich[1] = 0x00 // Frame type: Voice/Data
-	copy(frame[5:30], fich)
-
-	// DCH (Data Channel) - Callsign
-	dch := make([]byte, 20)
-	copy(dch[0:10], []byte(callsign))
-	copy(frame[30:50], dch)
-
-	// VCH (Voice Channel) - 5 AMBE frames
-	for i := 0; i < 5; i++ {
-		offset := 50 + (i * 9)
-		if i == 0 && len(voice) >= 9 {
-			copy(frame[offset:offset+9], voice[:9])
-		} else if lastVoice != nil && len(lastVoice) >= 9 {
-			copy(frame[offset:offset+9], lastVoice[:9])
-		}
-	}
-
-	// CRC placeholder
-	frame[118] = 0x00
-	frame[119] = 0x00
-
-	return frame
+	// YSF network frames require the YSFD header, encoded FICH, interleave/FEC
+	// and valid CRC. Native construction is disabled; YSF2DMR handles it.
+	_, _, _ = voice, callsign, lastVoice
+	return nil
 }
 
 func parseYSFFrame(data []byte) ([]byte, string) {
-	if len(data) < 120 {
+	if len(data) < 35 || string(data[:4]) != "YSFD" {
 		return nil, ""
 	}
-
-	// Extract first voice frame
-	voice := data[50:59]
-
-	// Extract callsign from DCH
-	callsign := strings.TrimSpace(string(data[30:40]))
-
-	return voice, callsign
+	// The 35-byte network header is recognised for source reporting only. FICH,
+	// convolution/Golay decode and VCH deinterleave belong in YSF2DMR/MMDVM.
+	callsign := strings.TrimSpace(string(data[14:24]))
+	return nil, callsign
 }
 
 // ============================================================================
@@ -2909,15 +2966,15 @@ request = urllib.request.Request(
     "https://dvref.com/api/v2/ysf/reflectors/",
     headers={
         "Authorization": "Token " + token,
-        "User-Agent": "DVHub-Gateway/2.0 (2E0LXY; https://ai.2e0lxy.uk)",
-        "X-DVRef-Callsign": "2E0LXY",
-        "X-DVRef-Contact": "https://ai.2e0lxy.uk",
+        "User-Agent": "DVHub-Gateway/2.0 (" + sys.argv[2] + "; " + sys.argv[3] + ")",
+        "X-DVRef-Callsign": sys.argv[2],
+        "X-DVRef-Contact": sys.argv[4],
     },
 )
 with urllib.request.urlopen(request, timeout=30) as response:
     sys.stdout.buffer.write(response.read(16777217))
 `
-			if body, requestErr := exec.Command("/usr/bin/python3", "-c", dvrefFetchScript, dvrefTokenPath).Output(); requestErr == nil {
+			if body, requestErr := exec.Command("/usr/bin/python3", "-c", dvrefFetchScript, dvrefTokenPath, appConfig.OperatorCallsign, appConfig.PublicURL, appConfig.Contact).Output(); requestErr == nil {
 				var payload struct {
 					GeneratedAt string `json:"generated_at"`
 					Metadata    struct {
@@ -2960,7 +3017,7 @@ with urllib.request.urlopen(request, timeout=30) as response:
 		if token != "" && attemptDue("/var/lib/dvgateway/YSF_Hosts.refcheck.last_attempt") {
 			req, _ := http.NewRequest(http.MethodGet, "https://refcheck.radio/api/hostfile-gate/fetch/json/ysf/", nil)
 			req.Header.Set("Authorization", "Token "+token)
-			req.Header.Set("User-Agent", "DVHub-Gateway/2.0 (2E0LXY; https://ai.2e0lxy.uk)")
+			req.Header.Set("User-Agent", fmt.Sprintf("DVHub-Gateway/2.0 (%s; %s)", appConfig.OperatorCallsign, appConfig.PublicURL))
 			if resp, requestErr := client.Do(req); requestErr == nil {
 				var payload struct {
 					Metadata struct {
@@ -3078,7 +3135,7 @@ func currentYSFIdentity() YSFIdentity {
 	registered := locked && registrationErr == nil && strings.TrimSpace(string(registrationData)) == id
 	return YSFIdentity{
 		ID: id, SuggestedID: suggested, Name: name, Description: description,
-		Host: "194.146.49.25", Port: 42000, Country: "GB", Locked: locked,
+		Host: appConfig.PublicHost, Port: 42000, Country: "GB", Locked: locked,
 		DVRefReady: locked, DVRefRegistered: registered, RegistrySource: ysfRegistrySource(),
 		APITokenConfigured: tokenErr == nil, PublicDashboardPath: "/ysf-status.html",
 	}
@@ -3105,8 +3162,11 @@ func (g *Gateway) handleYSFIdentity(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(currentYSFIdentity())
 		return
 	}
-	if r.Method != http.MethodPost || r.Header.Get("X-DVHub-Control") != "1" {
-		http.Error(w, `{"error":"Identity request rejected"}`, http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
 		return
 	}
 	if currentYSFIdentity().Locked {
@@ -3164,11 +3224,14 @@ func (g *Gateway) handleYSFControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == http.MethodGet {
-		json.NewEncoder(w).Encode(map[string]string{"status": status(), "host": "194.146.49.25", "port": "42000"})
+		json.NewEncoder(w).Encode(map[string]string{"status": status(), "host": appConfig.PublicHost, "port": "42000"})
 		return
 	}
-	if r.Method != http.MethodPost || r.Header.Get("X-DVHub-Control") != "1" {
-		http.Error(w, `{"error":"Control request rejected"}`, http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
 		return
 	}
 	var request struct {
@@ -3229,7 +3292,7 @@ Longitude=-1.5
 Height=0
 Location=Yorkshire, United Kingdom
 Description=Yorkshire Link HUB permanent TG23530 bridge
-URL=https://194.146.49.25/
+URL=%s
 
 [YSF Network]
 Callsign=%s
@@ -3271,7 +3334,7 @@ FileRoot=YSF2DMR
 
 [aprs.fi]
 Enable=0
-`, config.Callsign, config.YSFDMRID, freeSTARHost.Password)
+`, appConfig.PublicURL, config.Callsign, config.YSFDMRID, freeSTARHost.Password)
 	return os.WriteFile(ysf2dmrConfigPath, []byte(runtimeConfig), 0600)
 }
 
@@ -3457,8 +3520,11 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 		json.NewEncoder(w).Encode(g.yorkshireConferenceStatus())
 		return
 	}
-	if r.Method != http.MethodPost || r.Header.Get("X-DVHub-Control") != "1" {
-		http.Error(w, `{"error":"Control request rejected"}`, http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
 		return
 	}
 	var request struct {
@@ -3520,7 +3586,7 @@ Longitude=-1.5
 Height=0
 Location=Yorkshire, United Kingdom
 Description=Yorkshire Link HUB temporary TG23530 bridge
-URL=https://194.146.49.25/
+URL=%s
 
 [YSF Network]
 Callsign=%s
@@ -3562,7 +3628,7 @@ FileRoot=YSF2DMR
 
 [aprs.fi]
 Enable=0
-`, request.Callsign, request.DMRID, freeSTARHost.Password)
+`, appConfig.PublicURL, request.Callsign, request.DMRID, freeSTARHost.Password)
 	if err := os.WriteFile(ysf2dmrConfigPath, []byte(config), 0600); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -4064,16 +4130,6 @@ func parseRadioIDCSV(reader io.Reader) map[uint32]RadioIDInfo {
 	return result
 }
 
-func (g *Gateway) watchdog(host string, port int) {
-	ticker := time.NewTicker(60 * time.Second)
-	for range ticker.C {
-		ips, _ := net.LookupIP(host)
-		if len(ips) > 0 {
-			g.HomeAddr.Store(&net.UDPAddr{IP: ips[0], Port: port})
-		}
-	}
-}
-
 func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -4100,7 +4156,7 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 		session.mu.RUnlock()
 	}
 	json.NewEncoder(w).Encode(map[string]any{
-		"ip": g.HomeAddr.Load().(*net.UDPAddr).IP.String(), "nodes": nodes,
+		"nodes":                nodes,
 		"conference_permanent": permanent, "ysf_reflector": serviceActive("ysfreflector.service"),
 	})
 }
@@ -4110,4 +4166,12 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func jsonUint32(value any, maximum uint32) (uint32, bool) {
+	number, ok := value.(float64)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) || number < 1 || number != math.Trunc(number) || number > float64(maximum) {
+		return 0, false
+	}
+	return uint32(number), true
 }

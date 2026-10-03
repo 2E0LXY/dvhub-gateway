@@ -1,0 +1,3 @@
+# Copy to /etc/dvhub/vocoder-targets.txt (mode 0640, owner root:dvhub).
+# Only exact host:port values listed here can be selected from the dashboard.
+dv30.example.net:2468

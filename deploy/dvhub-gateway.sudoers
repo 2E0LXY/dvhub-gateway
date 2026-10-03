@@ -1,0 +1,7 @@
+# Install as /etc/sudoers.d/dvhub-gateway with mode 0440 and validate with visudo -cf.
+dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-set-ysf-identity *
+dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl start ysfreflector.service
+dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl stop ysfreflector.service
+dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl restart ysfreflector.service
+dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl start ysf2dmr.service
+dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl stop ysf2dmr.service
