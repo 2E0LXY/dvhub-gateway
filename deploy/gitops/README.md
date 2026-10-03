@@ -56,7 +56,8 @@ gate and should not be used by the timer.
 
 Hosts upgrading from the legacy TCP listener need one coordinated Caddy
 migration. `migrate-caddy-to-unix-socket` backs up the live binary, unit,
-Caddyfile and deployed SHA; replaces exactly two `127.0.0.1:8080` upstreams;
+Caddyfile and deployed SHA; replaces exactly four `127.0.0.1:8080` upstreams
+across the public and protected routes of both live site blocks;
 validates Caddy; deploys the CI-approved revision; then verifies both the Unix
 socket and a caller-supplied public HTTPS health URL. Any failure restores the
 complete pre-migration state and leaves the automatic timer stopped.
