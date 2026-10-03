@@ -48,7 +48,7 @@ index cc5ef8d..08bda2a 100644
 -	md380_init();
 +	const char* endpoint = ::getenv("DV30_ADDRESS");
 +	if (endpoint == NULL || *endpoint == '\0')
-+		endpoint = "zx3de49.glddns.com:2468";
++		endpoint = "127.0.0.1:2461";
 +	std::string value(endpoint);
 +	std::string::size_type separator = value.rfind(':');
 +	if (separator == std::string::npos)
@@ -254,4 +254,3 @@ index a989589..8f8e8c5 100644
  	m_dmrN += 1U;
  }
  
-

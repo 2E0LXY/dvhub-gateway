@@ -5,14 +5,12 @@ import com.google.gson.JsonObject
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import okio.ByteString
 import java.util.concurrent.TimeUnit
 
 class GatewayClient(private val listener: Listener) {
     interface Listener {
         fun onConnection(connected: Boolean, message: String)
         fun onJson(json: JsonObject)
-        fun onAudio(bytes: ByteArray)
     }
 
     private val gson = Gson()
@@ -50,7 +48,6 @@ class GatewayClient(private val listener: Listener) {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 runCatching { gson.fromJson(text, JsonObject::class.java) }.onSuccess(listener::onJson)
             }
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) = listener.onAudio(bytes.toByteArray())
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = listener.onConnection(false, "Disconnected")
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) =
                 listener.onConnection(false, response?.let { "Connection failed (${it.code})" } ?: (t.message ?: "Connection failed"))
@@ -59,7 +56,6 @@ class GatewayClient(private val listener: Listener) {
 
     fun close() { socket?.close(1000, "App stopped"); socket = null }
     fun send(json: JsonObject): Boolean = socket?.send(gson.toJson(json)) == true
-    fun sendAudio(bytes: ByteArray): Boolean = socket?.send(ByteString.of(*bytes)) == true
 
     fun get(path: String, done: (Result<JsonObject>) -> Unit) {
         client.newCall(request(path)).enqueue(jsonCallback(done))
@@ -85,7 +81,9 @@ class GatewayClient(private val listener: Listener) {
         val effectiveOptions = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") {
             if (tg == 4000) "TS2_1=0;" else "TS2_1=$tg;"
         } else options
-        val effectiveDMRId = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") 2351633L else (settings.dmrId.toLongOrNull() ?: 0)
+        val effectiveDMRId = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") {
+            settings.manualDmrId.toLongOrNull() ?: (settings.dmrId.toLongOrNull() ?: 0)
+        } else (settings.dmrId.toLongOrNull() ?: 0)
         val effectiveRepeaterId = if (network.nodeId == 7 && network.target == "FreeSTAR-SystemX-UK") {
             effectiveDMRId * 100 + 2
         } else repeaterId()
@@ -95,9 +93,6 @@ class GatewayClient(private val listener: Listener) {
         addProperty("dmr_id", effectiveDMRId); addProperty("repeater_id", effectiveRepeaterId)
         addProperty("options", effectiveOptions)
     })
-
-    fun txStart(nodeId: Int) = send(JsonObject().apply { addProperty("cmd", "tx_start"); addProperty("node_id", nodeId) })
-    fun txStop() = send(JsonObject().apply { addProperty("cmd", "tx_stop") })
 
     fun bridge(active: Boolean, a: Int, b: Int, c: Int? = null, aTg: Int = 23530, bTg: Int = aTg, cTg: Int = aTg) = send(JsonObject().apply {
         addProperty("cmd", "bridge_state"); addProperty("active", active); addProperty("a_node", a); addProperty("a_tg", aTg)

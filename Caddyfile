@@ -9,6 +9,7 @@
         X-Frame-Options "SAMEORIGIN"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
         -Server
     }
 
@@ -17,14 +18,14 @@
         {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
     }
 
-    reverse_proxy /ws 127.0.0.1:8080 {
+    reverse_proxy /ws unix//run/dvhub/gateway.sock {
         flush_interval -1
         header_up X-DVHub-Authenticated-User {http.auth.user.id}
     }
-    reverse_proxy /api/* 127.0.0.1:8080 {
+    reverse_proxy /api/* unix//run/dvhub/gateway.sock {
         header_up X-DVHub-Authenticated-User {http.auth.user.id}
     }
-    reverse_proxy /talkgroups.js 127.0.0.1:8080 {
+    reverse_proxy /talkgroups.js unix//run/dvhub/gateway.sock {
         header_up X-DVHub-Authenticated-User {http.auth.user.id}
     }
 

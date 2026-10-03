@@ -27,7 +27,7 @@ class CredentialsStore(context: Context) {
     }
 
     fun save(value: GatewaySettings) {
-        val clear = listOf(value.serverUrl, value.username, value.password, value.callsign, value.dmrId, value.essid)
+        val clear = listOf(value.serverUrl, value.username, value.password, value.callsign, value.dmrId, value.essid, value.manualDmrId)
             .joinToString("\u001f").toByteArray(Charsets.UTF_8)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
         prefs.edit().putString("blob", Base64.encodeToString(cipher.iv + cipher.doFinal(clear), Base64.NO_WRAP)).apply()
@@ -41,7 +41,7 @@ class CredentialsStore(context: Context) {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
             }
             val parts = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8).split("\u001f")
-            GatewaySettings(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
+            GatewaySettings(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts.getOrElse(6) { "" })
         }.getOrElse { GatewaySettings() }
     }
 }

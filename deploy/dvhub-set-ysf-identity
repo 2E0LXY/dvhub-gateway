@@ -1,0 +1,78 @@
+#!/bin/bash
+set -euo pipefail
+
+config=/etc/ysfreflector/YSFReflector.ini
+lock=/var/lib/dvgateway/ysf-identity.lock
+guard=/run/lock/dvhub-ysf-identity
+
+id=${1-}
+name=${2-}
+description=${3-}
+
+[[ $id =~ ^[0-9]{5}$ ]] || { echo "invalid five-digit reflector id" >&2; exit 2; }
+(( 10#$id > 5 )) && [[ $id != 99999 ]] || { echo "reserved reflector id" >&2; exit 2; }
+[[ $name =~ ^[A-Z0-9_-]{1,16}$ ]] || { echo "invalid reflector name" >&2; exit 2; }
+description_pattern='^[A-Z0-9._ -]{1,32}$'
+[[ $description != *$'\n'* && $description != *$'\r'* && $description =~ $description_pattern ]] || { echo "invalid reflector description" >&2; exit 2; }
+[[ -f $config ]] || { echo "YSFReflector configuration is missing" >&2; exit 1; }
+[[ ! -e $lock ]] || { echo "reflector identity is already locked" >&2; exit 1; }
+
+mkdir -p /run/lock /var/lib/dvgateway
+if ! mkdir "$guard" 2>/dev/null; then
+  echo "another identity update is in progress" >&2
+  exit 1
+fi
+trap 'rm -rf -- "$guard"' EXIT
+
+tmp=$(mktemp "${config}.XXXXXX")
+backup=$(mktemp "${config}.backup.XXXXXX")
+trap 'rm -f -- "${tmp:-}" "${backup:-}"; rm -rf -- "$guard"' EXIT
+cp --preserve=mode,ownership "$config" "$backup"
+
+awk -v id="$id" -v name="$name" -v description="$description" '
+function finish_info() {
+  if (!in_info) return
+  if (!seen_id) print "Id=" id
+  if (!seen_name) print "Name=" name
+  if (!seen_description) print "Description=" description
+  in_info=0
+}
+/^\[/ {
+  finish_info()
+  if ($0 == "[Info]") { in_info=1; found_info=1; seen_id=seen_name=seen_description=0 }
+  print
+  next
+}
+in_info && /^Id[[:space:]]*=/ { print "Id=" id; seen_id=1; next }
+in_info && /^Name[[:space:]]*=/ { print "Name=" name; seen_name=1; next }
+in_info && /^Description[[:space:]]*=/ { print "Description=" description; seen_description=1; next }
+{ print }
+END {
+  finish_info()
+  if (!found_info) {
+    print ""
+    print "[Info]"
+    print "Id=" id
+    print "Name=" name
+    print "Description=" description
+  }
+}
+' "$config" > "$tmp"
+
+chown --reference="$config" "$tmp"
+chmod --reference="$config" "$tmp"
+mv -f -- "$tmp" "$config"
+
+if ! /usr/bin/systemctl restart ysfreflector.service; then
+  mv -f -- "$backup" "$config"
+  /usr/bin/systemctl restart ysfreflector.service || true
+  echo "YSFReflector restart failed; configuration restored" >&2
+  exit 1
+fi
+
+printf '%s\n' "$id" > "${lock}.tmp"
+chown dvhub:dvhub "${lock}.tmp"
+chmod 0640 "${lock}.tmp"
+mv -f -- "${lock}.tmp" "$lock"
+rm -f -- "$backup"
+echo "reflector identity $id installed and locked"

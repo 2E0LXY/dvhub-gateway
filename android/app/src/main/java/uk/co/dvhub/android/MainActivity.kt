@@ -1,17 +1,12 @@
 package uk.co.dvhub.android
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -28,23 +23,16 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private lateinit var shell: ActivityMainBinding
     private lateinit var store: CredentialsStore
     private lateinit var client: GatewayClient
-    private lateinit var audio: AudioEngine
     private var settings = GatewaySettings()
     private val handler = Handler(Looper.getMainLooper())
     private val activityAdapter = ActivityAdapter()
     private var currentNetwork = GatewayNetworks.all.first()
     private var currentTg = 23530
     private var linkActive = false
-    private var pttPending = false
     private var dashboard: ViewDashboardBinding? = null
     private var link: ViewLinkBinding? = null
     private var conference: ViewConferenceBinding? = null
     private var settingsView: ViewSettingsBinding? = null
-
-    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted && pttPending) beginPtt() else if (!granted) toast("Microphone permission is required to transmit")
-        pttPending = false
-    }
 
     private val poll = object : Runnable {
         override fun run() {
@@ -58,7 +46,6 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         shell = ActivityMainBinding.inflate(layoutInflater); setContentView(shell.root)
         store = CredentialsStore(this); settings = store.load()
         client = GatewayClient(this); client.configure(settings)
-        audio = AudioEngine(client::sendAudio)
         shell.navigation.setOnItemSelectedListener {
             when (it.itemId) {
                 R.id.nav_dashboard -> showDashboard()
@@ -72,7 +59,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         showDashboard(); client.connect(); handler.post(poll)
     }
 
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); client.close(); audio.release(); super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacksAndMessages(null); client.close(); super.onDestroy() }
 
     private fun replace(view: View) { shell.content.removeAllViews(); shell.content.addView(view) }
 
@@ -109,13 +96,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                 b.linkStatus.text = if (requested) "Connection requested…" else "Disconnection requested…"
             }
         }
-        b.pttButton.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { requestPtt(); true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { endPtt(); true }
-                else -> true
-            }
-        }
+		b.pttButton.isEnabled = false
         loadTalkgroups(currentNetwork, b); updateLinkUi(b); return true
     }
 
@@ -125,26 +106,9 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         b.linkStatus.setTextColor(ContextCompat.getColor(this, if (linkActive) R.color.dv_green else R.color.dv_muted))
     }
 
-    private fun requestPtt() {
-        if (!linkActive) { toast("Connect a network before transmitting"); return }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            pttPending = true; micPermission.launch(Manifest.permission.RECORD_AUDIO)
-        } else beginPtt()
-    }
-
-    private fun beginPtt() {
-        if (!client.txStart(currentNetwork.nodeId)) { toast("Gateway is offline"); return }
-        if (!audio.startTx()) { client.txStop(); toast("Could not open the microphone"); return }
-        link?.pttButton?.apply { text = "TRANSMITTING"; setBackgroundColor(Color.rgb(190, 35, 55)) }
-        handler.postDelayed({ if (audioIsTransmitting()) { endPtt(); toast("PTT stopped at the 90-second safety limit") } }, 90_000)
-    }
-
-    private fun audioIsTransmitting() = link?.pttButton?.text == "TRANSMITTING"
-    private fun endPtt() { audio.stopTx(); client.txStop(); link?.pttButton?.apply { text = "HOLD TO TALK"; setBackgroundColor(ContextCompat.getColor(this@MainActivity, R.color.dv_green_dark)) } }
-
     private fun showConference(): Boolean {
         val b = ViewConferenceBinding.inflate(layoutInflater); conference = b; replace(b.root)
-        b.ysfDmrId.setText("2351633"); b.bridgeDmrId.setText(settings.dmrId); b.bridgeEssid.setText(settings.essid)
+		b.ysfDmrId.setText(settings.manualDmrId.ifBlank { settings.dmrId }); b.bridgeDmrId.setText(settings.dmrId); b.bridgeEssid.setText(settings.essid)
         b.testConference.setOnClickListener { startConference(b, 60, "test") }
         b.startConference.setOnClickListener { startPermanentConference(b) }
         b.stopConference.setOnClickListener { stopConference(b) }
@@ -207,7 +171,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private fun showSettings(): Boolean {
         val b = ViewSettingsBinding.inflate(layoutInflater); settingsView = b; replace(b.root)
         b.serverUrl.setText(settings.serverUrl); b.username.setText(settings.username); b.password.setText(settings.password)
-        b.callsign.setText(settings.callsign); b.dmrId.setText(settings.dmrId); b.essid.setText(settings.essid)
+		b.callsign.setText(settings.callsign); b.dmrId.setText(settings.dmrId); b.essid.setText(settings.essid); b.manualDmrId.setText(settings.manualDmrId)
         b.dv30Count.adapter = darkAdapter(listOf("One DV30 / DV3000", "Two DV30 / DV3000"))
         b.lookupCallsign.setOnClickListener { lookupCallsign(b) }
         b.useHardwareVocoder.setOnClickListener {
@@ -216,13 +180,6 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             val ok = client.setDv30(count, first, second) && client.setVocoder("hw")
             b.vocoderStatus.text = if (ok) "Hardware vocoder selected · $count device(s)" else "Gateway WebSocket is offline"
         }
-        b.useHybridVocoder.setOnClickListener {
-            val first = b.dv30Address1.text.toString().trim(); val second = b.dv30Address2.text.toString().trim(); val count = b.dv30Count.selectedItemPosition + 1
-            if (first.isBlank() || (count == 2 && second.isBlank())) { b.vocoderStatus.text = "Enter the required hardware address(es)"; return@setOnClickListener }
-            val ok = client.setDv30(count, first, second) && client.setVocoder("hybrid")
-            b.vocoderStatus.text = if (ok) "Hybrid active · DV30 priority with software overflow/failover" else "Gateway WebSocket is offline"
-        }
-        b.useSoftwareVocoder.setOnClickListener { b.vocoderStatus.text = if (client.setVocoder("sw")) "Software vocoder selected" else "Gateway WebSocket is offline" }
         b.saveSettings.setOnClickListener { saveSettings(b, true) }
         b.testSettings.setOnClickListener { saveSettings(b, false); client.get("/api/system") { result -> runOnUiThread {
             b.settingsStatus.text = if (result.isSuccess) "Connection successful — gateway authenticated" else "Connection failed: ${result.exceptionOrNull()?.message}"
@@ -231,8 +188,8 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     }
 
     private fun saveSettings(b: ViewSettingsBinding, persist: Boolean) {
-        val candidate = GatewaySettings(b.serverUrl.text.toString().trimEnd('/'), b.username.text.toString(), b.password.text.toString(),
-            b.callsign.text.toString().uppercase(Locale.UK), b.dmrId.text.toString(), b.essid.text.toString().padStart(2, '0'))
+		val candidate = GatewaySettings(b.serverUrl.text.toString().trimEnd('/'), b.username.text.toString(), b.password.text.toString(),
+			b.callsign.text.toString().uppercase(Locale.UK), b.dmrId.text.toString(), b.essid.text.toString().padStart(2, '0'), b.manualDmrId.text.toString())
         if (!candidate.serverUrl.startsWith("https://") || candidate.password.isBlank() || candidate.dmrId.length != 7) {
             b.settingsStatus.text = "Use an HTTPS URL, gateway password and valid 7-digit DMR ID"; return
         }
@@ -390,17 +347,8 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     override fun onJson(json: JsonObject) = runOnUiThread {
         val kind = first(json, "type", "event", "cmd") ?: ""
         if (kind == "tx_status") {
-            when (first(json, "state")) {
-                "busy", "denied" -> {
-                    if (audioIsTransmitting()) endPtt()
-                    val reason = first(json, "reason") ?: "Transmit permission denied"
-                    link?.linkStatus?.text = reason
-                    toast(reason)
-                }
-                "active" -> if (!audioIsTransmitting()) {
-                    link?.linkStatus?.text = "RX only · transmitter in use by ${first(json, "callsign", "dmr_id") ?: "another operator"}"
-                }
-                "idle" -> if (!audioIsTransmitting()) updateLinkUi(link ?: return@runOnUiThread)
+            if (first(json, "state") == "denied") {
+                link?.linkStatus?.text = first(json, "reason") ?: "Native app transmission is unavailable"
             }
         }
         if (kind == "network_status" && first(json, "node_id")?.toIntOrNull() == currentNetwork.nodeId) {
@@ -435,7 +383,6 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         }
     }
 
-    override fun onAudio(bytes: ByteArray) = audio.play(bytes)
     private fun first(o: JsonObject, vararg keys: String): String? = keys.firstNotNullOfOrNull { k -> o.get(k)?.takeUnless { it.isJsonNull || it.isJsonObject || it.isJsonArray }?.asString }
     private fun deep(o: JsonObject, key: String): String? {
         o.entrySet().forEach { (k, v) ->

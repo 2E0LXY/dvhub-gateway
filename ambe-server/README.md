@@ -1,42 +1,29 @@
-# DVHub DV30 AMBE server
+# DV30 / DV3000 hardware service
 
-This service exposes one genuine DVMEGA DVstick 30/ThumbDV AMBE3000 over a restricted UDP connection for DVHub Gateway. It drives the USB serial device directly in DVSI packet mode and supports both directions:
+This service exposes a USB DV30/DV3000 to DVHub converter processes. It performs hardware AMBE encode/decode only; it has no software-codec fallback.
 
-- `0x61 + channel + 320-byte PCM16LE` → `0x62 + channel + 9-byte AMBE`
-- `0x63 + channel + 9-byte AMBE` → `0x64 + channel + 320-byte PCM16LE`
-- `0x70` → `0x71 + JSON health information`
+## Security boundary
 
-Requests are serialized because one DV30 is one hardware vocoder resource. Invalid source addresses receive no reply.
+The compact UDP protocol has no user authentication or encryption. Do not publish it directly to the Internet. Put the gateway and this host on the same private LAN, WireGuard network or Tailscale network, and set `AMBE_ALLOW` to the gateway's exact private `/32` address. Keep the firewall closed to every other source.
 
-`AMBE_MODE=dmr` supports DVHub's current DMR/AMBE+2 path. `AMBE_MODE=dstar` prepares the stick for the older D-Star AMBE rate, but the DVHub D-Star network/framing path must also be completed before it can be used. A single stick cannot remain configured for DMR and D-Star modes simultaneously; two sticks are recommended for simultaneous cross-mode transcoding.
+The public hostname, router forwarding details and deployment IPs are intentionally not documented or committed. Store those in the operator's private deployment notes.
 
-## Network requirement
+## Install
 
-The configured direct route is `zx3de49.glddns.com` on public UDP `2468`, forwarded to `192.168.1.131:2468`. The service source allowlist must remain `194.146.49.25/32`, and the Linux firewall should allow UDP 2468 only from that VPS. A Tailscale or WireGuard route remains the safer alternative because this compact real-time protocol deliberately has no password exchange.
+1. Connect the DV30/DV3000 USB device to the Linux host.
+2. Copy `ambe-server.env.example` to `/etc/dvhub/ambe-server.env` and set the serial device, private bind address/port and exact private gateway allowlist.
+3. Run the included installer as root.
+4. Add the service's private `host:port` to `/etc/dvhub/vocoder-targets.txt` on the gateway.
+5. Verify `/api/vocoder/health` through the authenticated dashboard.
 
-The hostname used by the hub must resolve directly to the router. `zx3de49.glddns.com` currently provides that unproxied route.
+Use one hardware device for a single half-duplex conversion path. A second device adds bounded capacity and can keep opposite conversion directions independent. A busy, unreachable or late device causes the frame to fail closed.
 
-## Install on the Linux machine with the DV30
+## Health probe
 
-```bash
-ls -l /dev/serial/by-id/
-cd ambe-server
-sudo ./install.sh
-sudoedit /etc/dvhub/ambe-server.env
-sudo systemctl enable --now dvhub-ambe-server
-sudo systemctl status dvhub-ambe-server
-```
-
-Use the persistent `/dev/serial/by-id/...` name. Earlier FTDI-based sticks may use 230400 baud; later CP2102 versions commonly use 460800. The service log reports the detected AMBE product and firmware after successful initialisation.
-
-Test health from the permitted DVHub VPS:
+From an allowed private host, send the protocol health byte to the private endpoint:
 
 ```bash
-printf '\x70' | nc -u -w1 zx3de49.glddns.com 2468
+printf '\\x70' | nc -u -w1 100.64.0.10 2468
 ```
 
-Configure the hub with `zx3de49.glddns.com:2468`, select one hardware vocoder, and switch the vocoder mode to hardware. If the device or route is unavailable, the hub falls back to its software codec rather than transmitting an empty frame.
-
-## Compatibility and licence
-
-The serial packet framing follows DVSI's AMBE-3000 packet interface. The DVMEGA reset sequence and mode constants were validated against the GPL-licensed [marrold/AMBEServer](https://github.com/marrold/AMBEServer) and [DVSwitch/Analog_Bridge](https://github.com/DVSwitch/Analog_Bridge) implementations. This directory is licensed under GPL-2.0-or-later; the rest of DVHub Gateway retains its existing licence.
+Replace the example address with the private address assigned to your DV30 host.

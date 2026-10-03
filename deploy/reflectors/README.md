@@ -27,4 +27,4 @@ conference leg. Replace `__FREESTAR_MASTER_PASSWORD__` only on the server;
 never commit that network secret.
 
 P25 still requires a true IMBE to AMBE+2 conversion. It is intentionally
-kept out of this service and will use the separate hybrid DV30 design.
+kept out of this service and uses the separate hardware-only DV30 design.

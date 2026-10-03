@@ -19,10 +19,10 @@ A control and monitoring gateway for DMR, YSF and cross-mode digital-voice servi
 - **Fail-closed audio**: unavailable hardware returns an error rather than injecting non-AMBE bits
 
 ### Technical Highlights
-- WebSocket binary transport for PCM audio
-- AudioWorklet-based browser DSP (48kHz↔8kHz conversion)
-- Dead-man's switch (1.5s timeout)
-- TG/Reflector change interlock (800ms teardown)
+- Authenticated WebSocket control transport
+- Managed MMDVM-family services for all live voice paths
+- Single-talker conference arbitration
+- TG change interlock (800ms teardown)
 - Real-time traffic logging with DMR ID lookup
 
 ## 📋 Table of Contents
@@ -55,7 +55,7 @@ Access dashboard at `http://localhost:8080`
 
 ### Android remote
 
-The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls, DV30/DV3000 configuration, speaker RX and press-and-hold microphone TX.
+The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls and DV30/DV3000 configuration. Native app audio and PTT are disabled; voice uses the managed gateway services.
 
 **[Download the latest Yorkshire Link HUB APK](https://github.com/2E0LXY/dvhub-gateway/releases)**
 
@@ -70,14 +70,13 @@ The local APK is produced at `android/app/build/outputs/apk/debug/app-debug.apk`
 
 ### Remote DV30 / AMBE server
 
-The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it to the public gateway using the configured UDP route or a VPN. It supports hardware AMBE encode and decode and restricts requests to the configured gateway address.
+The self-contained Linux service and systemd installer are in [`ambe-server/`](ambe-server/). Run it beside the USB DV30 and connect it over a private LAN, WireGuard or Tailscale route. It supports hardware AMBE encode and decode and restricts requests to the configured gateway address.
 
 ## 📦 Installation
 
 ### Prerequisites
 - Go 1.21 or higher
 - Modern web browser (Chrome/Firefox/Safari)
-- Microphone access for TX
 
 ### From Source
 
@@ -93,8 +92,10 @@ sudo cp deploy/dvhub-gateway.service /etc/systemd/system/
 sudo install -d -o root -g dvhub -m 0750 /etc/dvhub
 sudo install -o root -g dvhub -m 0640 deploy/gateway.json.example /etc/dvhub/gateway.json
 sudo install -o root -g dvhub -m 0640 deploy/vocoder-targets.example /etc/dvhub/vocoder-targets.txt
+sudo install -o root -g root -m 0755 deploy/dvhub-set-ysf-identity /usr/local/sbin/dvhub-set-ysf-identity
 sudo install -o root -g root -m 0440 deploy/dvhub-gateway.sudoers /etc/sudoers.d/dvhub-gateway
 sudo visudo -cf /etc/sudoers.d/dvhub-gateway
+sudo usermod -aG dvhub caddy
 # Edit both /etc/dvhub files for this deployment before starting.
 sudo systemctl enable dvhub-gateway
 sudo systemctl start dvhub-gateway
@@ -133,7 +134,7 @@ When enabled, the supervisor restores the YSF2DMR service, the three DMR logins,
 
 The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, booking only TG23530 as the static simplex talkgroup. The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
 
-The dashboard and Android app use registered DMR ID `2351633` on session/node 7 with ESSID `02` for manual FreeSTAR operation. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using DMR ID `2344399`, ESSID `01`, and TG23530.
+The dashboard and Android app accept an optional registered DMR ID for session/node 7 with ESSID `02` for manual FreeSTAR operation; when blank they use the main configured DMR ID. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using its protected server-side identity and TG23530.
 
 Built-in DMR network DNS targets are configured in `dmrNetworkTargets` in `gateway.go`; master passwords and port overrides come from `/var/lib/dvgateway/DMR_Hosts.txt`. Site-specific public identity and vocoder addresses belong in `/etc/dvhub/gateway.json` and `/etc/dvhub/vocoder-targets.txt`; examples are under `deploy/`.
 
@@ -150,7 +151,7 @@ dmrNetworkTargets := map[string]string{
 ### Reverse Proxy (Caddy)
 
 ```caddy
-Use the repository `Caddyfile`, set `DVHUB_PASSWORD_HASH`, and keep the Go listener bound to `127.0.0.1:8080`. Caddy authenticates protected routes and overwrites the trusted authenticated-user header before proxying.
+Use the repository `Caddyfile`, set `DVHUB_PASSWORD_HASH`, and add the `caddy` service account to the `dvhub` group. On Linux the Go service listens only on `/run/dvhub/gateway.sock`; Caddy authenticates protected routes and proxies through that group-restricted socket.
 ```
 
 Auto HTTPS via Let's Encrypt - no certificates needed!
@@ -171,9 +172,8 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
 **All configuration controls:**
 
 1. **Gateway Control**
-   - Time-Out Timer (60s - 180s or disabled)
-   - DV30 Hardware Vocoder (IP:Port)
-   - Vocoder Mode Toggle (SW/HW)
+   - DV30/DV3000 hardware endpoint and topology
+   - Hardware-only, fail-closed vocoder status
 
 2. **Network Configuration**
    - Separate live-status card and indicator light for every configured network
@@ -184,73 +184,39 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
    - Password (for BrandMeister/FreeDMR)
    - Connect/Disconnect Button
 
-3. **Audio Pipeline Analytics**
-   - Worklet statistics
-   - Buffer depth monitoring
-   - Quality metrics
+3. **Audio service status**
+   - Managed converter-service health
+   - Hardware-vocoder heartbeat and counters
+   - Explicit native-audio capability state
 
 ### Basic Workflow
 
-1. **Configure Radio Info** (localStorage in browser console)
+1. **Configure your registered callsign and DMR ID**
 2. **Go to Administration Tab**
-3. **Select Network** (DMR - FreeStar UK / BrandMeister / YSF)
+3. **Select a DMR network**
 4. **Enter Talkgroup** (e.g., TG 235 for UK Wide)
 5. **Click "CONNECT LINK"**
-6. **Grant Microphone Permission** (browser prompt)
-7. **Press PTT Button** (or SPACEBAR) to transmit
+6. **Use the managed radio/reflector services for live voice**
 
-### PTT Controls
-
-- **Mouse**: Click and hold PTT button
-- **Keyboard**: Press and hold SPACEBAR
-- **Touch**: Touch and hold PTT button (mobile)
-
-**Safety Features:**
-- Time-Out Timer (configurable 60-180s)
-- Dead-Man's Switch (server-side 1.5s)
-- Auto-disconnect on tab close
+Browser and Android PTT/RX are disabled. The dashboard is a control and
+monitoring surface; it never constructs native DMR/YSF voice frames.
 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Browser (Client)                          │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐     │
-│  │ Microphone   │→│  AudioWorklet  │→│  WebSocket   │     │
-│  │ 48kHz PCM    │  │  Decimate 8kHz │  │  Binary      │     │
-│  └──────────────┘  └───────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-                            ↓ WebSocket (320 bytes/20ms)
-┌─────────────────────────────────────────────────────────────┐
-│                 Gateway (Go Server)                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Vocoder Selection                                    │  │
-│  │  ┌───────────────────┐    ┌──────────────────────┐  │  │
-│  │  │ Software AMBE+2   │    │ Hardware DV30/AMBE   │  │  │
-│  │  │ Pure Go Codec     │    │ UDP Client           │  │  │
-│  │  └───────────────────┘    └──────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Protocol Framers                                     │  │
-│  │  ┌──────────────┐        ┌──────────────────────┐   │  │
-│  │  │ DMR Framer   │        │ YSF Framer           │   │  │
-│  │  │ 55 bytes     │        │ 120 bytes            │   │  │
-│  │  └──────────────┘        └──────────────────────┘   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            ↓ UDP Packets
-              ┌─────────────────────────────────┐
-              │   DMR/YSF Network Servers       │
-              │   - BrandMeister                │
-              │   - FreeStar                    │
-              │   - FreeDMR                     │
-              │   - YSF Reflectors              │
-              └─────────────────────────────────┘
+Browser / Android
+  └─ authenticated HTTPS + WebSocket control
+       └─ Caddy
+            └─ /run/dvhub/gateway.sock
+                 ├─ dashboard, identities, status and service control
+                 ├─ YSFReflector / YSF2DMR
+                 ├─ P25 / NXDN / AllStar converters
+                 └─ bounded DV30/DV3000 hardware broker
 ```
 
 ### Voice pipeline
 
-The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardware is available. It returns an error when every hardware device is busy or offline. The legacy private DCT transform in the source is not AMBE+2 and is not used by live network or broker paths.
+The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardware is available. It returns an error when every hardware device is busy, late or offline. There is no private software codec or browser-native protocol framer in the runtime.
 
 ## 🔧 API Reference
 
@@ -273,26 +239,14 @@ The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardwa
 }
 ```
 
-#### Start Transmission
-```json
-{
-  "cmd": "tx_start",
-  "node_id": 1
-}
-```
-
-#### Stop Transmission
-```json
-{
-  "cmd": "tx_stop"
-}
-```
+`tx_start`, `tx_stop` and binary audio are rejected. Live voice uses the
+managed MMDVM-family services.
 
 #### Set Vocoder Mode
 ```json
 {
   "cmd": "set_vocoder",
-  "type": "hybrid"
+  "type": "hw"
 }
 ```
 
@@ -308,17 +262,10 @@ The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardwa
 
 Both exact endpoints must first be listed by the server administrator in `/etc/dvhub/vocoder-targets.txt`.
 
-### Binary Messages
+### Binary messages
 
-**TX Audio (Browser → Server)**
-- Format: Raw PCM Int16LE
-- Size: 320 bytes (160 samples @ 8kHz)
-- Frequency: 50 Hz (every 20ms)
-
-**RX Audio (Server → Browser)**
-- Format: Raw PCM Int16LE
-- Size: 320 bytes (160 samples @ 8kHz)
-- Decoded from AMBE frames
+Binary browser audio is deliberately unsupported and receives a `tx_status`
+denial. This prevents non-interoperable voice data from reaching live networks.
 
 ### Server Events (JSON)
 
@@ -354,51 +301,36 @@ Both exact endpoints must first be listed by the server administrator in `/etc/d
 
 **Solutions**:
 1. Check gateway is running: `systemctl status dvhub-gateway`
-2. Check port 8080 is accessible: `netstat -tlnp | grep 8080`
+2. Check `/run/dvhub/gateway.sock` exists and Caddy belongs to the `dvhub` group
 3. Check browser console for errors (F12)
-4. Verify firewall allows port 8080
+4. Validate Caddy and confirm the HTTPS route is reachable
 
-### No Audio RX
+### No browser/app audio
 
-**Symptoms**: Connected but no received audio
-
-**Solutions**:
-1. Check UDP listener: `netstat -ulnp | grep 62031`
-2. Verify network selection matches actual network
-3. Check browser console for AudioWorklet errors
-4. Ensure speakers/headphones connected
-
-### Microphone Permission Denied
-
-**Symptoms**: Cannot connect, audio error
-
-**Solutions**:
-1. Click lock icon in browser address bar
-2. Set microphone permission to "Allow"
-3. Refresh page (F5)
-4. For HTTPS: Ensure valid certificate
+This is expected. Native browser/app TX and RX are disabled. Check the
+appropriate YSFReflector, YSF2DMR, P25, NXDN or AllStar converter service for
+live voice faults.
 
 ### DV30 Hardware Vocoder Not Working
 
-**Symptoms**: Connected but poor audio quality
+**Symptoms**: Hardware heartbeat offline or a converter reports frame errors
 
 **Solutions**:
 1. Test the allowlisted DV30 server health: `printf '\x70' | nc -u -w1 dv30.example.net 2468`
 2. Verify IP:Port in Administration tab
 3. Check DV30 server is running
-4. Ensure network route to DV30 server
-5. Check firewall allows UDP to DV30 port
+4. Ensure the private LAN/VPN route to the DV30 server is available
+5. Check the exact private gateway address is allowlisted
 
 ### High Latency
 
 **Symptoms**: Delayed audio, choppy playback
 
 **Solutions**:
-1. Close other applications using CPU
-2. Use wired network connection
-3. Reduce browser tab count
-4. Check CPU load in dashboard (<10% normal)
-5. Ensure 48kHz audio sample rate supported
+1. Keep the hardware vocoder on the LAN or a low-latency private VPN
+2. Use a wired connection where practical
+3. Check host load and converter-service logs
+4. Confirm hardware replies fit inside the 40 ms frame deadline
 
 ### Console Logging
 
@@ -409,8 +341,7 @@ localStorage.setItem('debug', 'true');
 
 Log prefixes:
 - `[WS]` - WebSocket events
-- `[AUDIO]` - Audio pipeline
-- `[PTT]` - Transmit control
+- `[VOC]` - Hardware vocoder and broker events
 - `[TG]` - Talkgroup changes
 
 ## 📊 Performance

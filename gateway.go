@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -33,6 +32,8 @@ import (
 const BasePort = 62031
 const MaxUsers = 8
 const LocalMasterPort = 62030
+
+const gatewaySocketPath = "/run/dvhub/gateway.sock"
 
 const (
 	ysfConfigPath          = "/etc/ysfreflector/YSFReflector.ini"
@@ -87,7 +88,6 @@ type WSMessage struct {
 type UserSession struct {
 	ID                   int
 	Port                 int
-	IsActive             atomic.Bool
 	Mode                 string
 	Target               string
 	TG                   uint32
@@ -96,13 +96,9 @@ type UserSession struct {
 	AuthPassword         string
 	RequiresUserPassword bool
 	UseHWVocoder         atomic.Bool
-	HybridVocoder        atomic.Bool
 	DV30Addr             atomic.Value // primary *net.UDPAddr
 	DV30Addr2            atomic.Value // secondary *net.UDPAddr, reserved for D-Star -> DMR
 	DV30Count            atomic.Int32
-	FlushFEC             atomic.Bool
-	rtcBuffer            chan []byte
-	LastTXFrame          atomic.Int64
 	Callsign             string
 	DMRID                uint32
 	RepeaterID           uint32
@@ -114,8 +110,6 @@ type UserSession struct {
 	LastNetwork          time.Time
 	LastControl          time.Time
 	LastRejected         time.Time
-	SeqNo                uint8
-	StreamID             uint32
 	mu                   sync.RWMutex
 }
 
@@ -247,11 +241,6 @@ type Gateway struct {
 	sessions            [MaxUsers]*UserSession
 	clients             map[*WSClient]bool
 	mu                  sync.Mutex
-	txMu                sync.Mutex
-	txOwner             *WSClient
-	txNode              int
-	txDMRID             uint32
-	txCallsign          string
 	idDB                map[uint32]RadioIDInfo
 	dbMutex             sync.RWMutex
 	bridge              BridgeRoute
@@ -312,7 +301,6 @@ func main() {
 	}
 	go gw.updateRegistriesDaily()
 	go gw.updateYSFRegistryHourly()
-	go gw.txWatchdog()
 	go gw.broadcastYSFDashboardLoop()
 	go gw.runLocalDMRMaster()
 
@@ -322,17 +310,14 @@ func main() {
 			ID:         i + 1,
 			Port:       BasePort + i,
 			Mode:       "DMR",
-			rtcBuffer:  make(chan []byte, 50),
 			Callsign:   "M0ABC",
 			DMRID:      2350000,
 			RepeaterID: 2350000,
-			StreamID:   uint32(rand.Int31()) + 1,
 		}
 		gw.sessions[i].DV30Addr.Store(defaultDV30)
 		gw.sessions[i].DV30Addr2.Store((*net.UDPAddr)(nil))
 		gw.sessions[i].DV30Count.Store(1)
 		gw.sessions[i].UseHWVocoder.Store(true)
-		gw.sessions[i].HybridVocoder.Store(false)
 		go gw.runUDPListener(gw.sessions[i])
 	}
 	go gw.runLocalVocoderBroker("127.0.0.1:2461")
@@ -359,16 +344,39 @@ func main() {
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
 
 	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - hardware AMBE only")
-	fmt.Println("[SYS] Listening on :8080")
+	if runtime.GOOS == "windows" {
+		fmt.Println("[SYS] Listening on 127.0.0.1:8080")
+	} else {
+		fmt.Printf("[SYS] Listening on %s\n", gatewaySocketPath)
+	}
 	server := &http.Server{
-		Addr:              "127.0.0.1:8080",
 		Handler:           http.DefaultServeMux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20,
 	}
-	log.Fatal(server.ListenAndServe())
+	listener, err := gatewayHTTPListener()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Fatal(server.Serve(listener))
+}
+
+func gatewayHTTPListener() (net.Listener, error) {
+	if runtime.GOOS == "windows" {
+		return net.Listen("tcp", "127.0.0.1:8080")
+	}
+	_ = os.Remove(gatewaySocketPath)
+	listener, err := net.Listen("unix", gatewaySocketPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(gatewaySocketPath, 0660); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	return listener, nil
 }
 
 func loadGatewayConfig() GatewayConfig {
@@ -710,22 +718,6 @@ func probeDV30Health(target *net.UDPAddr) (dv30HealthPayload, float64, bool) {
 	return health, rtt, true
 }
 
-func (g *Gateway) txWatchdog() {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	for range ticker.C {
-		now := time.Now().UnixMilli()
-		for _, s := range g.sessions {
-			if s.IsActive.Load() {
-				last := s.LastTXFrame.Load()
-				if (now - last) > 1500 {
-					fmt.Printf("[DMS] Node %d TCP timeout. Forcing TX drop.\n", s.ID)
-					g.releaseTX(nil, s.ID, "timeout")
-				}
-			}
-		}
-	}
-}
-
 func (g *Gateway) broadcastText(msg []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -822,42 +814,6 @@ func (g *Gateway) acquireTX(client *WSClient, nodeID int) {
 	g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "node_id": nodeID, "reason": "Native browser TX is disabled; use the standards-compliant gateway path"})
 }
 
-func (g *Gateway) releaseTX(client *WSClient, nodeID int, reason string) bool {
-	g.txMu.Lock()
-	if g.txOwner == nil || (client != nil && g.txOwner != client) || (nodeID != 0 && g.txNode != nodeID) {
-		g.txMu.Unlock()
-		return false
-	}
-	releasedNode, callsign, dmrID := g.txNode, g.txCallsign, g.txDMRID
-	g.txOwner, g.txNode, g.txDMRID, g.txCallsign = nil, 0, 0, ""
-	g.txMu.Unlock()
-	if session := g.sessionByID(releasedNode); session != nil {
-		session.IsActive.Store(false)
-		session.FlushFEC.Store(true)
-	}
-	fmt.Printf("[PTT] Node %d TX STOP by %s (%d): %s\n", releasedNode, callsign, dmrID, reason)
-	g.broadcastTXStatus("idle", releasedNode, callsign, dmrID, reason)
-	return true
-}
-
-func (g *Gateway) broadcastTXStatus(state string, nodeID int, callsign string, dmrID uint32, reason string) {
-	msg, _ := json.Marshal(map[string]any{"type": "tx_status", "state": state, "node_id": nodeID, "callsign": callsign, "dmr_id": dmrID, "reason": reason})
-	g.broadcastText(msg)
-	if nodeID > 0 && (state == "active" || state == "idle") {
-		stateMsg, _ := json.Marshal(map[string]any{"type": "state_sync", "node_id": nodeID, "active": state == "active"})
-		g.broadcastText(stateMsg)
-	}
-}
-
-func (g *Gateway) clientOwnsTX(client *WSClient) (*UserSession, bool) {
-	g.txMu.Lock()
-	defer g.txMu.Unlock()
-	if g.txOwner != client || g.txNode == 0 {
-		return nil, false
-	}
-	return g.sessionByID(g.txNode), true
-}
-
 func (g *Gateway) registeredDMRID(id uint32) bool {
 	if id == 0 {
 		return false
@@ -866,13 +822,6 @@ func (g *Gateway) registeredDMRID(id uint32) bool {
 	_, found := g.idDB[id]
 	g.dbMutex.RUnlock()
 	return found
-}
-
-func (g *Gateway) webTXActive() bool {
-	g.txMu.Lock()
-	active := g.txOwner != nil
-	g.txMu.Unlock()
-	return active
 }
 
 func (g *Gateway) reportRejectedDMR(id uint32) {
@@ -885,7 +834,8 @@ func (g *Gateway) reportRejectedDMR(id uint32) {
 	}
 	g.rejectedDMR[id] = now
 	g.rejectedMu.Unlock()
-	g.broadcastTXStatus("denied", 0, "", id, "Source DMR ID is not in the RadioID database")
+	msg, _ := json.Marshal(map[string]any{"type": "tx_status", "state": "denied", "dmr_id": id, "reason": "Source DMR ID is not in the RadioID database"})
+	g.broadcastText(msg)
 }
 
 func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -943,6 +893,10 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 				target, targetOK := req["target"].(string)
 				active, _ := req["active"].(bool)
 				if !nodeOK || !modeOK || !targetOK {
+					continue
+				}
+				if mode != "DMR" {
+					g.sendClientText(client, map[string]any{"type": "network_status", "node_id": nodeValue, "state": "error", "message": "Native YSF sessions are unavailable; use the managed YSFReflector/YSF2DMR service"})
 					continue
 				}
 				nodeID := int(nodeValue)
@@ -1050,18 +1004,15 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 				}
 				g.acquireTX(client, int(nodeValue))
 			} else if req["cmd"] == "tx_stop" {
-				if !g.releaseTX(client, 0, "released") {
-					g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "This client does not own the transmitter"})
-				}
+				g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "Native browser TX is disabled"})
 			} else if req["cmd"] == "set_vocoder" {
 				vocType, _ := req["type"].(string)
-				if vocType != "hw" && vocType != "hybrid" {
-					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "Software AMBE is unavailable; select hardware or hardware failover"})
+				if vocType != "hw" {
+					g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "error", "reason": "Only hardware AMBE is available"})
 					continue
 				}
 				for _, s := range g.sessions {
 					s.UseHWVocoder.Store(true)
-					s.HybridVocoder.Store(false)
 				}
 				fmt.Printf("[VOC] Switched to hardware-only vocoder\n")
 				g.sendClientText(client, map[string]any{"type": "vocoder_status", "state": "active", "mode": "hw"})
@@ -1093,18 +1044,9 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 		} else if msgType == websocket.BinaryMessage {
-			if s, owns := g.clientOwnsTX(client); owns && s.IsActive.Load() {
-				s.LastTXFrame.Store(time.Now().UnixMilli())
-				select {
-				case s.rtcBuffer <- msg:
-				default:
-					s.FlushFEC.Store(true)
-				}
-			}
+			g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "Native browser audio is unavailable"})
 		}
 	}
-	g.releaseTX(client, 0, "operator disconnected")
-
 	g.mu.Lock()
 	delete(g.clients, client)
 	g.mu.Unlock()
@@ -1578,13 +1520,6 @@ func (g *Gateway) forwardBridgeFrameFrom(sourceNode int, sourceTG uint32, source
 	if len(data) < 55 || string(data[:4]) != "DMRD" {
 		return
 	}
-	// A browser/app operator holding the global TX lease takes precedence.
-	// The DMR audio can still be received locally, but it must not be
-	// retransmitted onto another network at the same time.
-	if g.webTXActive() {
-		return
-	}
-
 	g.bridgeMu.Lock()
 	route := &g.bridge
 	if !route.Active {
@@ -1757,7 +1692,6 @@ func (g *Gateway) beginDMRLogin(s *UserSession) {
 }
 
 func (g *Gateway) disconnectNetwork(s *UserSession, message string) {
-	g.releaseTX(nil, s.ID, "network disconnected")
 	s.mu.RLock()
 	connected := s.AuthStage == authRunning
 	repeaterID := s.RepeaterID
@@ -1943,15 +1877,8 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 	s.mu.Unlock()
 	go g.maintainDMRConnection(s)
 
-	// TX path: Browser PCM -> Vocoder -> Framer -> Network
-	go func() {
-		for range s.rtcBuffer {
-			// Native browser TX is deliberately fail-closed. Cross-mode voice is
-			// handled by the standards-compliant MMDVM gateway services.
-		}
-	}()
-
-	// RX path: Network -> Decoder -> Browser PCM
+	// Network control, traffic metadata and bridge forwarding. Browser audio is
+	// deliberately unavailable; standards-compliant managed services carry voice.
 	for {
 		bufPtr := udpPool.Get().(*[]byte)
 		buf := *bufPtr
@@ -1971,22 +1898,20 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 
 		if err == nil && n > 10 {
 			// Parse protocol frame
-			var pcmData []byte
 			var sourceID uint32
-			var sourceName string
 			var dmrMeta DMRTrafficMeta
 
 			s.mu.RLock()
 			mode := s.Mode
 			expected := s.RemoteAddr
 			s.mu.RUnlock()
-			if (mode == "DMR" || mode == "YSF") && (expected == nil || remoteAddr == nil || !expected.IP.Equal(remoteAddr.IP) || expected.Port != remoteAddr.Port) {
+			if mode == "DMR" && (expected == nil || remoteAddr == nil || !expected.IP.Equal(remoteAddr.IP) || expected.Port != remoteAddr.Port) {
 				udpPool.Put(bufPtr)
 				continue
 			}
 
 			if mode == "DMR" {
-				pcmData, sourceID = parseDMRFrame(buf[:n])
+				sourceID = parseDMRSource(buf[:n])
 				if sourceID > 0 && !g.registeredDMRID(sourceID) {
 					g.reportRejectedDMR(sourceID)
 					udpPool.Put(bufPtr)
@@ -2003,354 +1928,20 @@ func (g *Gateway) runUDPListener(s *UserSession) {
 					continue
 				}
 				g.forwardBridgeFrame(s, buf[:n])
-			} else if mode == "YSF" {
-				pcmData, sourceName = parseYSFFrame(buf[:n])
-			}
-
-			// Decode voice to PCM
-			if len(pcmData) > 0 {
-				var decodedPCM []byte
-				if s.UseHWVocoder.Load() {
-					targets := sessionVocoderTargets(s)
-					if len(targets) > 0 {
-						decodedPCM = decodeVocoderFrame(pcmData, targets, s.HybridVocoder.Load())
-					}
-				}
-				// Send to all connected browsers
-				if len(decodedPCM) > 0 {
-					g.mu.Lock()
-					for client := range g.clients {
-						client.enqueue(WSMessage{messageType: websocket.BinaryMessage, data: decodedPCM})
-					}
-					g.mu.Unlock()
-				}
 			}
 
 			// Traffic logging is independent of browser audio decode.
-			if sourceID > 0 || sourceName != "" {
+			if sourceID > 0 {
 				s.mu.RLock()
 				selectedTarget := s.Target
 				s.mu.RUnlock()
-				g.pushTrafficWS(s.ID, mode, selectedTarget, sourceID, sourceName, dmrMeta)
+				g.pushTrafficWS(s.ID, mode, selectedTarget, sourceID, "", dmrMeta)
 			}
 
 			_ = remoteAddr
 		}
 		udpPool.Put(bufPtr)
 	}
-}
-
-// ============================================================================
-// LEGACY NON-INTEROPERABLE AUDIO TRANSFORM
-// ============================================================================
-
-// This codec is not AMBE/AMBE+2 and is retained only for offline compatibility
-// tests. It is never selected by the network or local-vocoder paths.
-
-// AMBE+2 vocoder parameters
-const (
-	ambeFrameSamples = 160 // 20ms @ 8kHz
-	ambeFrameBytes   = 9   // 72 bits
-	ambeSubframes    = 4   // 4x 40-sample subframes
-	ambeBands        = 56  // Spectral bands
-	ambeHarmonics    = 16  // Max harmonics
-)
-
-// Pre-computed DCT-II matrix for spectral analysis (56 bands)
-var dctMatrix [ambeBands][ambeFrameSamples]float64
-
-// Pre-computed Hamming window for spectral smoothing
-var hammingWindow [ambeFrameSamples]float64
-
-// Quantization tables for AMBE+2 (derived from DVSI specification)
-var (
-	// Fundamental frequency codebook (7 bits = 128 entries)
-	fundamentalCodebook = [128]float64{
-		50.0, 52.5, 55.0, 57.5, 60.0, 62.5, 65.0, 67.5, 70.0, 72.5, 75.0, 77.5, 80.0, 82.5, 85.0, 87.5,
-		90.0, 92.5, 95.0, 97.5, 100.0, 102.5, 105.0, 107.5, 110.0, 112.5, 115.0, 117.5, 120.0, 122.5, 125.0, 127.5,
-		130.0, 135.0, 140.0, 145.0, 150.0, 155.0, 160.0, 165.0, 170.0, 175.0, 180.0, 185.0, 190.0, 195.0, 200.0, 205.0,
-		210.0, 215.0, 220.0, 225.0, 230.0, 235.0, 240.0, 245.0, 250.0, 255.0, 260.0, 265.0, 270.0, 275.0, 280.0, 285.0,
-		290.0, 295.0, 300.0, 305.0, 310.0, 315.0, 320.0, 325.0, 330.0, 335.0, 340.0, 345.0, 350.0, 355.0, 360.0, 365.0,
-		370.0, 375.0, 380.0, 385.0, 390.0, 395.0, 400.0, 405.0, 410.0, 415.0, 420.0, 425.0, 430.0, 435.0, 440.0, 445.0,
-		450.0, 460.0, 470.0, 480.0, 490.0, 500.0, 510.0, 520.0, 530.0, 540.0, 550.0, 560.0, 570.0, 580.0, 590.0, 600.0,
-		610.0, 620.0, 630.0, 640.0, 650.0, 660.0, 670.0, 680.0, 690.0, 700.0, 710.0, 720.0, 730.0, 740.0, 750.0, 760.0,
-	}
-
-	// Voicing decision codebook (1 bit per band = 56 bits total, packed into 7 bytes)
-	// 1 = voiced (harmonic), 0 = unvoiced (noise)
-
-	// Spectral magnitude codebook (8 bits per band group)
-	magnitudeCodebook = [256]float64{
-		0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5,
-		8.0, 8.5, 9.0, 9.5, 10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0, 13.5, 14.0, 14.5, 15.0, 15.5,
-		16.0, 16.5, 17.0, 17.5, 18.0, 18.5, 19.0, 19.5, 20.0, 20.5, 21.0, 21.5, 22.0, 22.5, 23.0, 23.5,
-		24.0, 24.5, 25.0, 25.5, 26.0, 26.5, 27.0, 27.5, 28.0, 28.5, 29.0, 29.5, 30.0, 30.5, 31.0, 31.5,
-		32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0, 41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0,
-		48.0, 49.0, 50.0, 51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0, 61.0, 62.0, 63.0,
-		64.0, 66.0, 68.0, 70.0, 72.0, 74.0, 76.0, 78.0, 80.0, 82.0, 84.0, 86.0, 88.0, 90.0, 92.0, 94.0,
-		96.0, 98.0, 100.0, 102.0, 104.0, 106.0, 108.0, 110.0, 112.0, 114.0, 116.0, 118.0, 120.0, 122.0, 124.0, 126.0,
-		128.0, 132.0, 136.0, 140.0, 144.0, 148.0, 152.0, 156.0, 160.0, 164.0, 168.0, 172.0, 176.0, 180.0, 184.0, 188.0,
-		192.0, 196.0, 200.0, 204.0, 208.0, 212.0, 216.0, 220.0, 224.0, 228.0, 232.0, 236.0, 240.0, 244.0, 248.0, 252.0,
-		256.0, 264.0, 272.0, 280.0, 288.0, 296.0, 304.0, 312.0, 320.0, 328.0, 336.0, 344.0, 352.0, 360.0, 368.0, 376.0,
-		384.0, 392.0, 400.0, 408.0, 416.0, 424.0, 432.0, 440.0, 448.0, 456.0, 464.0, 472.0, 480.0, 488.0, 496.0, 504.0,
-		512.0, 528.0, 544.0, 560.0, 576.0, 592.0, 608.0, 624.0, 640.0, 656.0, 672.0, 688.0, 704.0, 720.0, 736.0, 752.0,
-		768.0, 784.0, 800.0, 816.0, 832.0, 848.0, 864.0, 880.0, 896.0, 912.0, 928.0, 944.0, 960.0, 976.0, 992.0, 1008.0,
-		1024.0, 1056.0, 1088.0, 1120.0, 1152.0, 1184.0, 1216.0, 1248.0, 1280.0, 1312.0, 1344.0, 1376.0, 1408.0, 1440.0, 1472.0, 1504.0,
-		1536.0, 1568.0, 1600.0, 1632.0, 1664.0, 1696.0, 1728.0, 1760.0, 1792.0, 1824.0, 1856.0, 1888.0, 1920.0, 1952.0, 1984.0, 2016.0,
-	}
-)
-
-func init() {
-	// Pre-compute DCT-II matrix for analysis
-	for k := 0; k < ambeBands; k++ {
-		for n := 0; n < ambeFrameSamples; n++ {
-			dctMatrix[k][n] = math.Cos(math.Pi * float64(k) * (float64(n) + 0.5) / float64(ambeFrameSamples))
-		}
-	}
-
-	// Pre-compute Hamming window
-	for i := 0; i < ambeFrameSamples; i++ {
-		hammingWindow[i] = 0.54 - 0.46*math.Cos(2.0*math.Pi*float64(i)/float64(ambeFrameSamples-1))
-	}
-}
-
-// encodeMBE converts PCM into DVHub's legacy private 9-byte representation.
-func encodeMBE(pcm []byte) []byte {
-	// Convert PCM bytes to float64 samples
-	samples := make([]float64, ambeFrameSamples)
-	for i := 0; i < ambeFrameSamples; i++ {
-		s := int16(binary.LittleEndian.Uint16(pcm[i*2:]))
-		samples[i] = float64(s) / 32768.0
-	}
-
-	// Apply Hamming window
-	windowed := make([]float64, ambeFrameSamples)
-	for i := 0; i < ambeFrameSamples; i++ {
-		windowed[i] = samples[i] * hammingWindow[i]
-	}
-
-	// Compute spectral coefficients via DCT
-	spectrum := make([]float64, ambeBands)
-	for k := 0; k < ambeBands; k++ {
-		sum := 0.0
-		for n := 0; n < ambeFrameSamples; n++ {
-			sum += windowed[n] * dctMatrix[k][n]
-		}
-		spectrum[k] = sum * 2.0 / float64(ambeFrameSamples)
-	}
-
-	// Estimate fundamental frequency (pitch detection)
-	f0 := estimatePitch(samples)
-	f0Index := quantizeFundamental(f0)
-
-	// Compute harmonic magnitudes
-	magnitudes := make([]float64, ambeHarmonics)
-	for h := 0; h < ambeHarmonics; h++ {
-		harmonic := f0 * float64(h+1)
-		bin := int(harmonic * float64(ambeFrameSamples) / 8000.0)
-		if bin < ambeBands {
-			magnitudes[h] = math.Abs(spectrum[bin])
-		}
-	}
-
-	// Voicing decision (simple energy threshold per band)
-	voicing := uint64(0)
-	for k := 0; k < ambeBands && k < 56; k++ {
-		energy := math.Abs(spectrum[k])
-		if energy > 0.1 { // Voiced
-			voicing |= (1 << uint(k))
-		}
-	}
-
-	// Quantize magnitudes (8 groups of 2 harmonics each)
-	magIndices := make([]byte, 8)
-	for g := 0; g < 8; g++ {
-		h := g * 2
-		if h < ambeHarmonics {
-			avgMag := (magnitudes[h] + magnitudes[min(h+1, ambeHarmonics-1)]) / 2.0
-			magIndices[g] = quantizeMagnitude(avgMag * 1000.0) // Scale for quantizer
-		}
-	}
-
-	// Pack into 72 bits (9 bytes)
-	bits := make([]byte, 9)
-
-	// Bits 0-6: Fundamental frequency (7 bits)
-	bits[0] = f0Index
-
-	// Bits 7-14: First magnitude group (8 bits)
-	bits[0] |= (magIndices[0] & 0x01) << 7
-	bits[1] = (magIndices[0] >> 1) & 0x7F
-
-	// Bits 15-22: Second magnitude group (8 bits)
-	bits[1] |= (magIndices[1] & 0x01) << 7
-	bits[2] = (magIndices[1] >> 1) & 0x7F
-
-	// Bits 23-30: Third magnitude group (8 bits)
-	bits[2] |= (magIndices[2] & 0x01) << 7
-	bits[3] = (magIndices[2] >> 1) & 0x7F
-
-	// Bits 31-38: Fourth magnitude group (8 bits)
-	bits[3] |= (magIndices[3] & 0x01) << 7
-	bits[4] = (magIndices[3] >> 1) & 0x7F
-
-	// Bits 39-46: Voicing bitmap (8 bits - first 8 bands)
-	bits[4] |= byte((voicing & 0x01) << 7)
-	bits[5] = byte((voicing >> 1) & 0x7F)
-
-	// Bits 47-54: Voicing continuation (8 bits - bands 8-15)
-	bits[5] |= byte(((voicing >> 8) & 0x01) << 7)
-	bits[6] = byte((voicing >> 9) & 0x7F)
-
-	// Bits 55-62: Fifth magnitude group (8 bits)
-	bits[6] |= (magIndices[4] & 0x01) << 7
-	bits[7] = (magIndices[4] >> 1) & 0x7F
-
-	// Bits 63-70: Sixth magnitude group (8 bits)
-	bits[7] |= (magIndices[5] & 0x01) << 7
-	bits[8] = (magIndices[5] >> 1) & 0x7F
-
-	// Bit 71: Parity/reserved
-	bits[8] |= 0x80
-
-	return bits
-}
-
-// decodeMBE decodes DVHub's legacy private representation, not AMBE+2.
-func decodeMBE(ambe []byte) []byte {
-	if len(ambe) < 9 {
-		return make([]byte, 320)
-	}
-
-	// Unpack 72 bits
-	f0Index := ambe[0] & 0x7F
-
-	magIndices := make([]byte, 8)
-	magIndices[0] = ((ambe[0] >> 7) & 0x01) | ((ambe[1] & 0x7F) << 1)
-	magIndices[1] = ((ambe[1] >> 7) & 0x01) | ((ambe[2] & 0x7F) << 1)
-	magIndices[2] = ((ambe[2] >> 7) & 0x01) | ((ambe[3] & 0x7F) << 1)
-	magIndices[3] = ((ambe[3] >> 7) & 0x01) | ((ambe[4] & 0x7F) << 1)
-	magIndices[4] = ((ambe[6] >> 7) & 0x01) | ((ambe[7] & 0x7F) << 1)
-	magIndices[5] = ((ambe[7] >> 7) & 0x01) | ((ambe[8] & 0x7F) << 1)
-
-	voicing := uint64(ambe[4]>>7) | (uint64(ambe[5]&0x7F) << 1) | (uint64(ambe[5]>>7) << 8) | (uint64(ambe[6]&0x7F) << 9)
-
-	// Dequantize fundamental frequency
-	f0 := fundamentalCodebook[f0Index]
-
-	// Dequantize magnitudes
-	magnitudes := make([]float64, ambeHarmonics)
-	for g := 0; g < 6; g++ {
-		h := g * 2
-		if h < ambeHarmonics {
-			mag := magnitudeCodebook[magIndices[g]] / 1000.0
-			magnitudes[h] = mag
-			if h+1 < ambeHarmonics {
-				magnitudes[h+1] = mag
-			}
-		}
-	}
-
-	// Synthesize spectrum
-	spectrum := make([]float64, ambeFrameSamples)
-	for h := 0; h < ambeHarmonics; h++ {
-		harmonic := f0 * float64(h+1)
-		bin := int(harmonic * float64(ambeFrameSamples) / 8000.0)
-		if bin < len(spectrum) {
-			// Check voicing for this harmonic's band
-			voiced := (voicing & (1 << uint(min(bin, 55)))) != 0
-			if voiced {
-				// Harmonic synthesis
-				phase := 2.0 * math.Pi * harmonic / 8000.0
-				for n := 0; n < ambeFrameSamples; n++ {
-					spectrum[n] += magnitudes[h] * math.Sin(phase*float64(n))
-				}
-			} else {
-				// Noise synthesis
-				for n := 0; n < ambeFrameSamples; n++ {
-					spectrum[n] += magnitudes[h] * (rand.Float64()*2.0 - 1.0) * 0.3
-				}
-			}
-		}
-	}
-
-	// Apply smoothing
-	for i := 1; i < ambeFrameSamples-1; i++ {
-		spectrum[i] = 0.25*spectrum[i-1] + 0.5*spectrum[i] + 0.25*spectrum[i+1]
-	}
-
-	// Convert to PCM
-	pcm := make([]byte, 320)
-	for i := 0; i < ambeFrameSamples; i++ {
-		sample := spectrum[i]
-
-		// Clamp to [-1.0, 1.0]
-		if sample > 1.0 {
-			sample = 1.0
-		} else if sample < -1.0 {
-			sample = -1.0
-		}
-
-		// Convert to int16
-		s := int16(sample * 32767.0)
-		binary.LittleEndian.PutUint16(pcm[i*2:], uint16(s))
-	}
-
-	return pcm
-}
-
-// estimatePitch: Autocorrelation-based pitch detection
-func estimatePitch(samples []float64) float64 {
-	minPeriod := 8000 / 500 // 500 Hz max
-	maxPeriod := 8000 / 50  // 50 Hz min
-
-	maxCorr := 0.0
-	bestLag := minPeriod
-
-	for lag := minPeriod; lag <= maxPeriod && lag < len(samples)/2; lag++ {
-		corr := 0.0
-		for i := 0; i < len(samples)-lag; i++ {
-			corr += samples[i] * samples[i+lag]
-		}
-		if corr > maxCorr {
-			maxCorr = corr
-			bestLag = lag
-		}
-	}
-
-	return 8000.0 / float64(bestLag)
-}
-
-// quantizeFundamental: Find nearest fundamental frequency in codebook
-func quantizeFundamental(f0 float64) byte {
-	minDist := math.Abs(f0 - fundamentalCodebook[0])
-	minIdx := 0
-
-	for i := 1; i < len(fundamentalCodebook); i++ {
-		dist := math.Abs(f0 - fundamentalCodebook[i])
-		if dist < minDist {
-			minDist = dist
-			minIdx = i
-		}
-	}
-
-	return byte(minIdx)
-}
-
-// quantizeMagnitude: Find nearest magnitude in codebook
-func quantizeMagnitude(mag float64) byte {
-	minDist := math.Abs(mag - magnitudeCodebook[0])
-	minIdx := 0
-
-	for i := 1; i < len(magnitudeCodebook); i++ {
-		dist := math.Abs(mag - magnitudeCodebook[i])
-		if dist < minDist {
-			minDist = dist
-			minIdx = i
-		}
-	}
-
-	return byte(minIdx)
 }
 
 // ============================================================================
@@ -2364,10 +1955,7 @@ var dv30TargetCursor atomic.Uint64
 
 func vocoderMode(session *UserSession) string {
 	if !session.UseHWVocoder.Load() {
-		return "software"
-	}
-	if session.HybridVocoder.Load() {
-		return "hybrid"
+		return "disabled"
 	}
 	return "hardware"
 }
@@ -2397,38 +1985,28 @@ func orderedVocoderTargets(targets []*net.UDPAddr) []*net.UDPAddr {
 	return ordered
 }
 
-func acquireVocoderTarget(target *net.UDPAddr, hybrid bool) (func(), bool) {
-	value, _ := dv30HardwareSlots.LoadOrStore(target.String(), make(chan struct{}, 1))
+func acquireVocoderTarget(target *net.UDPAddr) (func(), bool) {
+	value, _ := dv30HardwareSlots.LoadOrStore(target.String(), make(chan struct{}, 4))
 	slot := value.(chan struct{})
-	if hybrid {
-		select {
-		case slot <- struct{}{}:
-			return func() { <-slot }, true
-		default:
-			return nil, false
-		}
-	}
-	timer := time.NewTimer(250 * time.Millisecond)
-	defer timer.Stop()
 	select {
 	case slot <- struct{}{}:
 		return func() { <-slot }, true
-	case <-timer.C:
+	default:
 		return nil, false
 	}
 }
 
-// Every gateway stream and local cross-mode converter uses the same endpoint
-// slots. With two configured devices, frames are spread across both. Hybrid
-// mode uses another allowlisted hardware device when a slot is busy or offline.
-// It never substitutes a non-AMBE software bitstream.
-func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr, hybrid bool) []byte {
+// Every local cross-mode converter uses the same bounded endpoint slots. With
+// two configured devices, frames are spread across both. The total hardware
+// attempt is capped to one 40 ms deadline and never falls back to fake AMBE.
+func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr) []byte {
+	deadline := time.Now().Add(40 * time.Millisecond)
 	for _, target := range orderedVocoderTargets(targets) {
-		release, acquired := acquireVocoderTarget(target, hybrid)
+		release, acquired := acquireVocoderTarget(target)
 		if !acquired {
 			continue
 		}
-		encoded, ok := encodeDV30Hardware(pcm, target)
+		encoded, ok := encodeDV30HardwareUntil(pcm, target, deadline)
 		release()
 		if ok {
 			dv30HardwareFrames.Add(1)
@@ -2439,13 +2017,14 @@ func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr, hybrid bool) []byte 
 	return nil
 }
 
-func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr, hybrid bool) []byte {
+func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr) []byte {
+	deadline := time.Now().Add(40 * time.Millisecond)
 	for _, target := range orderedVocoderTargets(targets) {
-		release, acquired := acquireVocoderTarget(target, hybrid)
+		release, acquired := acquireVocoderTarget(target)
 		if !acquired {
 			continue
 		}
-		decoded, ok := decodeDV30Hardware(ambe, target)
+		decoded, ok := decodeDV30HardwareUntil(ambe, target, deadline)
 		release()
 		if ok {
 			dv30HardwareFrames.Add(1)
@@ -2468,17 +2047,35 @@ func (g *Gateway) runLocalVocoderBroker(address string) {
 		return
 	}
 	defer conn.Close()
-	fmt.Printf("[VOC] Shared hybrid broker listening on udp://%s\n", address)
+	fmt.Printf("[VOC] Shared hardware broker listening on udp://%s\n", address)
+	type brokerJob struct {
+		request []byte
+		peer    *net.UDPAddr
+	}
+	jobs := make(chan brokerJob, 16)
+	for worker := 0; worker < 4; worker++ {
+		go func() {
+			for job := range jobs {
+				_, _ = conn.WriteToUDP(g.handleLocalVocoderRequest(job.request), job.peer)
+			}
+		}()
+	}
 	buffer := make([]byte, 2048)
 	for {
 		n, peer, readErr := conn.ReadFromUDP(buffer)
 		if readErr != nil || peer == nil || n < 1 {
 			continue
 		}
-		request := append([]byte(nil), buffer[:n]...)
-		go func() {
-			_, _ = conn.WriteToUDP(g.handleLocalVocoderRequest(request), peer)
-		}()
+		job := brokerJob{request: append([]byte(nil), buffer[:n]...), peer: peer}
+		select {
+		case jobs <- job:
+		default:
+			channel := byte(0)
+			if n > 1 {
+				channel = buffer[1]
+			}
+			_, _ = conn.WriteToUDP([]byte{0x7f, channel}, peer)
+		}
 	}
 }
 
@@ -2492,7 +2089,7 @@ func (g *Gateway) handleLocalVocoderRequest(request []byte) []byte {
 		if !useHardware {
 			return []byte{0x7f, request[1]}
 		}
-		encoded := encodeVocoderFrame(request[2:], targets, false)
+		encoded := encodeVocoderFrame(request[2:], targets)
 		if len(encoded) != 9 {
 			return []byte{0x7f, request[1]}
 		}
@@ -2501,14 +2098,14 @@ func (g *Gateway) handleLocalVocoderRequest(request []byte) []byte {
 		if !useHardware {
 			return []byte{0x7f, request[1]}
 		}
-		decoded := decodeVocoderFrame(request[2:], targets, false)
+		decoded := decodeVocoderFrame(request[2:], targets)
 		if len(decoded) != 320 {
 			return []byte{0x7f, request[1]}
 		}
 		response = append([]byte{0x64, request[1]}, decoded...)
 	case len(request) > 0 && request[0] == 0x70:
 		health, _ := json.Marshal(map[string]any{
-			"status": "ok", "product": "DVHub hybrid broker", "version": "2.1",
+			"status": "ok", "product": "DVHub hardware broker", "version": "2.1",
 			"encoded": dv30HardwareFrames.Load(), "decoded": dv30HardwareFrames.Load(),
 			"errors": dv30HardwareFailures.Load(), "hardware_devices": len(targets), "software_fallbacks": 0,
 		})
@@ -2623,7 +2220,7 @@ func acquireDV30Socket() *net.UDPConn {
 	select {
 	case conn := <-dv30Sockets:
 		return conn
-	case <-time.After(300 * time.Millisecond):
+	default:
 		return nil
 	}
 }
@@ -2634,7 +2231,10 @@ func nextDV30Channel() byte {
 	return byte(dv30RequestID.Add(1))
 }
 
-func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int) []byte {
+func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int, deadline time.Time) []byte {
+	if time.Until(deadline) <= 0 {
+		return nil
+	}
 	conn := acquireDV30Socket()
 	if conn == nil {
 		return nil
@@ -2652,7 +2252,6 @@ func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte
 	if _, err := conn.WriteToUDP(request, target); err != nil {
 		return nil
 	}
-	deadline := time.Now().Add(250 * time.Millisecond)
 	conn.SetReadDeadline(deadline)
 	resp := make([]byte, 512)
 	for {
@@ -2675,6 +2274,10 @@ func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
 }
 
 func encodeDV30Hardware(pcm []byte, target *net.UDPAddr) ([]byte, bool) {
+	return encodeDV30HardwareUntil(pcm, target, time.Now().Add(40*time.Millisecond))
+}
+
+func encodeDV30HardwareUntil(pcm []byte, target *net.UDPAddr, deadline time.Time) ([]byte, bool) {
 	if len(pcm) != 320 {
 		return nil, false
 	}
@@ -2682,7 +2285,7 @@ func encodeDV30Hardware(pcm []byte, target *net.UDPAddr) ([]byte, bool) {
 	request := make([]byte, 2+len(pcm))
 	request[0], request[1] = 0x61, channel
 	copy(request[2:], pcm)
-	if response := exchangeDV30(request, target, 0x62, channel, 11); response != nil {
+	if response := exchangeDV30(request, target, 0x62, channel, 11, deadline); response != nil {
 		return append([]byte(nil), response[2:11]...), true
 	}
 	return nil, false
@@ -2696,6 +2299,10 @@ func decodeDV30(ambe []byte, target *net.UDPAddr, _ int) []byte {
 }
 
 func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
+	return decodeDV30HardwareUntil(ambe, target, time.Now().Add(40*time.Millisecond))
+}
+
+func decodeDV30HardwareUntil(ambe []byte, target *net.UDPAddr, deadline time.Time) ([]byte, bool) {
 	if len(ambe) != 9 {
 		return nil, false
 	}
@@ -2703,7 +2310,7 @@ func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
 	request := make([]byte, 2+len(ambe))
 	request[0], request[1] = 0x63, channel
 	copy(request[2:], ambe)
-	if response := exchangeDV30(request, target, 0x64, channel, 322); response != nil {
+	if response := exchangeDV30(request, target, 0x64, channel, 322, deadline); response != nil {
 		return append([]byte(nil), response[2:322]...), true
 	}
 	return nil, false
@@ -2713,24 +2320,11 @@ func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
 // DMR PROTOCOL FRAMER (ETSI TS 102 361)
 // ============================================================================
 
-func buildDMRFrame(voice []byte, srcID, dstID, repeaterID uint32, seqNo uint8, streamID uint32, lastVoice []byte) []byte {
-	// DMR voice needs LC, sync/EMB, interleave and FEC. The old byte-copy
-	// implementation was not protocol-correct, so native construction is
-	// disabled rather than emitting malformed RF/network traffic.
-	_, _, _, _, _, _, _ = voice, srcID, dstID, repeaterID, seqNo, streamID, lastVoice
-	return nil
-}
-
-func parseDMRFrame(data []byte) ([]byte, uint32) {
+func parseDMRSource(data []byte) uint32 {
 	if len(data) < 55 || string(data[:4]) != "DMRD" {
-		return nil, 0
+		return 0
 	}
-	srcID := uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
-
-	// A DMRD burst contains three interleaved and FEC-protected AMBE frames.
-	// Returning raw bytes as AMBE was corrupt; extraction is delegated to the
-	// standards-compliant MMDVM gateway path.
-	return nil, srcID
+	return uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
 }
 
 func parseDMRTrafficMeta(data []byte) DMRTrafficMeta {
@@ -2770,27 +2364,6 @@ func parseDMRTrafficMeta(data []byte) DMRTrafficMeta {
 		}
 	}
 	return meta
-}
-
-// ============================================================================
-// YSF PROTOCOL FRAMER (C4FM)
-// ============================================================================
-
-func buildYSFFrame(voice []byte, callsign string, lastVoice []byte) []byte {
-	// YSF network frames require the YSFD header, encoded FICH, interleave/FEC
-	// and valid CRC. Native construction is disabled; YSF2DMR handles it.
-	_, _, _ = voice, callsign, lastVoice
-	return nil
-}
-
-func parseYSFFrame(data []byte) ([]byte, string) {
-	if len(data) < 35 || string(data[:4]) != "YSFD" {
-		return nil, ""
-	}
-	// The 35-byte network header is recognised for source reporting only. FICH,
-	// convolution/Golay decode and VCH deinterleave belong in YSF2DMR/MMDVM.
-	callsign := strings.TrimSpace(string(data[14:24]))
-	return nil, callsign
 }
 
 // ============================================================================
@@ -3273,7 +2846,7 @@ func loadYorkshireConferenceConfig() (YorkshireConferenceConfig, error) {
 	if !validCallsign.MatchString(config.Callsign) || config.YSFDMRID < 1000000 || config.YSFDMRID > 9999999 ||
 		config.BridgeDMRID < 1000000 || config.BridgeDMRID > 9999999 || config.YSFDMRID == config.BridgeDMRID ||
 		config.BridgeESSID > 99 || strings.TrimSpace(config.BrandMeisterPassword) == "" || strings.TrimSpace(config.TGIFPassword) == "" {
-		return config, fmt.Errorf("Yorkshire conference configuration is incomplete")
+		return config, fmt.Errorf("yorkshire conference configuration is incomplete")
 	}
 	return config, nil
 }
@@ -4158,14 +3731,11 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"nodes":                nodes,
 		"conference_permanent": permanent, "ysf_reflector": serviceActive("ysfreflector.service"),
+		"capabilities": map[string]any{
+			"native_tx": false, "native_rx": false, "native_ysf_sessions": false,
+			"hardware_vocoder": true, "vocoder_modes": []string{"hw"},
+		},
 	})
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func jsonUint32(value any, maximum uint32) (uint32, bool) {

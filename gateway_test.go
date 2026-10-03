@@ -290,13 +290,7 @@ func TestJSONUint32RejectsWrapAndFractions(t *testing.T) {
 	}
 }
 
-func TestNonCompliantNativeFramersFailClosed(t *testing.T) {
-	if frame := buildDMRFrame(make([]byte, 9), 2344399, 23530, 234439901, 1, 42, nil); frame != nil {
-		t.Fatal("native DMR framer emitted a packet")
-	}
-	if frame := buildYSFFrame(make([]byte, 9), "2E0LXY", nil); frame != nil {
-		t.Fatal("native YSF framer emitted a packet")
-	}
+func TestHardwareVocoderOutageFailsClosed(t *testing.T) {
 	request := append([]byte{0x61, 0x01}, make([]byte, 320)...)
 	gateway := &Gateway{}
 	gateway.sessions[0] = &UserSession{}
@@ -304,6 +298,55 @@ func TestNonCompliantNativeFramersFailClosed(t *testing.T) {
 	gateway.sessions[0].DV30Addr2.Store((*net.UDPAddr)(nil))
 	if response := gateway.handleLocalVocoderRequest(request); len(response) != 2 || response[0] != 0x7f {
 		t.Fatalf("hardware outage did not fail closed: %x", response)
+	}
+}
+
+func TestVocoderTargetConcurrencyIsBounded(t *testing.T) {
+	target := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 49991}
+	releases := make([]func(), 0, 4)
+	for i := 0; i < 4; i++ {
+		release, ok := acquireVocoderTarget(target)
+		if !ok {
+			t.Fatalf("hardware slot %d was unexpectedly unavailable", i+1)
+		}
+		releases = append(releases, release)
+	}
+	if release, ok := acquireVocoderTarget(target); ok {
+		release()
+		t.Fatal("fifth concurrent request exceeded the endpoint bound")
+	}
+	for _, release := range releases {
+		release()
+	}
+}
+
+func TestVocoderFailoverSharesOneFrameDeadline(t *testing.T) {
+	listeners := make([]*net.UDPConn, 0, 2)
+	targets := make([]*net.UDPAddr, 0, 2)
+	for i := 0; i < 2; i++ {
+		listener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		listeners = append(listeners, listener)
+		targets = append(targets, listener.LocalAddr().(*net.UDPAddr))
+		go func(conn *net.UDPConn) {
+			buffer := make([]byte, 512)
+			_, _, _ = conn.ReadFromUDP(buffer)
+		}(listener)
+	}
+	defer func() {
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+	}()
+
+	started := time.Now()
+	if encoded := encodeVocoderFrame(make([]byte, 320), targets); encoded != nil {
+		t.Fatal("silent hardware endpoints unexpectedly returned audio")
+	}
+	if elapsed := time.Since(started); elapsed > 70*time.Millisecond {
+		t.Fatalf("hardware failover exceeded the frame deadline: %v", elapsed)
 	}
 }
 
@@ -320,26 +363,5 @@ func TestYSFGatewayEndpointAndIdentityEnrichment(t *testing.T) {
 	identities := gateway.ysfGatewayIdentities("2e0lxy")
 	if len(identities) != 2 || identities[0].DMRID != 2344399 || identities[1].DMRID != 2344999 {
 		t.Fatalf("unexpected YSF identities: %#v", identities)
-	}
-}
-
-func TestTXLeaseCanOnlyBeReleasedByOwner(t *testing.T) {
-	owner := &WSClient{}
-	other := &WSClient{}
-	session := &UserSession{ID: 1}
-	session.IsActive.Store(true)
-	gateway := &Gateway{clients: make(map[*WSClient]bool), txOwner: owner, txNode: 1, txDMRID: 2344399, txCallsign: "2E0LXY"}
-	gateway.sessions[0] = session
-	if gateway.releaseTX(other, 0, "not owner") {
-		t.Fatal("a different client released the TX lease")
-	}
-	if !session.IsActive.Load() {
-		t.Fatal("non-owner release stopped the transmitter")
-	}
-	if !gateway.releaseTX(owner, 0, "released") {
-		t.Fatal("owner could not release TX lease")
-	}
-	if session.IsActive.Load() || gateway.txOwner != nil {
-		t.Fatal("TX lease remained active after owner release")
 	}
 }

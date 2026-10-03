@@ -1,5 +1,5 @@
 [Unit]
-Description=Yorkshire Link HUB P25 to DMR TG23530 hybrid DV30 bridge
+Description=Yorkshire Link HUB P25 to DMR TG23530 hardware DV30 bridge
 Documentation=https://github.com/ShaYmez/MMDVM_CM
 Wants=network-online.target
 After=network-online.target p25reflector.service dvhub-gateway.service

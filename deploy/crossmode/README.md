@@ -24,7 +24,7 @@ secret must never be committed.
 The hub runs native ASL3/Asterisk node `530471`; the retired `IAX_Bridge`
 client is no longer part of the deployment. Patched `USRP2DMR` exchanges audio
 with ASL3 and connects to FreeSTAR TG23530 with hotspot suffix 04. Its AMBE
-traffic goes to the gateway's loopback hybrid broker at `127.0.0.1:2461`, so
-browser, P25 and AllStar frames share both configured DV30 devices and use the
-software codec whenever the hardware pool is busy or unavailable. Network
+traffic goes to the gateway's loopback hardware broker at `127.0.0.1:2461`, so
+P25 and AllStar converters share the bounded DV30/DV3000 pool. Frames fail
+closed whenever the hardware pool is busy or unavailable. Network
 passwords remain only in protected server-side configuration.

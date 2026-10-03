@@ -61,10 +61,17 @@ Add the following override, then save it:
 EnvironmentFile=/etc/caddy/dvhub.env
 ```
 
-The tracked Caddyfile serves both `ai.2e0lxy.uk` and the IP address
-`194.146.49.25`, proxies only to the loopback gateway at `127.0.0.1:8080`,
-and leaves only the read-only YSF page and feed public. Current Caddy and
-Let's Encrypt releases can obtain the required short-lived IP certificate.
+The tracked Caddyfile proxies protected requests to
+`/run/dvhub/gateway.sock` and leaves only the read-only YSF page and feed
+public. Add the Caddy service account to the socket-owning group before restart:
+
+```bash
+sudo usermod -aG dvhub caddy
+sudo systemctl restart dvhub-gateway caddy
+```
+
+The hostname and optional IP-address site are deployment-specific. Verify that
+the active certificate contains every address you publish.
 
 ### 3. Validate Config
 ```bash
@@ -335,7 +342,7 @@ dvhub.example.com {
 **nginx:**
 ```nginx
 location /ws {
-    proxy_pass http://127.0.0.1:8080;
+    proxy_pass http://unix:/run/dvhub/gateway.sock;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -364,7 +371,7 @@ dvhub.example.com {
         X-Content-Type-Options "nosniff"
         X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "geolocation=(), microphone=(self), camera=()"
+        Permissions-Policy "geolocation=(), microphone=(), camera=()"
         -Server
     }
     

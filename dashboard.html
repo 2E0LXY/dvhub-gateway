@@ -317,10 +317,10 @@
                     </div>
                     <div class="flex items-center gap-2">
                         <span class="status-indicator status-idle" id="audio-indicator"></span>
-                        <span class="text-[9px] text-gray-400" id="mic-status-text">AUDIO</span>
+                        <span class="text-[9px] text-gray-400" id="mic-status-text">NATIVE AUDIO OFF</span>
                     </div>
-                    <div class="mode-badge" id="vocoder-mode">SW VOCODER</div>
-                    <button id="btn-ptt" class="btn-cyber" style="padding: 12px 24px; font-size: 11px;">PTT [DISABLED]</button>
+                    <div class="mode-badge" id="vocoder-mode">HW VOCODER</div>
+                    <button id="btn-ptt" class="btn-cyber" disabled aria-disabled="true" title="Browser transmission is unavailable; use a managed radio or bridge service." style="padding: 12px 24px; font-size: 11px; opacity: .55; cursor: not-allowed;">BROWSER PTT UNAVAILABLE</button>
                 </div>
             </div>
         </div>
@@ -483,7 +483,7 @@
             </div>
 
             <div class="section-card">
-                <div class="section-header"><span>YSF Reflector Control</span><span class="text-gray-500">194.146.49.25:42000</span></div>
+                <div class="section-header"><span>YSF Reflector Control</span><span class="text-gray-500">Configured host · UDP 42000</span></div>
                 <div class="p-3 flex flex-wrap gap-2">
                     <button class="btn-cyber" onclick="controlYSF('start')">START</button>
                     <button class="btn-cyber" onclick="controlYSF('restart')">RESTART</button>
@@ -533,7 +533,7 @@
                         <div class="bg-black border border-gray-800 p-3 rounded text-[9px] space-y-2">
                             <div class="data-row"><span class="data-label">Advertised Name</span><span class="data-value" id="ysf-identity-name">YORKSHIRELINK</span></div>
                             <div class="data-row"><span class="data-label">Description</span><span class="data-value" id="ysf-identity-description">YORKSHIRE HUB</span></div>
-                            <div class="data-row"><span class="data-label">Endpoint</span><span class="data-value">194.146.49.25:42000 UDP</span></div>
+                            <div class="data-row"><span class="data-label">Endpoint</span><span class="data-value">Configured public host · UDP 42000</span></div>
                             <div class="data-row"><span class="data-label">Country Prefix</span><span class="data-value">GB- (added by DVRef)</span></div>
                         </div>
                         <div class="bg-black border border-gray-800 p-3 rounded text-[9px] space-y-2">
@@ -593,8 +593,8 @@
                             <div class="flex items-center justify-between"><span class="text-green-400 font-bold">Yorkshire Link HUB YSF</span><span id="network-led-ysf" class="status-indicator status-err"></span></div>
                             <div class="text-[8px] text-gray-500">Reflector service: <span id="network-state-ysf" class="text-gray-300">CHECKING</span></div>
                             <div class="text-[8px] text-gray-500">Reflector: <span class="text-white">23530 · UDP 42000</span></div>
-                            <div class="text-[8px] text-gray-600">Local YSF client connection</div>
-                            <button class="btn-cyber w-full" onclick="selectNetworkCard(6)">CONFIGURE</button>
+                            <div class="text-[8px] text-gray-600">Managed YSFReflector / YSF2DMR services</div>
+                            <button class="btn-cyber w-full" onclick="switchTab('ysf')">OPEN YSF STATUS</button>
                         </div>
                     </div>
                 </div>
@@ -630,7 +630,7 @@
                                 <option value="DVStick30">DVStick30 / DV30</option>
                                 <option value="DV3000">DV3000 / ThumbDV</option>
                             </select>
-                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="zx3de49.glddns.com:2468" onchange="updateAdminParams()">
+                            <input type="text" class="input-cyber" id="inp-dv30-a" placeholder="Private DV30 host:port" onchange="updateAdminParams()">
                         </div>
 
                         <div id="dv30-device-b" class="hidden">
@@ -645,31 +645,23 @@
                         
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Vocoder Mode</label>
-                            <div class="flex gap-2">
-                                <button id="btn-voc-sw" onclick="setVocoder('sw')" class="btn-cyber flex-1">SOFTWARE</button>
-                                <button id="btn-voc-hybrid" onclick="setVocoder('hybrid')" class="btn-cyber active flex-1">HYBRID</button>
-                                <button id="btn-voc-hw" onclick="setVocoder('hw')" class="btn-cyber flex-1">HARDWARE</button>
-                            </div>
-                            <p class="text-[8px] text-gray-600 mt-1">Hybrid shares one or two DV30 devices across browser, P25 and AllStar audio, using software for busy or unavailable hardware.</p>
+                            <button id="btn-voc-hw" onclick="setVocoder('hw')" class="btn-cyber active w-full">HARDWARE AMBE ONLY</button>
+                            <p class="text-[8px] text-gray-600 mt-1">Fail-closed: no software AMBE substitute and no browser TX/RX. Configure only an allowlisted private DV30/DV3000 endpoint.</p>
                         </div>
                     </div>
                 </div>
                 
                 <!-- Audio Pipeline -->
                 <div class="section-card">
-                    <div class="section-header">Audio Pipeline Analytics</div>
+                    <div class="section-header">Audio Pipeline Status</div>
                     <div class="p-4">
                         <div class="bg-black border border-gray-800 p-3 rounded space-y-1 font-mono text-[9px]">
-                            <div class="text-green-400 font-bold">WORKLET KERNEL TRACE:</div>
-                            <div>Module: <span class="text-green-400">dv-processor</span></div>
-                            <div>TX Path: 48kHz → 8kHz Decimation (1:6)</div>
-                            <div>RX Path: 8kHz → 48kHz Interpolation</div>
-                            <div>Buffer: <span id="buf-depth" class="font-bold text-white">0</span> / 20 frames (400ms cap)</div>
-                            <div class="mt-2 pt-2 border-t border-gray-800">
-                                <div>Vocoder: <span class="text-green-400">AMBE+2</span></div>
-                                <div>Quality: <span class="text-green-400">85-90%</span></div>
-                                <div>Latency: <span class="text-green-400">&lt;30ms TX</span> / <span class="text-green-400">&lt;100ms RX</span></div>
-                            </div>
+                            <div class="text-amber-400 font-bold">MANAGED SERVICE AUDIO ONLY</div>
+                            <div>Browser TX/RX: <span class="text-gray-400">DISABLED</span></div>
+                            <div>Native DMR/YSF framing: <span class="text-gray-400">DISABLED</span></div>
+                            <div>Hardware broker: <span class="text-green-400">DV30 / DV3000</span></div>
+                            <div>Cross-mode audio is handled by the installed MMDVM converter services.</div>
+                            <span id="buf-depth" class="hidden">0</span>
                         </div>
                     </div>
                 </div>
@@ -681,12 +673,11 @@
                         <div>
                             <label class="text-[9px] text-gray-400 uppercase block mb-2">Target Network</label>
                             <select class="input-cyber" id="sel-network" onchange="syncNetworkSelection(true)">
-                                <option value="7" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false" data-manual-dmrid="2351633">DMR - FreeSTAR System X UK (manual)</option>
+                                <option value="7" data-proto="DMR" data-net="FreeSTAR-SystemX-UK" data-deftg="23426" data-req-pass="false">DMR - FreeSTAR System X UK (manual)</option>
                                 <option value="2" data-proto="DMR" data-net="BrandMeister-UK-2341" data-deftg="235" data-req-pass="true">DMR - BrandMeister UK 2341</option>
                                 <option value="3" data-proto="DMR" data-net="DMRPlus-FreeSTAR" data-deftg="23426" data-req-pass="true">DMR+ - IPSC2 FreeSTAR</option>
                                 <option value="4" data-proto="DMR" data-net="TGIF" data-deftg="116" data-req-pass="true">DMR - TGIF Network</option>
                                 <option value="5" data-proto="DMR" data-net="FreeDMR-UK" data-deftg="2350" data-req-pass="false">DMR - FreeDMR UK</option>
-                                <option value="6" data-proto="YSF" data-net="127.0.0.1:42000" data-deftg="0" data-req-pass="false">YSF - Yorkshire Link HUB</option>
                             </select>
                         </div>
 
@@ -705,6 +696,10 @@
                                     <label class="text-[9px] text-gray-400 uppercase block mb-2">ESSID</label>
                                     <input type="number" class="input-cyber" id="inp-essid" min="0" max="99" value="0" placeholder="0-99" oninput="updateDMRIdentity()">
                                 </div>
+                            </div>
+                            <div>
+                                <label class="text-[9px] text-gray-400 uppercase block mb-2">Manual FreeSTAR DMR ID (optional)</label>
+                                <input type="number" class="input-cyber" id="inp-manual-dmr-id" min="1000000" max="9999999" placeholder="Defaults to the DMR ID above" oninput="updateDMRIdentity()">
                             </div>
                         </div>
                         
@@ -778,7 +773,7 @@
                         </div>
                         <div class="text-yellow-400">FreeSTAR and TGIF are separate direct legs. Payload fingerprinting, stream suppression and one-talker locking protect the conference from loops and collisions.</div>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <div><label class="text-gray-500 uppercase block mb-1">YSF leg DMR ID</label><input class="input-cyber" id="yorkshire-ysf-id" inputmode="numeric" value="2351633" maxlength="7"></div>
+                            <div><label class="text-gray-500 uppercase block mb-1">YSF leg DMR ID</label><input class="input-cyber" id="yorkshire-ysf-id" inputmode="numeric" placeholder="Registered 7-digit DMR ID" maxlength="7"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">DMR bridge DMR ID</label><input class="input-cyber" id="yorkshire-bridge-id" inputmode="numeric" value="2344399" maxlength="7"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">Bridge ESSID</label><input class="input-cyber" id="yorkshire-essid" inputmode="numeric" value="01" maxlength="2"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">FreeSTAR master credential</label><div class="input-cyber text-green-400">Loaded from DMR_Hosts.txt</div></div>
@@ -797,7 +792,7 @@
                 <div class="section-card lg:col-span-3">
                     <div class="section-header">YSF Client Access</div>
                     <div class="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-[9px]">
-                        <div><div class="text-gray-500 uppercase mb-1">Server</div><div class="text-green-400">194.146.49.25</div></div>
+                        <div><div class="text-gray-500 uppercase mb-1">Server</div><div class="text-green-400">Configured gateway host</div></div>
                         <div><div class="text-gray-500 uppercase mb-1">UDP Port</div><div class="text-green-400">42000</div></div>
                         <div><div class="text-gray-500 uppercase mb-1">Reflector</div><div class="text-green-400">Yorkshire Link HUB</div></div>
                         <div class="md:col-span-3 text-gray-400">Pi-Star: add a custom YSF reflector with this host and port. Windows/Android: use DroidStar in YSF mode and enter the same host and port.</div>
@@ -816,7 +811,7 @@
                         <div class="border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">P25 Reflector</span><span id="p25-service-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">DMR Conference Bridge</span><span id="p25-bridge-status" class="chip chip-idle">CHECKING</span></div>
-                            <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
+                            <div class="data-row"><span class="data-label">Server</span><span class="data-value">Configured gateway host</span></div>
                             <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">41000</span></div>
                             <div class="data-row"><span class="data-label">Room / TG</span><span class="data-value">23530</span></div>
                             <div class="text-gray-500">P25 IMBE is converted to DMR AMBE+2 through the dedicated DV30 hardware path.</div>
@@ -824,7 +819,7 @@
                         <div class="border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">NXDN Reflector</span><span id="nxdn-service-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">DMR Conference Bridge</span><span id="nxdn-bridge-status" class="chip chip-idle">CHECKING</span></div>
-                            <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
+                            <div class="data-row"><span class="data-label">Server</span><span class="data-value">Configured gateway host</span></div>
                             <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">41400</span></div>
                             <div class="data-row"><span class="data-label">Talkgroup</span><span class="data-value">23530</span></div>
                             <div class="text-gray-500">NXDN TG23530 is permanently cross-connected to the DMR/YSF conference without a PCM transcoding generation.</div>
@@ -832,7 +827,7 @@
                         <div class="md:col-span-2 border border-green-900/60 p-3 space-y-2">
                             <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">Yorkshire Link DMR Master</span><span id="local-master-status" class="chip chip-idle">CHECKING</span></div>
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                                <div class="data-row"><span class="data-label">Server</span><span class="data-value">194.146.49.25</span></div>
+                                <div class="data-row"><span class="data-label">Server</span><span class="data-value">Configured gateway host</span></div>
                                 <div class="data-row"><span class="data-label">UDP Port</span><span class="data-value">62030</span></div>
                                 <div class="data-row"><span class="data-label">Conference TG</span><span class="data-value">23530</span></div>
                             </div>
@@ -911,8 +906,8 @@
         let isTransmitting = false;
         let totSeconds = 90;
         let totTimerObj = null;
-        let activeVocoder = 'hybrid';
-        let dv30Config = { count: 1, typeA: 'DVStick30', addrA: 'zx3de49.glddns.com:2468', typeB: 'DVStick30', addrB: '' };
+        let activeVocoder = 'hw';
+        let dv30Config = { count: 1, typeA: 'DVStick30', addrA: '', typeB: 'DVStick30', addrB: '' };
         let trafficBuffer = [];
         const TRAFFIC_RETENTION_MS = 5 * 60 * 1000;
         let callsignLookupTimer = null;
@@ -931,8 +926,7 @@
             'BrandMeister-UK-2341': [[235, 'UK Call'], [2350, 'United Kingdom'], [2351, 'Chat 1'], [2352, 'Chat 2'], [2353, 'Chat 3'], [2354, 'Ireland'], [2355, 'Scotland'], [2356, 'Wales'], [2357, 'Isle of Man'], [2358, 'London'], [2359, 'Kernow'], [91, 'Worldwide'], [92, 'Europe'], [9990, 'Private-call Parrot'], [4000, 'Disconnect']],
             'DMRPlus-FreeSTAR': [[23426, 'FreeSTAR UK'], [2350, 'UK ChatterBOX'], [2351, 'CQ-UK'], [2352, 'UK ChatterBOX 2'], [2355, 'Scotland'], [2356, 'Wales'], [23530, 'Yorkshire Link'], [9990, 'Echo'], [4000, 'Disconnect']],
             'TGIF': [[116, 'United Kingdom'], [121, 'UK 1 to 1 Chats'], [111, 'Europe'], [113, 'Worldwide English'], [124, 'BlueDV / DudeStar'], [4000, 'Disconnect']],
-            'FreeDMR-UK': [[2350, 'UK Central'], [2351, 'Chat 1'], [2352, 'Chat 2'], [2353, 'Chat 3'], [2354, 'Chat 4'], [2355, 'Chat 5'], [2356, 'Chat 6'], [2357, 'Isle of Man'], [2358, 'London'], [2359, 'Kernow & Jersey'], [23530, 'Yorkshire Link'], [91, 'Worldwide'], [4000, 'Disconnect']],
-            '127.0.0.1:42000': [[0, 'YSF Reflector']]
+            'FreeDMR-UK': [[2350, 'UK Central'], [2351, 'Chat 1'], [2352, 'Chat 2'], [2353, 'Chat 3'], [2354, 'Chat 4'], [2355, 'Chat 5'], [2356, 'Chat 6'], [2357, 'Isle of Man'], [2358, 'London'], [2359, 'Kernow & Jersey'], [23530, 'Yorkshire Link'], [91, 'Worldwide'], [4000, 'Disconnect']]
         };
         const embeddedTalkgroupNetworks = new Set(Object.keys(window.DVHUB_TALKGROUPS || {}));
         Object.entries(window.DVHUB_TALKGROUPS || {}).forEach(([network, groups]) => {
@@ -1458,28 +1452,13 @@
             if (tab === 'admin') updateYSFIdentity();
         }
 
-        function setVocoder(mode) {
-            if (mode === 'hw' || mode === 'hybrid') {
-                updateAdminParams();
-                if (!validVocoderAddress(dv30Config.addrA)) {
-                    alert('Enter a valid Device 1 hostname/address and optional UDP port before enabling hardware vocoding.');
-                    return;
-                }
-                if (dv30Config.count === 2 && !validVocoderAddress(dv30Config.addrB)) {
-                    alert('Two-device mode requires a valid address for Device 2.');
-                    return;
-                }
-            }
-            activeVocoder = mode;
-            localStorage.setItem('dv_hub_voc', mode);
-            
-            document.getElementById('btn-voc-sw').classList.toggle('active', mode === 'sw');
-            document.getElementById('btn-voc-hybrid').classList.toggle('active', mode === 'hybrid');
-            document.getElementById('btn-voc-hw').classList.toggle('active', mode === 'hw');
-            document.getElementById('vocoder-mode').innerText = mode === 'sw' ? 'SW VOCODER' : mode === 'hybrid' ? 'HYBRID VOCODER' : 'HW VOCODER';
-            document.getElementById('svc-vocoder').innerText = mode === 'sw' ? 'SOFTWARE' : mode === 'hybrid' ? 'DV30 + SW' : 'HARDWARE';
-            
-            if(ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: 'set_vocoder', type: mode }));
+        function setVocoder() {
+            activeVocoder = 'hw';
+            localStorage.setItem('dv_hub_voc', 'hw');
+            document.getElementById('btn-voc-hw').classList.add('active');
+            document.getElementById('vocoder-mode').innerText = 'HW VOCODER';
+            document.getElementById('svc-vocoder').innerText = 'HARDWARE';
+            if(ws && ws.readyState === 1) ws.send(JSON.stringify({ cmd: 'set_vocoder', type: 'hw' }));
         }
 
         function validVocoderAddress(value) {
@@ -1526,8 +1505,8 @@
             document.getElementById('network-login-message').textContent = reqPass
                 ? 'This network requires your user/hotspot credential; the master entry is selected from DMR_Hosts.txt.'
                 : (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK'
-                    ? 'Manual FreeSTAR uses registered DMR ID 2351633 with ESSID 02; the selected TG is applied as the only static talkgroup.'
-                    : (linkState.proto === 'DMR' ? 'Master-server password is loaded securely from DMR_Hosts.txt.' : 'No DMR password is required for the local YSF reflector.'));
+                    ? 'Manual FreeSTAR uses the optional manual DMR ID (or your main DMR ID) with ESSID 02; the selected TG is the only static talkgroup.'
+                    : 'Master-server password is loaded securely from DMR_Hosts.txt.');
             updateBrandMeisterAPIStatus(linkState.net === 'BrandMeister-UK-2341');
 
             const isDMR = linkState.proto === 'DMR';
@@ -1684,8 +1663,10 @@
         }
 
         function selectedDMRID() {
-            const option = document.getElementById('sel-network').selectedOptions[0];
-            return Number(option?.getAttribute('data-manual-dmrid')) || config.dmrID;
+            if (linkState.id === 7 && linkState.net === 'FreeSTAR-SystemX-UK') {
+                return Number(document.getElementById('inp-manual-dmr-id').value) || config.dmrID;
+            }
+            return config.dmrID;
         }
 
         function selectedRepeaterID() {
@@ -1725,6 +1706,7 @@
             localStorage.setItem('dv_hub_callsign', config.callsign);
             localStorage.setItem('dv_hub_dmrid', config.dmrID);
             localStorage.setItem('dv_hub_essid', config.essid);
+            localStorage.setItem('dv_hub_manual_dmrid', document.getElementById('inp-manual-dmr-id').value.trim());
             saveLinkState();
         }
 
@@ -1983,7 +1965,8 @@
                 addrB: document.getElementById('inp-dv30-b').value.trim()
             };
             localStorage.setItem('dv_hub_dv30_config', JSON.stringify(dv30Config));
-            if(ws && ws.readyState === 1) {
+            localStorage.setItem('dv_hub_manual_dmrid', document.getElementById('inp-manual-dmr-id').value.trim());
+            if(ws && ws.readyState === 1 && validVocoderAddress(dv30Config.addrA)) {
                 ws.send(JSON.stringify({ cmd: 'set_dv30', count: dv30Config.count, addr1: dv30Config.addrA, addr2: dv30Config.count === 2 ? dv30Config.addrB : '' }));
             }
         }
@@ -2218,8 +2201,10 @@
                             options: linkState.options
                         }));
                     }
-                    ws.send(JSON.stringify({ cmd: 'set_vocoder', type: activeVocoder }));
-                    ws.send(JSON.stringify({ cmd: 'set_dv30', count: dv30Config.count, addr1: dv30Config.addrA, addr2: dv30Config.count === 2 ? dv30Config.addrB : '' }));
+                    ws.send(JSON.stringify({ cmd: 'set_vocoder', type: 'hw' }));
+                    if (validVocoderAddress(dv30Config.addrA)) {
+                        ws.send(JSON.stringify({ cmd: 'set_dv30', count: dv30Config.count, addr1: dv30Config.addrA, addr2: dv30Config.count === 2 ? dv30Config.addrB : '' }));
+                    }
                 };
                 
                 ws.onclose = () => {
@@ -2458,15 +2443,6 @@
             console.log('[PTT] TX stopped');
         }
 
-        document.getElementById('btn-ptt').addEventListener('mousedown', startTX);
-        document.getElementById('btn-ptt').addEventListener('mouseup', stopTX);
-        document.getElementById('btn-ptt').addEventListener('mouseleave', stopTX);
-        document.getElementById('btn-ptt').addEventListener('touchstart', startTX);
-        document.getElementById('btn-ptt').addEventListener('touchend', stopTX);
-
-        document.addEventListener('keydown', (e) => { if (e.code === 'Space' && !e.repeat && e.target.tagName !== 'INPUT') { e.preventDefault(); startTX(); } });
-        document.addEventListener('keyup', (e) => { if (e.code === 'Space' && e.target.tagName !== 'INPUT') { e.preventDefault(); stopTX(); } });
-
         window.onload = () => {
             // Initialize system info
             pollSystemStats();
@@ -2480,6 +2456,8 @@
             refreshNetworkOverview();
             document.getElementById('inp-callsign').value = config.callsign;
             document.getElementById('inp-dmr-id').value = config.dmrID;
+            document.getElementById('inp-manual-dmr-id').value = localStorage.getItem('dv_hub_manual_dmrid') || '';
+            document.getElementById('yorkshire-ysf-id').value = localStorage.getItem('dv_hub_manual_dmrid') || (config.dmrID || '');
             document.getElementById('inp-essid').value = config.essid;
             scheduleCallsignLookup();
             populateBridgeTalkgroups('a');
@@ -2536,9 +2514,6 @@
             } else if (legacyDV30) {
                 dv30Config.addrA = legacyDV30;
             }
-            if (!dv30Config.addrA || /(?:^|\/)ai\.2e0lxy\.uk(?::2468)?$/i.test(dv30Config.addrA)) {
-                dv30Config.addrA = 'zx3de49.glddns.com:2468';
-            }
             document.getElementById('sel-dv30-count').value = String(dv30Config.count === 2 ? 2 : 1);
             document.getElementById('sel-dv30-type-a').value = dv30Config.typeA || 'DVStick30';
             document.getElementById('inp-dv30-a').value = dv30Config.addrA || '';
@@ -2546,18 +2521,7 @@
             document.getElementById('inp-dv30-b').value = dv30Config.addrB || '';
             updateVocoderTopology(false);
 
-            const savedVoc = localStorage.getItem('dv_hub_voc');
-            const savedHardwareReady = validVocoderAddress(dv30Config.addrA) && (dv30Config.count !== 2 || validVocoderAddress(dv30Config.addrB));
-            const hardwareMigrationDone = localStorage.getItem('dv_hub_hw_ready_v1') === '1';
-            const hybridMigrationDone = localStorage.getItem('dv_hub_hybrid_v1') === '1';
-            if (!hybridMigrationDone && savedHardwareReady) {
-                localStorage.setItem('dv_hub_hybrid_v1', '1');
-                setVocoder('hybrid');
-            } else if (!hardwareMigrationDone && savedHardwareReady) {
-                localStorage.setItem('dv_hub_hw_ready_v1', '1');
-                setVocoder('hybrid');
-            } else if ((savedVoc === 'hw' || savedVoc === 'hybrid') && !savedHardwareReady) setVocoder('sw');
-            else if (savedVoc) setVocoder(savedVoc);
+            setVocoder('hw');
             
             // Connect WebSocket
             connectWS();
