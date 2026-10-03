@@ -55,13 +55,16 @@ if [[ "$target_sha" == "$current_sha" ]]; then
 fi
 
 verify_checks() {
-    TARGET_SHA="$target_sha" REPO_SLUG="$REPO_SLUG" REQUIRED_CHECKS="$REQUIRED_CHECKS" python3 - <<'PY'
+    DVHUB_CHECK_SHA="$target_sha" \
+        DVHUB_CHECK_REPO="$REPO_SLUG" \
+        DVHUB_CHECK_NAMES="$REQUIRED_CHECKS" \
+        python3 - <<'PY'
 import json
 import os
 import sys
 import urllib.request
 
-url = f"https://api.github.com/repos/{os.environ['REPO_SLUG']}/commits/{os.environ['TARGET_SHA']}/check-runs"
+url = f"https://api.github.com/repos/{os.environ['DVHUB_CHECK_REPO']}/commits/{os.environ['DVHUB_CHECK_SHA']}/check-runs"
 request = urllib.request.Request(url, headers={
     "Accept": "application/vnd.github+json",
     "User-Agent": "Yorkshire-Link-HUB-deployer/1.0",
@@ -77,14 +80,14 @@ for run in payload.get("check_runs", []):
     runs.setdefault(run.get("name", ""), (run.get("status"), run.get("conclusion")))
 
 failed = []
-for name in os.environ["REQUIRED_CHECKS"].split():
+for name in os.environ["DVHUB_CHECK_NAMES"].split():
     status, conclusion = runs.get(name, (None, None))
     if status != "completed" or conclusion != "success":
         failed.append(f"{name}={status or 'missing'}/{conclusion or 'missing'}")
 if failed:
     print("CI gate not satisfied: " + ", ".join(failed), file=sys.stderr)
     sys.exit(1)
-print("CI gate passed: " + ", ".join(os.environ["REQUIRED_CHECKS"].split()))
+print("CI gate passed: " + ", ".join(os.environ["DVHUB_CHECK_NAMES"].split()))
 PY
 }
 
