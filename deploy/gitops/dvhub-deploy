@@ -18,6 +18,12 @@ readonly DEPLOYER="/usr/local/sbin/dvhub-deploy"
 readonly DEPLOY_UNIT="/etc/systemd/system/dvhub-deploy.service"
 readonly DEPLOY_TIMER="/etc/systemd/system/dvhub-deploy.timer"
 readonly REQUIRED_CHECKS="${DVHUB_REQUIRED_CHECKS:-verify build}"
+readonly DEPLOY_CADDY="${DVHUB_DEPLOY_CADDY:-0}"
+
+if [[ "$DEPLOY_CADDY" != "0" && "$DEPLOY_CADDY" != "1" ]]; then
+    echo "DVHUB_DEPLOY_CADDY must be 0 or 1" >&2
+    exit 78
+fi
 
 force=false
 if [[ "${1:-}" == "--force" ]]; then
@@ -129,7 +135,9 @@ install -d -m 0750 "$rollback_dir/web"
 [[ -e "$WEB_ROOT/dashboard.html" ]] && cp -a -- "$WEB_ROOT/dashboard.html" "$rollback_dir/web/dashboard.html"
 [[ -e "$WEB_ROOT/ysf-status.html" ]] && cp -a -- "$WEB_ROOT/ysf-status.html" "$rollback_dir/web/ysf-status.html"
 [[ -e "$UNIT" ]] && cp -a -- "$UNIT" "$rollback_dir/dvhub-gateway.service"
-[[ -e "$CADDYFILE" ]] && cp -a -- "$CADDYFILE" "$rollback_dir/Caddyfile"
+if [[ "$DEPLOY_CADDY" == "1" && -e "$CADDYFILE" ]]; then
+    cp -a -- "$CADDYFILE" "$rollback_dir/Caddyfile"
+fi
 [[ -e "$DEPLOYER" ]] && cp -a -- "$DEPLOYER" "$rollback_dir/dvhub-deploy"
 [[ -e "$DEPLOY_UNIT" ]] && cp -a -- "$DEPLOY_UNIT" "$rollback_dir/dvhub-deploy.service"
 [[ -e "$DEPLOY_TIMER" ]] && cp -a -- "$DEPLOY_TIMER" "$rollback_dir/dvhub-deploy.timer"
@@ -142,13 +150,17 @@ rollback() {
     [[ -e "$rollback_dir/web/dashboard.html" ]] && install -m 0644 "$rollback_dir/web/dashboard.html" "$WEB_ROOT/dashboard.html"
     [[ -e "$rollback_dir/web/ysf-status.html" ]] && install -m 0644 "$rollback_dir/web/ysf-status.html" "$WEB_ROOT/ysf-status.html"
     [[ -e "$rollback_dir/dvhub-gateway.service" ]] && install -m 0644 "$rollback_dir/dvhub-gateway.service" "$UNIT"
-    [[ -e "$rollback_dir/Caddyfile" ]] && install -m 0644 "$rollback_dir/Caddyfile" "$CADDYFILE"
+    if [[ "$DEPLOY_CADDY" == "1" && -e "$rollback_dir/Caddyfile" ]]; then
+        install -m 0644 "$rollback_dir/Caddyfile" "$CADDYFILE"
+    fi
     [[ -e "$rollback_dir/dvhub-deploy" ]] && install -m 0755 "$rollback_dir/dvhub-deploy" "$DEPLOYER"
     [[ -e "$rollback_dir/dvhub-deploy.service" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.service" "$DEPLOY_UNIT"
     [[ -e "$rollback_dir/dvhub-deploy.timer" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.timer" "$DEPLOY_TIMER"
     systemctl daemon-reload || true
     systemctl restart dvhub-gateway.service || true
-    systemctl reload caddy.service || true
+    if [[ "$DEPLOY_CADDY" == "1" ]]; then
+        systemctl reload caddy.service || true
+    fi
     exit "$status"
 }
 trap rollback ERR
@@ -158,7 +170,9 @@ install -m 0755 "$work_dir/dvhub-gateway" "$BINARY.new"
 install -m 0644 "$work_dir/dashboard.html" "$WEB_ROOT/dashboard.html.new"
 install -m 0644 "$work_dir/ysf-status.html" "$WEB_ROOT/ysf-status.html.new"
 install -m 0644 "$work_dir/deploy/dvhub-gateway.service" "$UNIT.new"
-install -m 0644 "$work_dir/Caddyfile" "$CADDYFILE.new"
+if [[ "$DEPLOY_CADDY" == "1" ]]; then
+    install -m 0644 "$work_dir/Caddyfile" "$CADDYFILE.new"
+fi
 install -m 0755 "$work_dir/deploy/gitops/dvhub-deploy" "$DEPLOYER.new"
 install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.service" "$DEPLOY_UNIT.new"
 install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.timer" "$DEPLOY_TIMER.new"
@@ -166,14 +180,18 @@ mv -f -- "$BINARY.new" "$BINARY"
 mv -f -- "$WEB_ROOT/dashboard.html.new" "$WEB_ROOT/dashboard.html"
 mv -f -- "$WEB_ROOT/ysf-status.html.new" "$WEB_ROOT/ysf-status.html"
 mv -f -- "$UNIT.new" "$UNIT"
-mv -f -- "$CADDYFILE.new" "$CADDYFILE"
+if [[ "$DEPLOY_CADDY" == "1" ]]; then
+    mv -f -- "$CADDYFILE.new" "$CADDYFILE"
+fi
 mv -f -- "$DEPLOYER.new" "$DEPLOYER"
 mv -f -- "$DEPLOY_UNIT.new" "$DEPLOY_UNIT"
 mv -f -- "$DEPLOY_TIMER.new" "$DEPLOY_TIMER"
 
 systemctl daemon-reload
 systemctl restart dvhub-gateway.service
-systemctl reload caddy.service
+if [[ "$DEPLOY_CADDY" == "1" ]]; then
+    systemctl reload caddy.service
+fi
 
 for _ in {1..20}; do
     if systemctl is-active --quiet dvhub-gateway.service \

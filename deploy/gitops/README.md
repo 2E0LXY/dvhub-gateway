@@ -19,8 +19,13 @@ It updates only:
 - `/var/www/dvhub/dashboard.html`
 - `/var/www/dvhub/ysf-status.html`
 - `/etc/systemd/system/dvhub-gateway.service`
-- `/etc/caddy/Caddyfile`
 - its own deploy script, service and timer (after shell syntax validation)
+
+The repository Caddyfile is validated on every deployment but is not installed
+or reloaded automatically. The live proxy has host-specific authentication and
+certificate environment, so unattended replacement is disabled by default.
+Set `DVHUB_DEPLOY_CADDY=1` in `/etc/dvhub/deploy.env` only for an attended
+Caddy rollout after its environment has been verified.
 
 It deliberately does **not** copy `/etc/dvhub`, `/etc/asterisk`, reflector or
 cross-mode configuration, passwords, API keys, radio identities, or vocoder
