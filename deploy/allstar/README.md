@@ -13,3 +13,13 @@ copy. ASL3 HTTP registration is used; legacy IAX registration is not enabled.
 `dvhub-allstar-control` validates numeric targets before issuing app_rpt link
 or unlink commands. `dvhub-allstar-status` exposes only registration, link and
 node status output; it never reads or prints the registration configuration.
+
+## EchoLink
+
+The authenticated dashboard can stage a validated EchoLink `-L` or `-R`
+identity for `chan_echolink`. The password is written only to a mode-0600 JSON
+staging file, read with `O_NOFOLLOW` and owner/mode checks by the narrowly
+scoped root helper, then removed. The helper updates ASL3's existing `[el0]`
+stanza, enables `chan_echolink.so`, restarts Asterisk and rolls both files back
+if the module does not load. EchoLink UDP ports 5198-5199 must be allowed by
+the VPS firewall, and the callsign/node must already be validated by EchoLink.

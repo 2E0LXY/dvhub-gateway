@@ -20,5 +20,14 @@ jobs:
           cache: true
       - run: go test -race ./...
       - run: go vet ./...
+      - name: Validate deployment helpers
+        run: |
+          bash -n deploy/gitops/dvhub-deploy deploy/gitops/install.sh \
+            deploy/allstar/dvhub-configure-allstar-node \
+            deploy/allstar/dvhub-allstar-status \
+            deploy/allstar/dvhub-allstar-control \
+            deploy/allstar/dvhub-echolink-status
+          python3 -m py_compile deploy/allstar/dvhub-configure-echolink
+          sudo visudo -cf deploy/allstar/dvhub-allstar.sudoers
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...

@@ -19,6 +19,8 @@ It updates only:
 - `/var/www/dvhub/dashboard.html`
 - `/var/www/dvhub/ysf-status.html`
 - `/etc/systemd/system/dvhub-gateway.service`
+- the allowlisted AllStar/EchoLink control and status helpers under
+  `/usr/local/sbin`, plus `/etc/sudoers.d/dvhub-allstar`
 - its own deploy script, service and timer (after shell syntax validation)
 
 The repository Caddyfile is validated on every deployment but is not installed
@@ -30,7 +32,8 @@ Caddy rollout after its environment has been verified.
 It deliberately does **not** copy `/etc/dvhub`, `/etc/asterisk`, reflector or
 cross-mode configuration, passwords, API keys, radio identities, or vocoder
 allowlists. The running YSF, P25, NXDN, AllStar and conference services are not
-restarted.
+restarted. The helpers can update Asterisk only after an authenticated dashboard
+request; credentials are staged in a mode-0600 file and never stored in Git.
 
 ## First installation on the VPS
 

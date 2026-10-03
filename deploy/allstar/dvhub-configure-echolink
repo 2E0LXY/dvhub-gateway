@@ -1,0 +1,146 @@
+#!/usr/bin/python3
+"""Install validated EchoLink credentials without exposing them to argv/logs."""
+
+import json
+import os
+import pwd
+import re
+import shutil
+import stat
+import subprocess
+import tempfile
+from pathlib import Path
+
+STAGE = Path("/var/lib/dvgateway/echolink.secret.json")
+CONFIG = Path("/etc/asterisk/echolink.conf")
+MODULES = Path("/etc/asterisk/modules.conf")
+
+
+def protected_payload():
+    fd = os.open(STAGE, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        details = os.fstat(fd)
+        if not stat.S_ISREG(details.st_mode):
+            raise RuntimeError("staging path is not a regular file")
+        if details.st_uid != pwd.getpwnam("dvhub").pw_uid or details.st_mode & 0o077:
+            raise RuntimeError("staging file ownership or mode is unsafe")
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            fd = -1
+            return json.load(stream)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def validate(value):
+    call = str(value.get("callsign", "")).upper()
+    password = str(value.get("password", ""))
+    email = str(value.get("email", ""))
+    name = str(value.get("name", ""))
+    qth = str(value.get("qth", ""))
+    node = int(value.get("node", 0))
+    if not re.fullmatch(r"[A-Z0-9]{3,9}-(?:L|R)", call):
+        raise RuntimeError("invalid EchoLink callsign")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{4,16}", password):
+        raise RuntimeError("invalid EchoLink password")
+    if len(email) > 32 or not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+", email):
+        raise RuntimeError("invalid EchoLink email")
+    if not 1 <= node <= 999999:
+        raise RuntimeError("invalid EchoLink node")
+    for label, text in (("name", name), ("qth", qth)):
+        if not re.fullmatch(r"[A-Za-z0-9 .,'&()+/-]{1,32}", text):
+            raise RuntimeError(f"invalid EchoLink {label}")
+    return {
+        "call": call,
+        "pwd": password,
+        "name": name,
+        "qth": qth,
+        "email": email,
+        "node": str(node),
+        "astnode": "530471",
+        "context": "radio-secure",
+    }
+
+
+def update_section(text, section, values):
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.strip().lower() == f"[{section.lower()}]"), None)
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append(f"[{section}]")
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if re.match(r"^\s*\[.+\]\s*$", lines[i])), len(lines))
+    remaining = dict(values)
+    for index in range(start + 1, end):
+        match = re.match(r"^(\s*)([A-Za-z0-9_]+)(\s*=).*$", lines[index])
+        if match and match.group(2).lower() in remaining:
+            key = match.group(2).lower()
+            lines[index] = f"{match.group(1)}{key}{match.group(3)} {remaining.pop(key)}"
+    for key, value in remaining.items():
+        lines.insert(end, f"{key} = {value}")
+        end += 1
+    return "\n".join(lines) + "\n"
+
+
+def enable_module(text):
+    pattern = re.compile(r"(?m)^\s*noload\s*=\s*chan_echolink\.so.*$")
+    if pattern.search(text):
+        return pattern.sub("load    = chan_echolink.so          ; EchoLink Channel Driver enabled", text)
+    if re.search(r"(?m)^\s*load\s*=\s*chan_echolink\.so\b", text):
+        return text
+    return text.rstrip() + "\nload    = chan_echolink.so          ; EchoLink Channel Driver enabled\n"
+
+
+def atomic_write(path, content):
+    details = path.stat()
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chown(temporary, details.st_uid, details.st_gid)
+        os.chmod(temporary, stat.S_IMODE(details.st_mode))
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def main():
+    values = validate(protected_payload())
+    if not CONFIG.is_file() or not MODULES.is_file():
+        raise RuntimeError("ASL3 EchoLink base configuration is not installed")
+    config_backup = CONFIG.with_suffix(".conf.dvhub-before-echolink")
+    modules_backup = MODULES.with_suffix(".conf.dvhub-before-echolink")
+    if not config_backup.exists():
+        shutil.copy2(CONFIG, config_backup)
+    if not modules_backup.exists():
+        shutil.copy2(MODULES, modules_backup)
+    original_config = CONFIG.read_text(encoding="utf-8")
+    original_modules = MODULES.read_text(encoding="utf-8")
+    try:
+        atomic_write(CONFIG, update_section(original_config, "el0", values))
+        atomic_write(MODULES, enable_module(original_modules))
+        subprocess.run(["/usr/bin/systemctl", "restart", "asterisk.service"], check=True)
+        result = subprocess.run(
+            ["/usr/sbin/asterisk", "-rx", "module show like chan_echolink"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if "chan_echolink.so" not in result.stdout:
+            raise RuntimeError("chan_echolink did not load")
+    except Exception:
+        atomic_write(CONFIG, original_config)
+        atomic_write(MODULES, original_modules)
+        subprocess.run(["/usr/bin/systemctl", "restart", "asterisk.service"], check=False)
+        raise
+    finally:
+        STAGE.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()

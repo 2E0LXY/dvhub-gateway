@@ -17,6 +17,12 @@ readonly CADDYFILE="/etc/caddy/Caddyfile"
 readonly DEPLOYER="/usr/local/sbin/dvhub-deploy"
 readonly DEPLOY_UNIT="/etc/systemd/system/dvhub-deploy.service"
 readonly DEPLOY_TIMER="/etc/systemd/system/dvhub-deploy.timer"
+readonly ALLSTAR_CONFIGURATOR="/usr/local/sbin/dvhub-configure-allstar-node"
+readonly ALLSTAR_STATUS="/usr/local/sbin/dvhub-allstar-status"
+readonly ALLSTAR_CONTROL="/usr/local/sbin/dvhub-allstar-control"
+readonly ECHOLINK_CONFIGURATOR="/usr/local/sbin/dvhub-configure-echolink"
+readonly ECHOLINK_STATUS="/usr/local/sbin/dvhub-echolink-status"
+readonly ALLSTAR_SUDOERS="/etc/sudoers.d/dvhub-allstar"
 readonly REQUIRED_CHECKS="${DVHUB_REQUIRED_CHECKS:-verify build}"
 readonly DEPLOY_CADDY="${DVHUB_DEPLOY_CADDY:-0}"
 
@@ -69,7 +75,43 @@ git -C "$REPO_DIR" fetch --prune origin "+refs/heads/$BRANCH:refs/heads/$BRANCH"
 target_sha="$(git -C "$REPO_DIR" rev-parse "refs/heads/$BRANCH^{commit}")"
 current_sha="$(cat "$CURRENT_SHA_FILE" 2>/dev/null || true)"
 
+validate_allstar_helpers() {
+    local source_root=$1
+    bash -n \
+        "$source_root/deploy/allstar/dvhub-configure-allstar-node" \
+        "$source_root/deploy/allstar/dvhub-allstar-status" \
+        "$source_root/deploy/allstar/dvhub-allstar-control" \
+        "$source_root/deploy/allstar/dvhub-echolink-status"
+    python3 -m py_compile "$source_root/deploy/allstar/dvhub-configure-echolink"
+    /usr/sbin/visudo -cf "$source_root/deploy/allstar/dvhub-allstar.sudoers" >/dev/null
+}
+
+install_allstar_helpers() {
+    local source_root=$1
+    install -d -m 0750 /var/lib/dvgateway
+    chown dvhub:dvhub /var/lib/dvgateway
+    install -d -m 0750 /etc/sudoers.d
+    install -m 0755 "$source_root/deploy/allstar/dvhub-configure-allstar-node" "$ALLSTAR_CONFIGURATOR.new"
+    install -m 0755 "$source_root/deploy/allstar/dvhub-allstar-status" "$ALLSTAR_STATUS.new"
+    install -m 0755 "$source_root/deploy/allstar/dvhub-allstar-control" "$ALLSTAR_CONTROL.new"
+    install -m 0755 "$source_root/deploy/allstar/dvhub-configure-echolink" "$ECHOLINK_CONFIGURATOR.new"
+    install -m 0755 "$source_root/deploy/allstar/dvhub-echolink-status" "$ECHOLINK_STATUS.new"
+    install -m 0440 "$source_root/deploy/allstar/dvhub-allstar.sudoers" "$ALLSTAR_SUDOERS.new"
+    mv -f -- "$ALLSTAR_CONFIGURATOR.new" "$ALLSTAR_CONFIGURATOR"
+    mv -f -- "$ALLSTAR_STATUS.new" "$ALLSTAR_STATUS"
+    mv -f -- "$ALLSTAR_CONTROL.new" "$ALLSTAR_CONTROL"
+    mv -f -- "$ECHOLINK_CONFIGURATOR.new" "$ECHOLINK_CONFIGURATOR"
+    mv -f -- "$ECHOLINK_STATUS.new" "$ECHOLINK_STATUS"
+    mv -f -- "$ALLSTAR_SUDOERS.new" "$ALLSTAR_SUDOERS"
+}
+
 if [[ "$target_sha" == "$current_sha" ]]; then
+    # The deployer updates itself last. A newly added runtime helper is therefore
+    # synchronised on the next timer pass even though the application SHA is
+    # already current; this avoids needing an attended second deployment.
+    git -C "$REPO_DIR" archive "$target_sha" deploy/allstar | tar -x -C "$work_dir"
+    validate_allstar_helpers "$work_dir"
+    install_allstar_helpers "$work_dir"
     echo "DVHub is already at $target_sha"
     exit 0
 fi
@@ -124,6 +166,7 @@ go test ./...
 go vet ./...
 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dvhub-gateway ./gateway.go
 bash -n deploy/gitops/dvhub-deploy deploy/gitops/install.sh
+validate_allstar_helpers "$work_dir"
 DVHUB_PASSWORD_HASH='$2a$14$P5LqhL5moJlgYzNdw9PeH.U.U4gCiQZl7WfxWJI5fKoh85QBWK0xW' \
     caddy validate --config "$work_dir/Caddyfile" --adapter caddyfile
 systemd-analyze verify "$work_dir/deploy/dvhub-gateway.service"
@@ -141,6 +184,16 @@ fi
 [[ -e "$DEPLOYER" ]] && cp -a -- "$DEPLOYER" "$rollback_dir/dvhub-deploy"
 [[ -e "$DEPLOY_UNIT" ]] && cp -a -- "$DEPLOY_UNIT" "$rollback_dir/dvhub-deploy.service"
 [[ -e "$DEPLOY_TIMER" ]] && cp -a -- "$DEPLOY_TIMER" "$rollback_dir/dvhub-deploy.timer"
+for path in \
+    "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
+    "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS"; do
+    name="$(basename "$path")"
+    if [[ -e "$path" ]]; then
+        cp -a -- "$path" "$rollback_dir/$name"
+    else
+        : >"$rollback_dir/$name.missing"
+    fi
+done
 
 rollback() {
     status=$?
@@ -156,6 +209,16 @@ rollback() {
     [[ -e "$rollback_dir/dvhub-deploy" ]] && install -m 0755 "$rollback_dir/dvhub-deploy" "$DEPLOYER"
     [[ -e "$rollback_dir/dvhub-deploy.service" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.service" "$DEPLOY_UNIT"
     [[ -e "$rollback_dir/dvhub-deploy.timer" ]] && install -m 0644 "$rollback_dir/dvhub-deploy.timer" "$DEPLOY_TIMER"
+    for path in \
+        "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
+        "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS"; do
+        name="$(basename "$path")"
+        if [[ -e "$rollback_dir/$name.missing" ]]; then
+            rm -f -- "$path"
+        elif [[ -e "$rollback_dir/$name" ]]; then
+            install -m "$(stat -c '%a' "$rollback_dir/$name")" "$rollback_dir/$name" "$path"
+        fi
+    done
     systemctl daemon-reload || true
     systemctl restart dvhub-gateway.service || true
     if [[ "$DEPLOY_CADDY" == "1" ]]; then
@@ -186,6 +249,7 @@ fi
 mv -f -- "$DEPLOYER.new" "$DEPLOYER"
 mv -f -- "$DEPLOY_UNIT.new" "$DEPLOY_UNIT"
 mv -f -- "$DEPLOY_TIMER.new" "$DEPLOY_TIMER"
+install_allstar_helpers "$work_dir"
 
 systemctl daemon-reload
 systemctl restart dvhub-gateway.service

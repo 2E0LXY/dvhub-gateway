@@ -1,3 +1,5 @@
 dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-configure-allstar-node
 dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-allstar-status
 dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-allstar-control *
+dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-configure-echolink
+dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-echolink-status

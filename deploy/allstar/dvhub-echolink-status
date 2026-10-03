@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+config=/etc/asterisk/echolink.conf
+if grep -Eq '^[[:space:]]*call[[:space:]]*=[[:space:]]*[A-Z0-9]+-(L|R)[[:space:]]*$' "$config" 2>/dev/null \
+    && grep -Eq '^[[:space:]]*node[[:space:]]*=[[:space:]]*[0-9]{1,6}[[:space:]]*$' "$config" 2>/dev/null \
+    && grep -Eq '^[[:space:]]*astnode[[:space:]]*=[[:space:]]*530471[[:space:]]*$' "$config" 2>/dev/null; then
+    echo 'CONFIGURED yes'
+else
+    echo 'CONFIGURED no'
+fi
+
+call=$(sed -nE 's/^[[:space:]]*call[[:space:]]*=[[:space:]]*([A-Z0-9]+-(L|R))[[:space:]]*$/\1/p' "$config" 2>/dev/null | head -n1)
+node=$(sed -nE 's/^[[:space:]]*node[[:space:]]*=[[:space:]]*([0-9]{1,6})[[:space:]]*$/\1/p' "$config" 2>/dev/null | head -n1)
+printf 'CALL %s\n' "${call:-UNKNOWN}"
+printf 'NODE %s\n' "${node:-0}"
+
+modules=$(/usr/sbin/asterisk -rx 'module show like chan_echolink' 2>/dev/null || true)
+if printf '%s\n' "$modules" | grep -q 'chan_echolink.so'; then
+    echo 'MODULE yes'
+else
+    echo 'MODULE no'
+fi
+echo NODES
+/usr/sbin/asterisk -rx 'echolink show nodes' 2>/dev/null || true
+echo STATS
+/usr/sbin/asterisk -rx 'echolink show stats' 2>/dev/null || true
