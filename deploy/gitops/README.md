@@ -6,6 +6,10 @@ builds in an isolated staging directory, validates the Go project, Caddyfile
 and systemd unit, installs an allowlisted set of files atomically, checks the
 gateway socket, and rolls back on failure.
 
+Go module, build and downloaded toolchain caches are kept under
+`/var/lib/dvhub-deploy/go`; the hardened service does not require access to
+`/root` or any user's home directory.
+
 It updates only:
 
 - `/usr/local/bin/dvhub-gateway`

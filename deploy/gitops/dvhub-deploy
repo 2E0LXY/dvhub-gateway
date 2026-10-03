@@ -7,6 +7,7 @@ readonly BRANCH="${DVHUB_DEPLOY_BRANCH:-main}"
 readonly STATE_DIR="${DVHUB_DEPLOY_STATE_DIR:-/var/lib/dvhub-deploy}"
 readonly REPO_DIR="$STATE_DIR/repository.git"
 readonly BACKUP_DIR="$STATE_DIR/backups"
+readonly GO_STATE_DIR="$STATE_DIR/go"
 readonly CURRENT_SHA_FILE="$STATE_DIR/current-sha"
 readonly LOCK_FILE="/run/lock/dvhub-deploy.lock"
 readonly WEB_ROOT="/var/www/dvhub"
@@ -31,7 +32,20 @@ if [[ $EUID -ne 0 ]]; then
     exit 77
 fi
 
-install -d -m 0750 "$STATE_DIR" "$BACKUP_DIR"
+install -d -m 0750 \
+    "$STATE_DIR" \
+    "$BACKUP_DIR" \
+    "$GO_STATE_DIR/home" \
+    "$GO_STATE_DIR/pkg/mod" \
+    "$GO_STATE_DIR/build-cache"
+
+# The deploy service deliberately has ProtectHome=true. Give Go explicit,
+# persistent cache paths under the deployer's state directory so module and
+# toolchain downloads never depend on /root or another user's home directory.
+export HOME="$GO_STATE_DIR/home"
+export GOPATH="$GO_STATE_DIR"
+export GOMODCACHE="$GO_STATE_DIR/pkg/mod"
+export GOCACHE="$GO_STATE_DIR/build-cache"
 exec 9>"$LOCK_FILE"
 flock -n 9 || { echo "another DVHub deployment is running"; exit 0; }
 
