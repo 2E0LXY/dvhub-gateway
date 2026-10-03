@@ -10,6 +10,9 @@ Go module, build and downloaded toolchain caches are kept under
 `/var/lib/dvhub-deploy/go`; the hardened service does not require access to
 `/root` or any user's home directory.
 
+The Caddyfile uses the backwards-compatible `basicauth` directive spelling so
+it validates on both Debian's pre-2.8 Caddy package and current Caddy releases.
+
 It updates only:
 
 - `/usr/local/bin/dvhub-gateway`

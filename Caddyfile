@@ -14,7 +14,9 @@
     }
 
     @protected not path /ysf-status.html /api/public/ysf_dashboard
-    basic_auth @protected {
+    # `basicauth` is the pre-2.8 name and remains a supported alias in current
+    # Caddy. Keeping it here lets the Debian-packaged Caddy validate this file.
+    basicauth @protected {
         {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
     }
 
