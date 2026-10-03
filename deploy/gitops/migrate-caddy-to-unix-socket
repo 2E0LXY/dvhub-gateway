@@ -1,0 +1,95 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly HEALTH_URL="${1:-}"
+readonly CADDYFILE="/etc/caddy/Caddyfile"
+readonly BINARY="/usr/local/bin/dvhub-gateway"
+readonly UNIT="/etc/systemd/system/dvhub-gateway.service"
+readonly SHA_FILE="/var/lib/dvhub-deploy/current-sha"
+readonly MIGRATION_ROOT="/var/lib/dvhub-deploy/migrations"
+readonly OLD_UPSTREAM="reverse_proxy 127.0.0.1:8080"
+readonly NEW_UPSTREAM="reverse_proxy unix//run/dvhub/gateway.sock"
+
+if [[ $EUID -ne 0 ]]; then
+    echo "migration must run as root" >&2
+    exit 77
+fi
+if [[ -z "$HEALTH_URL" || "$HEALTH_URL" != https://* ]]; then
+    echo "usage: $0 https://public-host/api/public/ysf_dashboard" >&2
+    exit 64
+fi
+for command in caddy curl python3 systemctl; do
+    command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 69; }
+done
+for path in "$CADDYFILE" "$BINARY" "$UNIT"; do
+    [[ -e "$path" ]] || { echo "required live file is missing: $path" >&2; exit 66; }
+done
+
+systemctl stop dvhub-deploy.timer
+install -d -m 0750 "$MIGRATION_ROOT"
+backup_dir="$MIGRATION_ROOT/$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 0750 "$backup_dir"
+cp -a -- "$CADDYFILE" "$backup_dir/Caddyfile"
+cp -a -- "$BINARY" "$backup_dir/dvhub-gateway"
+cp -a -- "$UNIT" "$backup_dir/dvhub-gateway.service"
+if [[ -e "$SHA_FILE" ]]; then
+    cp -a -- "$SHA_FILE" "$backup_dir/current-sha"
+fi
+
+rollback() {
+    status=$?
+    trap - ERR
+    echo "Socket migration failed; restoring $backup_dir" >&2
+    install -m 0755 "$backup_dir/dvhub-gateway" "$BINARY"
+    install -m 0644 "$backup_dir/dvhub-gateway.service" "$UNIT"
+    install -m 0644 "$backup_dir/Caddyfile" "$CADDYFILE"
+    if [[ -e "$backup_dir/current-sha" ]]; then
+        install -m 0644 "$backup_dir/current-sha" "$SHA_FILE"
+    else
+        rm -f -- "$SHA_FILE"
+    fi
+    systemctl daemon-reload || true
+    systemctl restart dvhub-gateway.service || true
+    systemctl reload caddy.service || true
+    echo "Automatic deployment timer remains stopped." >&2
+    exit "$status"
+}
+trap rollback ERR
+
+CADDYFILE="$CADDYFILE" OLD_UPSTREAM="$OLD_UPSTREAM" NEW_UPSTREAM="$NEW_UPSTREAM" python3 - <<'PY'
+import os
+from pathlib import Path
+
+path = Path(os.environ["CADDYFILE"])
+old = os.environ["OLD_UPSTREAM"]
+new = os.environ["NEW_UPSTREAM"]
+text = path.read_text(encoding="utf-8")
+old_count = text.count(old)
+new_count = text.count(new)
+if old_count == 0 and new_count == 2:
+    print("Caddy upstreams are already staged for the Unix socket")
+elif old_count == 2 and new_count == 0:
+    path.write_text(text.replace(old, new), encoding="utf-8")
+    print("Staged exactly two Caddy upstream replacements")
+else:
+    raise SystemExit(
+        f"refusing unexpected Caddy layout: tcp={old_count}, unix={new_count}"
+    )
+PY
+
+caddy validate --config "$CADDYFILE" --adapter caddyfile
+systemctl reset-failed dvhub-deploy.service
+systemctl start dvhub-deploy.service
+systemctl reload caddy.service
+
+curl --fail --silent --show-error --max-time 5 \
+    --unix-socket /run/dvhub/gateway.sock \
+    -H 'X-DVHub-Authenticated-User: 2E0LXY' \
+    http://localhost/api/state >/dev/null
+curl --fail --silent --show-error --insecure --max-time 10 \
+    "$HEALTH_URL" >/dev/null
+
+systemctl start dvhub-deploy.timer
+trap - ERR
+echo "Unix-socket migration and Git deployment completed successfully."
+echo "Backup retained at $backup_dir"
