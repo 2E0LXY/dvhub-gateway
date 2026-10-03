@@ -39,6 +39,56 @@ func TestControlRequiresAuthenticationAndCSRFHeader(t *testing.T) {
 	}
 }
 
+func TestEchoLinkConfigurationIsBoundToAuthenticatedCallsign(t *testing.T) {
+	gateway := &Gateway{}
+	tests := []struct {
+		name     string
+		user     string
+		control  string
+		body     string
+		wantCode int
+	}{
+		{
+			name:     "unauthenticated",
+			control:  "1",
+			body:     `{"callsign":"2E0LXY-L","node":123456,"password":"validpass","email":"radio@example.test","name":"Daz","qth":"Yorkshire"}`,
+			wantCode: http.StatusUnauthorized,
+		},
+		{
+			name:     "missing csrf guard",
+			user:     "2E0LXY",
+			body:     `{"callsign":"2E0LXY-L","node":123456,"password":"validpass","email":"radio@example.test","name":"Daz","qth":"Yorkshire"}`,
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "different operator",
+			user:     "2E0LXY",
+			control:  "1",
+			body:     `{"callsign":"M0ABC-L","node":123456,"password":"validpass","email":"radio@example.test","name":"Daz","qth":"Yorkshire"}`,
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "invalid node",
+			user:     "2E0LXY",
+			control:  "1",
+			body:     `{"callsign":"2E0LXY-L","node":0,"password":"validpass","email":"radio@example.test","name":"Daz","qth":"Yorkshire"}`,
+			wantCode: http.StatusBadRequest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/echolink_config", strings.NewReader(test.body))
+			request.Header.Set("X-DVHub-Authenticated-User", test.user)
+			request.Header.Set("X-DVHub-Control", test.control)
+			gateway.handleEchoLinkConfig(recorder, request)
+			if recorder.Code != test.wantCode {
+				t.Fatalf("EchoLink configuration returned %d, want %d: %s", recorder.Code, test.wantCode, recorder.Body.String())
+			}
+		})
+	}
+}
+
 func TestStateDoesNotExposeResolvedHomeAddress(t *testing.T) {
 	gateway := &Gateway{}
 	for index := range gateway.sessions {
@@ -159,6 +209,23 @@ func TestBridgeEndpointsIncludesOptionalConferenceLeg(t *testing.T) {
 	conference := bridgeEndpoints(BridgeRoute{ANode: 1, ATG: 23530, BNode: 2, BTG: 23530, CNode: 4, CTG: 23530})
 	if len(conference) != 3 || conference[4] != 23530 {
 		t.Fatalf("conference endpoints = %#v, want TGIF node 4 on TG23530", conference)
+	}
+}
+
+func TestBridgeTalkerTelemetryReportsCurrentFirstTalker(t *testing.T) {
+	gateway := &Gateway{}
+	gateway.sessions[0] = &UserSession{ID: 1, Target: "FreeSTAR-SystemX-UK", TG: 23530}
+	route := BridgeRoute{
+		Active: true, ActiveNode: 1, ActiveStream: 12345,
+		ActiveUntil: time.Now().Add(time.Second),
+	}
+	talker := gateway.bridgeTalker(route)
+	if talker["busy"] != true || talker["network"] != "FreeSTAR-SystemX-UK" || talker["talkgroup"] != uint32(23530) || talker["stream_id"] != uint32(12345) {
+		t.Fatalf("unexpected first-talker telemetry: %#v", talker)
+	}
+	route.ActiveUntil = time.Now().Add(-time.Second)
+	if expired := gateway.bridgeTalker(route); expired["busy"] != false || expired["hold_milliseconds"] != int64(0) {
+		t.Fatalf("expired first-talker telemetry remained busy: %#v", expired)
 	}
 }
 

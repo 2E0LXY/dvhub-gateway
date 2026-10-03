@@ -136,6 +136,24 @@ The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, bo
 
 The dashboard and Android app accept an optional registered DMR ID for session/node 7 with ESSID `02` for manual FreeSTAR operation; when blank they use the main configured DMR ID. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using its protected server-side identity and TG23530.
 
+### EchoLink through AllStar 530471
+
+The authenticated web dashboard and Android app can configure a previously
+validated EchoLink `-L` or `-R` account on ASL3 node `530471`. The EchoLink
+password is sent only in the protected request, staged in a mode-0600 file and
+removed after the root helper updates Asterisk. It is never committed to Git or
+returned by the status API. EchoLink audio joins the existing ASL3 PCM bus, so
+it reuses the AllStar-to-DMR hardware conversion instead of consuming a second
+DV30 stream. Allow inbound UDP `5198-5199` in the VPS firewall before expecting
+incoming EchoLink audio.
+
+P25-to-ASL and M17-to-ASL remain planned integrations. They are not enabled by
+configuration alone: each needs a standards-compliant P25/M17-to-USRP component
+and end-to-end half-duplex testing before it can replace the current P25 bridge
+or join the live conference. D-Star stays disabled until a second dependable
+AMBE channel is available. The md380 software codec is test/standby only and is
+never selected automatically during a live transmission.
+
 Built-in DMR network DNS targets are configured in `dmrNetworkTargets` in `gateway.go`; master passwords and port overrides come from `/var/lib/dvgateway/DMR_Hosts.txt`. Site-specific public identity and vocoder addresses belong in `/etc/dvhub/gateway.json` and `/etc/dvhub/vocoder-targets.txt`; examples are under `deploy/`.
 
 ```go

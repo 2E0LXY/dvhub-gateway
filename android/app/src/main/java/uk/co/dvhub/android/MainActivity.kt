@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         b.allstarRegister.setOnClickListener { configureAllStar(b) }
         b.allstarConnect.setOnClickListener { controlAllStar(b, "connect") }
         b.allstarDisconnect.setOnClickListener { controlAllStar(b, "disconnect") }
+        b.echoLinkRegister.setOnClickListener { configureEchoLink(b) }
         refreshStatus(); return true
     }
 
@@ -267,6 +268,11 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         client.get("/api/allstar_config") { result -> result.onSuccess { json -> runOnUiThread {
             dashboard?.allstarSummary?.text = allStarText(json)
         } } }
+        client.get("/api/echolink_config") { result -> result.onSuccess { json -> runOnUiThread {
+            dashboard?.echoLinkSummary?.text = echoLinkText(json)
+            first(json, "callsign")?.takeIf { it.isNotBlank() }?.let { dashboard?.echoLinkCallsign?.setText(it) }
+            first(json, "echolink_node")?.takeIf { it != "0" }?.let { dashboard?.echoLinkNode?.setText(it) }
+        } } }
         client.get("/api/vocoder/health") { result -> result.onSuccess { json -> runOnUiThread {
             val mode = first(json, "mode") ?: if (json.get("hardware_enabled")?.asBoolean == true) "hardware" else "software"
             val online = first(json, "state") ?: "unknown"
@@ -294,6 +300,26 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         client.post("/api/allstar_config", JsonObject().apply { addProperty("action", action); addProperty("node", target) }) { result -> runOnUiThread {
             b.allstarSummary.text = if (result.isSuccess) "${action.replaceFirstChar(Char::uppercase)} command sent to $target" else "AllStar control failed: ${result.exceptionOrNull()?.message}"
             handler.postDelayed({ refreshStatus() }, 1000)
+        } }
+    }
+
+    private fun configureEchoLink(b: ViewDashboardBinding) {
+        val callsign = b.echoLinkCallsign.text.toString().trim().uppercase(Locale.UK)
+        val node = b.echoLinkNode.text.toString().toIntOrNull()
+        val password = b.echoLinkPassword.text.toString()
+        val email = b.echoLinkEmail.text.toString().trim()
+        if (!Regex("^[A-Z0-9]{3,9}-(L|R)$").matches(callsign) || node == null || node !in 1..999999 || password.length !in 4..16 || !email.contains('@')) {
+            b.echoLinkSummary.text = "Enter the validated -L/-R callsign, node, password and registered email"
+            return
+        }
+        client.post("/api/echolink_config", JsonObject().apply {
+            addProperty("callsign", callsign); addProperty("node", node); addProperty("password", password)
+            addProperty("email", email); addProperty("name", b.echoLinkName.text.toString().trim())
+            addProperty("qth", b.echoLinkQth.text.toString().trim())
+        }) { result -> runOnUiThread {
+            b.echoLinkPassword.text.clear()
+            b.echoLinkSummary.text = result.fold(::echoLinkText) { "EchoLink setup failed: ${it.message}" }
+            handler.postDelayed({ refreshStatus() }, 1500)
         } }
     }
 
@@ -333,10 +359,19 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         val links = j.getAsJsonArray("links")?.joinToString(", ") { it.asString }.orEmpty().ifBlank { "none" }
         return "State $state · linked nodes $links\n${first(j,"message") ?: "Node 530471 status unavailable"}"
     }
+    private fun echoLinkText(j: JsonObject): String {
+        val state = first(j, "state") ?: "unknown"
+        val callsign = first(j, "callsign")?.takeIf { it.isNotBlank() } ?: "not configured"
+        val node = first(j, "echolink_node")?.takeIf { it != "0" } ?: "—"
+        val links = j.getAsJsonArray("connections")?.joinToString(", ") { it.asString }.orEmpty().ifBlank { "none" }
+        return "$callsign · node $node · $state\nConnected stations $links\n${first(j,"message") ?: "EchoLink status unavailable"}"
+    }
     private fun ysfText(j: JsonObject): String = "${first(j,"name","reflector_name") ?: "Yorkshire Link HUB"}  ·  ID ${first(j,"id","reflector_id","number") ?: "not registered"}\nStatus ${first(j,"status","state") ?: "—"}  ·  Clients ${first(j,"clients","client_count","connected_count") ?: "0"}  ·  TX today ${first(j,"transmissions_today") ?: "0"}\n${first(j,"host") ?: settings.serverUrl} : ${first(j,"port") ?: "42000"}  ·  Uptime ${first(j,"uptime_seconds") ?: "—"}s"
     private fun conferenceText(j: JsonObject): String {
         val mode = if (j.get("permanent")?.asBoolean == true) "permanent" else "temporary"
-        return "Conference ${first(j,"active","status","state") ?: "inactive"} · $mode · TG ${first(j,"tg","talkgroup") ?: "23530"}\nYSF ${deep(j,"ysf") ?: "—"} · FreeSTAR ${deep(j,"freestar") ?: "—"} · BM ${deep(j,"brandmeister") ?: "—"} · TGIF ${deep(j,"tgif") ?: "—"}"
+        val talker = j.getAsJsonObject("talker")
+        val gate = if (talker?.get("busy")?.asBoolean == true) "\nFirst talker ${first(talker,"network") ?: "node ${first(talker,"node") ?: "?"}"} · TG ${first(talker,"talkgroup") ?: "23530"}" else "\nFirst-talker gate idle"
+        return "Conference ${first(j,"active","status","state") ?: "inactive"} · $mode · TG ${first(j,"tg","talkgroup") ?: "23530"}\nYSF ${deep(j,"ysf") ?: "—"} · FreeSTAR ${deep(j,"freestar") ?: "—"} · BM ${deep(j,"brandmeister") ?: "—"} · TGIF ${deep(j,"tgif") ?: "—"}$gate"
     }
 
     override fun onConnection(connected: Boolean, message: String) = runOnUiThread {

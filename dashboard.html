@@ -772,6 +772,7 @@
                             <div class="border border-green-900/60 p-2"><div class="text-gray-500 uppercase">BrandMeister UK</div><div id="yorkshire-bm-state" class="text-gray-300">Disconnected</div></div>
                         </div>
                         <div class="text-yellow-400">FreeSTAR and TGIF are separate direct legs. Payload fingerprinting, stream suppression and one-talker locking protect the conference from loops and collisions.</div>
+                        <div id="yorkshire-talker" class="text-gray-400">First-talker gate idle.</div>
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                             <div><label class="text-gray-500 uppercase block mb-1">YSF leg DMR ID</label><input class="input-cyber" id="yorkshire-ysf-id" inputmode="numeric" placeholder="Registered 7-digit DMR ID" maxlength="7"></div>
                             <div><label class="text-gray-500 uppercase block mb-1">DMR bridge DMR ID</label><input class="input-cyber" id="yorkshire-bridge-id" inputmode="numeric" value="2344399" maxlength="7"></div>
@@ -859,6 +860,21 @@
                             </div>
                             <div id="allstar-links" class="text-[9px] text-gray-500">Linked nodes: none</div>
                             <div id="allstar-bridge-message" class="text-[9px] text-gray-500">Checking AllStar registration state…</div>
+                        </div>
+                        <div class="md:col-span-2 border border-green-900/60 p-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2"><span class="text-gray-500 uppercase">EchoLink via AllStar 530471</span><span id="echolink-status" class="chip chip-idle">CHECKING</span></div>
+                            <div class="text-gray-500">EchoLink joins the existing ASL3 PCM bus, so it reuses the single AllStar↔DMR DV30 stream. The EchoLink callsign and node must already be validated.</div>
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-call">Validated Callsign</label><input class="input-cyber" id="inp-echolink-call" maxlength="12" value="2E0LXY-L"></div>
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-node">EchoLink Node</label><input type="number" class="input-cyber" id="inp-echolink-node" min="1" max="999999" placeholder="Assigned node number"></div>
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-password">EchoLink Password</label><input type="password" class="input-cyber" id="inp-echolink-password" autocomplete="new-password" maxlength="16"></div>
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-email">Registered Email</label><input type="email" class="input-cyber" id="inp-echolink-email" maxlength="32"></div>
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-name">Display Name</label><input class="input-cyber" id="inp-echolink-name" maxlength="32" value="Daz"></div>
+                                <div><label class="text-[9px] text-gray-400 uppercase block mb-2" for="inp-echolink-qth">Location</label><input class="input-cyber" id="inp-echolink-qth" maxlength="32" value="Yorkshire Link HUB"></div>
+                            </div>
+                            <button class="btn-cyber" id="btn-echolink-save" type="button" onclick="saveEchoLink()">SAVE &amp; ENABLE ECHOLINK</button>
+                            <div id="echolink-connections" class="text-[9px] text-gray-500">Connected EchoLink stations: none</div>
+                            <div id="echolink-message" class="text-[9px] text-gray-500">Checking EchoLink status…</div>
                         </div>
                         <div class="md:col-span-2 text-green-400">P25, NXDN and YSF room/TG 23530 are connected to the DMR TG23530 conference. Cross-mode operation is simplex: one active speaker at a time.</div>
                     </div>
@@ -1344,6 +1360,61 @@
                 window.setTimeout(updateAllStarStatus, 1000);
             } catch (error) {
                 message.innerText = error.message;
+            }
+        }
+
+        async function updateEchoLinkStatus() {
+            const chip = document.getElementById('echolink-status');
+            const message = document.getElementById('echolink-message');
+            const connections = document.getElementById('echolink-connections');
+            if (!chip || !message) return;
+            try {
+                const response = await fetch('/api/echolink_config?_=' + Date.now(), { cache: 'no-store', credentials: 'include' });
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                const status = await response.json();
+                chip.innerText = status.state === 'linked' ? 'LINKED' : status.ready ? 'READY' : status.configured ? 'STARTING' : 'DETAILS REQUIRED';
+                chip.className = status.ready ? 'chip chip-ok' : status.configured ? 'chip chip-idle' : 'chip chip-warn';
+                connections.innerText = 'Connected EchoLink stations: ' + ((status.connections || []).join(', ') || 'none');
+                message.innerText = status.message || 'EchoLink status unavailable.';
+                if (status.callsign) document.getElementById('inp-echolink-call').value = status.callsign;
+                if (status.echolink_node) document.getElementById('inp-echolink-node').value = status.echolink_node;
+            } catch (error) {
+                chip.innerText = 'OFFLINE'; chip.className = 'chip chip-err';
+                message.innerText = 'EchoLink status unavailable.';
+            }
+        }
+
+        async function saveEchoLink() {
+            const button = document.getElementById('btn-echolink-save');
+            const message = document.getElementById('echolink-message');
+            const payload = {
+                callsign: document.getElementById('inp-echolink-call').value.trim().toUpperCase(),
+                node: Number(document.getElementById('inp-echolink-node').value),
+                password: document.getElementById('inp-echolink-password').value,
+                email: document.getElementById('inp-echolink-email').value.trim(),
+                name: document.getElementById('inp-echolink-name').value.trim(),
+                qth: document.getElementById('inp-echolink-qth').value.trim()
+            };
+            if (!Number.isInteger(payload.node) || !payload.password || !payload.email) {
+                message.innerText = 'Enter the validated EchoLink node, password and registered email.';
+                return;
+            }
+            button.disabled = true; button.innerText = 'SAVING…';
+            try {
+                const response = await fetch('/api/echolink_config', {
+                    method: 'POST', cache: 'no-store', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json', 'X-DVHub-Control': '1' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Unable to configure EchoLink');
+                document.getElementById('inp-echolink-password').value = '';
+                message.innerText = result.message || 'EchoLink configuration installed.';
+                window.setTimeout(updateEchoLinkStatus, 1200);
+            } catch (error) {
+                message.innerText = error.message;
+            } finally {
+                button.disabled = false; button.innerText = 'SAVE & ENABLE ECHOLINK';
             }
         }
 
@@ -1849,6 +1920,15 @@
                 setDashboardNetworkState('brandmeister', data.brandmeister);
                 setDashboardNetworkState('tgif', data.tgif);
                 setDashboardNetworkState('ysf', data.ysf2dmr ? 'connected' : 'disconnected');
+                const talker = data.talker || {};
+                const talkerLabel = document.getElementById('yorkshire-talker');
+                if (talker.busy) {
+                    talkerLabel.className = 'text-green-400';
+                    talkerLabel.textContent = `First-talker gate: ${talker.network || `node ${talker.node}`} · TG ${talker.talkgroup || 23530} · stream ${talker.stream_id}`;
+                } else {
+                    talkerLabel.className = 'text-gray-400';
+                    talkerLabel.textContent = 'First-talker gate idle.';
+                }
                 const conferenceChip = document.getElementById('svc-link');
                 const summaryChip = document.getElementById('network-summary');
                 if (data.ready) {
@@ -2452,6 +2532,7 @@
             updateYSFIdentity();
             updateLocalMaster();
             updateAllStarStatus();
+            updateEchoLinkStatus();
             refreshYorkshireStatus();
             refreshNetworkOverview();
             document.getElementById('inp-callsign').value = config.callsign;
@@ -2471,6 +2552,7 @@
             setInterval(updateYSFDashboard, 10000);
             setInterval(updateLocalMaster, 5000);
             setInterval(updateAllStarStatus, 5000);
+            setInterval(updateEchoLinkStatus, 5000);
             setInterval(refreshYorkshireStatus, 5000);
             setInterval(refreshNetworkOverview, 5000);
             

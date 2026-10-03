@@ -33,5 +33,7 @@ Vocoder targets must appear in `/etc/dvhub/vocoder-targets.txt`; `sw` and `hybri
 - `POST /api/ysf_control` — start, stop or restart the reflector.
 - `GET|POST /api/yorkshire_conference` — inspect or control TG23530 conference.
 - `GET|POST /api/allstar_config` — inspect or control the AllStar node.
+- `GET|POST /api/echolink_config` — inspect EchoLink state or securely install a
+  validated `-L`/`-R` account on AllStar node 530471.
 
 Passwords and API tokens are accepted only for the relevant control operation and are never returned by a status endpoint.

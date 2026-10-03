@@ -49,6 +49,7 @@ const (
 	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
 	vocoderTargetsPath     = "/etc/dvhub/vocoder-targets.txt"
 	allStarSecretStagePath = "/var/lib/dvgateway/allstar-node.secret"
+	echoLinkStagePath      = "/var/lib/dvgateway/echolink.secret.json"
 	gatewayConfigPath      = "/etc/dvhub/gateway.json"
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
@@ -340,6 +341,7 @@ func main() {
 	http.HandleFunc("/api/yorkshire_conference", gw.handleYorkshireConference)
 	http.HandleFunc("/api/local_master", gw.handleLocalMasterStatus)
 	http.HandleFunc("/api/allstar_config", gw.handleAllStarConfig)
+	http.HandleFunc("/api/echolink_config", gw.handleEchoLinkConfig)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
 
@@ -491,6 +493,7 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	allStar := readAllStarStatus()
+	echoLink := readEchoLinkStatus()
 	json.NewEncoder(w).Encode(map[string]any{
 		"hostname":         hostname,
 		"kernel":           strings.TrimSpace(string(kernelData)),
@@ -503,6 +506,8 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
 		"allstar_bridge":   allStar.Registered,
 		"allstar_services": allStar.ServicesActive,
+		"echolink_ready":   echoLink.Ready,
+		"echolink_links":   len(echoLink.Connections),
 	})
 }
 
@@ -632,6 +637,140 @@ func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	time.Sleep(500 * time.Millisecond)
 	_ = json.NewEncoder(w).Encode(readAllStarStatus())
+}
+
+type echoLinkStatus struct {
+	AllStarNode    int      `json:"allstar_node"`
+	EchoLinkNode   int      `json:"echolink_node"`
+	Callsign       string   `json:"callsign"`
+	Configured     bool     `json:"configured"`
+	ModuleLoaded   bool     `json:"module_loaded"`
+	AsteriskActive bool     `json:"asterisk_active"`
+	Ready          bool     `json:"ready"`
+	Connections    []string `json:"connections"`
+	State          string   `json:"state"`
+	Message        string   `json:"message"`
+}
+
+func readEchoLinkStatus() echoLinkStatus {
+	status := echoLinkStatus{
+		AllStarNode: 530471,
+		Connections: []string{},
+		State:       "not_configured",
+		Message:     "Enter the validated EchoLink -L or -R account details",
+	}
+	status.AsteriskActive = serviceActive("asterisk.service")
+	output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-echolink-status").CombinedOutput()
+	text := string(output)
+	status.Configured = strings.Contains(text, "CONFIGURED yes")
+	status.ModuleLoaded = strings.Contains(text, "MODULE yes")
+	if match := regexp.MustCompile(`(?m)^CALL ([A-Z0-9]+-(?:L|R))$`).FindStringSubmatch(text); len(match) == 2 {
+		status.Callsign = match[1]
+	}
+	if match := regexp.MustCompile(`(?m)^NODE ([0-9]{1,6})$`).FindStringSubmatch(text); len(match) == 2 {
+		status.EchoLinkNode, _ = strconv.Atoi(match[1])
+	}
+	if parts := strings.SplitN(text, "NODES", 2); len(parts) == 2 {
+		seen := make(map[string]bool)
+		for _, callsign := range regexp.MustCompile(`\b[A-Z0-9]{1,9}-(?:L|R)\b`).FindAllString(strings.ToUpper(parts[1]), -1) {
+			if callsign != status.Callsign && !seen[callsign] {
+				seen[callsign] = true
+				status.Connections = append(status.Connections, callsign)
+			}
+		}
+	}
+	if !status.Configured {
+		return status
+	}
+	if err != nil || !status.AsteriskActive || !status.ModuleLoaded {
+		status.State = "service_offline"
+		status.Message = "EchoLink is configured but chan_echolink is not ready"
+		return status
+	}
+	status.Ready = true
+	status.State = "ready"
+	status.Message = fmt.Sprintf("EchoLink %s node %d is attached to AllStar 530471", status.Callsign, status.EchoLinkNode)
+	if len(status.Connections) > 0 {
+		status.State = "linked"
+		status.Message = "EchoLink connected stations: " + strings.Join(status.Connections, ", ")
+	}
+	return status
+}
+
+func validEchoLinkLabel(value string) bool {
+	if value == "" || len(value) > 32 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z') && !(character >= 'A' && character <= 'Z') && !(character >= '0' && character <= '9') && !strings.ContainsRune(" .,'&()+-/", character) {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *Gateway) handleEchoLinkConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(readEchoLinkStatus())
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
+		return
+	}
+
+	var request struct {
+		Callsign string `json:"callsign"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
+		Name     string `json:"name"`
+		QTH      string `json:"qth"`
+		Node     int    `json:"node"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	if err := decoder.Decode(&request); err != nil {
+		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	request.Callsign = strings.ToUpper(strings.TrimSpace(request.Callsign))
+	request.Email = strings.TrimSpace(request.Email)
+	request.Name = strings.TrimSpace(request.Name)
+	request.QTH = strings.TrimSpace(request.QTH)
+	authCallsign := authenticatedUser(r)
+	if request.Callsign != authCallsign+"-L" && request.Callsign != authCallsign+"-R" {
+		http.Error(w, `{"error":"EchoLink callsign must match the authenticated account with -L or -R"}`, http.StatusForbidden)
+		return
+	}
+	if request.Node < 1 || request.Node > 999999 || len(request.Password) < 4 || len(request.Password) > 16 || !regexp.MustCompile(`^[A-Za-z0-9._-]+$`).MatchString(request.Password) {
+		http.Error(w, `{"error":"Enter a valid EchoLink node number and 4-16 character password"}`, http.StatusBadRequest)
+		return
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9.!#$%&'*+/=?^_`+"`"+`{|}~-]+@[A-Za-z0-9.-]+$`).MatchString(request.Email) || len(request.Email) > 32 {
+		http.Error(w, `{"error":"Enter the email address registered with EchoLink (maximum 32 characters)"}`, http.StatusBadRequest)
+		return
+	}
+	if !validEchoLinkLabel(request.Name) || !validEchoLinkLabel(request.QTH) {
+		http.Error(w, `{"error":"Name and location are required and limited to 32 characters"}`, http.StatusBadRequest)
+		return
+	}
+	payload, _ := json.Marshal(request)
+	if err := writeAtomicFile(echoLinkStagePath, append(payload, '\n'), 0600); err != nil {
+		http.Error(w, `{"error":"Unable to stage the protected EchoLink configuration"}`, http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(echoLinkStagePath)
+	if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-configure-echolink").CombinedOutput(); err != nil {
+		_ = output
+		http.Error(w, `{"error":"EchoLink configuration could not be installed"}`, http.StatusInternalServerError)
+		return
+	}
+	time.Sleep(750 * time.Millisecond)
+	_ = json.NewEncoder(w).Encode(readEchoLinkStatus())
 }
 
 type dv30HealthPayload struct {
@@ -1176,8 +1315,33 @@ func (g *Gateway) sendBridgeStatus(state, message string) {
 	data, _ := json.Marshal(map[string]any{
 		"type": "bridge_status", "state": state, "message": message,
 		"a_node": route.ANode, "a_tg": route.ATG, "b_node": route.BNode, "b_tg": route.BTG, "c_node": route.CNode, "c_tg": route.CTG,
+		"talker": g.bridgeTalker(route),
 	})
 	g.broadcastText(data)
+}
+
+func (g *Gateway) bridgeTalker(route BridgeRoute) map[string]any {
+	now := time.Now()
+	busy := route.Active && route.ActiveNode != 0 && now.Before(route.ActiveUntil)
+	holdMilliseconds := int64(0)
+	if busy {
+		holdMilliseconds = route.ActiveUntil.Sub(now).Milliseconds()
+	}
+	network := ""
+	talkgroup := uint32(0)
+	if route.ActiveNode == -1 {
+		network = "Yorkshire Link local DMR master"
+	} else if session := g.sessionByID(route.ActiveNode); session != nil {
+		session.mu.RLock()
+		network = session.Target
+		talkgroup = session.TG
+		session.mu.RUnlock()
+	}
+	return map[string]any{
+		"busy": busy, "node": route.ActiveNode, "network": network,
+		"talkgroup": talkgroup, "stream_id": route.ActiveStream,
+		"hold_milliseconds": holdMilliseconds,
+	}
 }
 
 func (g *Gateway) updateBridgeStatus() {
@@ -3051,6 +3215,7 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 		"ysf2dmr":           converterActive,
 		"freestar":          freeSTARStatus, "brandmeister": brandMeisterStatus,
 		"tgif": tgifStatus, "talkgroup": 23530,
+		"talker": g.bridgeTalker(route),
 		"expires_at": func() string {
 			if until.IsZero() {
 				return ""
@@ -3708,6 +3873,9 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	nodes := make([]map[string]any, 0, len(g.sessions))
 	permanent := g.conferencePermanent.Load()
+	g.bridgeMu.Lock()
+	bridge := g.bridge
+	g.bridgeMu.Unlock()
 	for _, session := range g.sessions {
 		session.mu.RLock()
 		state := "disconnected"
@@ -3731,6 +3899,7 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"nodes":                nodes,
 		"conference_permanent": permanent, "ysf_reflector": serviceActive("ysfreflector.service"),
+		"bridge": map[string]any{"active": bridge.Active, "talker": g.bridgeTalker(bridge)},
 		"capabilities": map[string]any{
 			"native_tx": false, "native_rx": false, "native_ysf_sessions": false,
 			"hardware_vocoder": true, "vocoder_modes": []string{"hw"},

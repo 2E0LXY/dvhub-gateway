@@ -28,6 +28,15 @@ Network credentials are session-only in the client. Permanent conference secrets
 
 The conference supervisor can connect YSF reflector 23530 to selected DMR legs on TG23530. A single-talker gate prevents simultaneous sources from transmitting into the bridge. Use **Disconnect / Pause** before maintenance; permanent mode otherwise restores configured services after restart.
 
+## EchoLink
+
+EchoLink is attached to AllStar node 530471 and therefore shares the existing
+ASL3 PCM-to-DMR conversion. In the dashboard or Android app, enter a callsign
+that EchoLink has already validated with a `-L` or `-R` suffix, its assigned
+EchoLink node number, password, registered email, display name and location.
+The password is cleared from the client after submission and is never shown by
+the status endpoint. The VPS firewall must allow inbound UDP 5198 and 5199.
+
 ## Hardware vocoder
 
 Configure one or two DV30/DV3000 endpoints present in `/etc/dvhub/vocoder-targets.txt`. Use a private WireGuard/Tailscale address or a LAN address; do not expose the compact UDP broker directly to the Internet. The health display shows reachability and hardware counters.
