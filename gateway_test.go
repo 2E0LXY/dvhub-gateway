@@ -11,13 +11,57 @@ import (
 	"time"
 )
 
-func TestWebSocketRequiresProxyAuthenticatedIdentity(t *testing.T) {
+func TestWebSocketRequiresOneTimeTicket(t *testing.T) {
 	gateway := &Gateway{}
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	gateway.handleWS(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated websocket returned %d, want 401", recorder.Code)
+	}
+}
+
+func TestWebSocketTicketIsAuthenticatedAndSingleUse(t *testing.T) {
+	gateway := &Gateway{wsTickets: make(map[string]wsTicket)}
+
+	unauthenticated := httptest.NewRecorder()
+	gateway.handleWSTicket(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/ws_ticket", nil))
+	if unauthenticated.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated ticket request returned %d, want 401", unauthenticated.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/ws_ticket", nil)
+	request.Header.Set("X-DVHub-Authenticated-User", "2e0lxy")
+	recorder := httptest.NewRecorder()
+	gateway.handleWSTicket(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("authenticated ticket request returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var payload struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Ticket) != 64 {
+		t.Fatalf("ticket length is %d, want 64", len(payload.Ticket))
+	}
+	if user := gateway.consumeWSTicket(payload.Ticket); user != "2E0LXY" {
+		t.Fatalf("ticket resolved to %q, want 2E0LXY", user)
+	}
+	if user := gateway.consumeWSTicket(payload.Ticket); user != "" {
+		t.Fatalf("ticket was reusable by %q", user)
+	}
+}
+
+func TestDashboardResponseDisablesCaching(t *testing.T) {
+	handler := noStoreDashboard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/dashboard.html?build=test", nil))
+	if cacheControl := recorder.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("dashboard Cache-Control is %q, want no-store", cacheControl)
 	}
 }
 

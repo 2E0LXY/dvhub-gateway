@@ -342,6 +342,13 @@
         </div>
     </div>
 
+    <div id="ws-failure-banner" class="auth-failure-banner hidden" role="status" aria-live="polite">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <span><strong>Live WebSocket unavailable.</strong> Automatic retries have stopped; status monitoring remains available.</span>
+            <button type="button" class="btn-cyber" onclick="retryWebSocket()">RETRY LIVE LINK</button>
+        </div>
+    </div>
+
     <!-- Unified dashboard navigation -->
     <nav class="tab-nav">
         <a class="tab-btn active" href="#view-dashboard">Overview</a>
@@ -947,6 +954,9 @@
         let dashboardAuthFailed = false;
         let wsReconnectTimer = null;
         let wsReconnectDelay = 2000;
+        let wsReconnectAttempts = 0;
+        let wsConnectPending = false;
+        const MAX_WS_RECONNECT_ATTEMPTS = 5;
         const dashboardPollTimers = [];
         const nativeFetch = window.fetch.bind(window);
 
@@ -999,6 +1009,44 @@
                 if (!dashboardAuthFailed) console.error('[AUTH] Session preflight failed:', error);
                 return false;
             }
+        }
+
+        async function requestWebSocketTicket() {
+            const response = await fetch('/api/ws_ticket?_=' + Date.now(), {
+                cache: 'no-store',
+                credentials: 'include'
+            });
+            if (!response.ok) throw new Error('WebSocket ticket HTTP ' + response.status);
+            const payload = await response.json();
+            if (!payload.ticket || !/^[a-f0-9]{64}$/.test(payload.ticket)) {
+                throw new Error('Invalid WebSocket ticket');
+            }
+            return payload.ticket;
+        }
+
+        function retryWebSocket() {
+            if (dashboardAuthFailed) return;
+            wsReconnectAttempts = 0;
+            wsReconnectDelay = 2000;
+            document.getElementById('ws-failure-banner')?.classList.add('hidden');
+            connectWS();
+        }
+
+        function scheduleWebSocketReconnect() {
+            if (dashboardAuthFailed) return;
+            wsReconnectAttempts += 1;
+            if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+                clearTimeout(wsReconnectTimer);
+                wsReconnectTimer = null;
+                document.getElementById('ws-failure-banner')?.classList.remove('hidden');
+                console.error('[WS] Retry limit reached; automatic reconnect stopped');
+                return;
+            }
+            const delay = wsReconnectDelay;
+            wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
+            console.log(`[WS] Disconnected; retrying in ${delay / 1000}s`);
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = setTimeout(connectWS, delay);
         }
 
         const networkByNode = {
@@ -2329,12 +2377,14 @@
             saveLinkState();
         }
 
-        function connectWS() {
-            if (dashboardAuthFailed || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+        async function connectWS() {
+            if (dashboardAuthFailed || wsConnectPending || ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
             const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            
+            wsConnectPending = true;
             try {
-                ws = new WebSocket(proto + '//' + window.location.host + '/ws');
+                const ticket = await requestWebSocketTicket();
+                if (dashboardAuthFailed) return;
+                ws = new WebSocket(proto + '//' + window.location.host + '/ws?ticket=' + encodeURIComponent(ticket));
                 ws.binaryType = "arraybuffer";
                 
                 ws.onopen = () => {
@@ -2342,6 +2392,8 @@
                     clearTimeout(wsReconnectTimer);
                     wsReconnectTimer = null;
                     wsReconnectDelay = 2000;
+                    wsReconnectAttempts = 0;
+                    document.getElementById('ws-failure-banner')?.classList.add('hidden');
                     document.getElementById('ws-indicator').className = 'status-indicator status-ok';
                     
                     if (linkState.active) {
@@ -2369,12 +2421,7 @@
                     ws = null;
                     document.getElementById('ws-indicator').className = 'status-indicator status-err';
                     if(isTransmitting) stopTX();
-                    if (dashboardAuthFailed) return;
-                    const delay = wsReconnectDelay;
-                    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
-                    console.log(`[WS] Disconnected; retrying in ${delay / 1000}s`);
-                    clearTimeout(wsReconnectTimer);
-                    wsReconnectTimer = setTimeout(connectWS, delay);
+                    scheduleWebSocketReconnect();
                 };
                 
                 ws.onerror = (error) => {
@@ -2413,12 +2460,9 @@
             } catch(err) {
                 console.error('[WS] Connection error:', err);
                 document.getElementById('ws-indicator').className = 'status-indicator status-err';
-                if (!dashboardAuthFailed) {
-                    const delay = wsReconnectDelay;
-                    wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30000);
-                    clearTimeout(wsReconnectTimer);
-                    wsReconnectTimer = setTimeout(connectWS, delay);
-                }
+                scheduleWebSocketReconnect();
+            } finally {
+                wsConnectPending = false;
             }
         }
         

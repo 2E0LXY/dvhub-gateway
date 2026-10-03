@@ -13,7 +13,7 @@
         -Server
     }
 
-    @protected not path /ysf-status.html /api/public/ysf_dashboard
+    @protected not path /ysf-status.html /api/public/ysf_dashboard /ws
     # `basicauth` is the pre-2.8 name and remains a supported alias in current
     # Caddy. Keeping it here lets the Debian-packaged Caddy validate this file.
     basicauth @protected {
@@ -24,10 +24,12 @@
     # upstream route below replaces it with Caddy's authenticated username.
     request_header -X-DVHub-Authenticated-User
 
+    @dashboard path / /dashboard.html
+    header @dashboard Cache-Control "no-store, no-cache, must-revalidate"
+
     reverse_proxy /ws unix//run/dvhub/gateway.sock {
         flush_interval -1
         header_up -X-DVHub-Authenticated-User
-        header_up X-DVHub-Authenticated-User {http.auth.user.id}
     }
     reverse_proxy /api/* unix//run/dvhub/gateway.sock {
         header_up -X-DVHub-Authenticated-User

@@ -100,7 +100,7 @@ text = path.read_text(encoding="utf-8")
 old_count = text.count(old)
 new_count = text.count(new)
 expected_count = old_count or new_count
-if expected_count not in (3, 4) or (old_count and new_count):
+if expected_count not in (3, 4, 6) or (old_count and new_count):
     raise SystemExit(
         f"refusing unexpected Caddy layout: tcp={old_count}, unix={new_count}"
     )
@@ -118,7 +118,8 @@ for index in proxy_indexes:
             nearest_handle = stripped
             break
     is_public = nearest_handle.startswith("handle /api/public/ysf_dashboard ")
-    if is_public:
+    is_ticket_route = nearest_handle.startswith("handle /ws ")
+    if is_public or is_ticket_route:
         continue
 
     if "{" not in lines[index].split(new, 1)[1]:
@@ -158,6 +159,46 @@ for index, replacement in reversed(edits):
         lines[index:index + 1] = replacement
     else:
         lines[index:index] = replacement
+
+# The live host-specific Caddyfile has one public YSF handle and one protected
+# catch-all handle per site. Put /ws ahead of the catch-all so mobile WebViews
+# can present a short-lived application ticket instead of relying on Basic Auth
+# credentials being copied into the WebSocket upgrade.
+if any(line.strip().startswith("handle /api/public/ysf_dashboard ") for line in lines):
+    ws_handle_count = sum(1 for line in lines if line.strip().startswith("handle /ws "))
+    protected_handle_indexes = []
+    for index, line in enumerate(lines):
+        if line.strip() != "handle {":
+            continue
+        indent_size = len(line) - len(line.lstrip())
+        cursor = index + 1
+        block = []
+        while cursor < len(lines):
+            candidate = lines[cursor]
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() == "}" and candidate_indent == indent_size:
+                break
+            block.append(candidate)
+            cursor += 1
+        if any("basicauth" in candidate or "basic_auth" in candidate for candidate in block):
+            protected_handle_indexes.append(index)
+    if ws_handle_count not in (0, len(protected_handle_indexes)):
+        raise SystemExit(
+            f"refusing partial WebSocket ticket routing: ws={ws_handle_count}, protected={len(protected_handle_indexes)}"
+        )
+    if ws_handle_count == 0:
+        for index in reversed(protected_handle_indexes):
+            indent = lines[index][: len(lines[index]) - len(lines[index].lstrip())]
+            ws_handle = [
+                indent + "handle /ws {\n",
+                indent + f"    {new} {{\n",
+                indent + "        flush_interval -1\n",
+                indent + "        header_up -X-DVHub-Authenticated-User\n",
+                indent + "    }\n",
+                indent + "}\n",
+                "\n",
+            ]
+            lines[index:index] = ws_handle
 
 updated = "".join(lines)
 tmp = path.with_name(path.name + ".new")

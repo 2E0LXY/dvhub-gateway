@@ -86,6 +86,11 @@ type WSMessage struct {
 	data        []byte
 }
 
+type wsTicket struct {
+	user      string
+	expiresAt time.Time
+}
+
 type UserSession struct {
 	ID                   int
 	Port                 int
@@ -258,6 +263,8 @@ type Gateway struct {
 	masterMu            sync.RWMutex
 	masterClients       map[uint32]*DMRMasterClient
 	masterConn          *net.UDPConn
+	wsTicketMu          sync.Mutex
+	wsTickets           map[string]wsTicket
 }
 
 type GatewayConfig struct {
@@ -299,6 +306,7 @@ func main() {
 		tgTimes:       make(map[string]time.Time),
 		rejectedDMR:   make(map[uint32]time.Time),
 		masterClients: make(map[uint32]*DMRMasterClient),
+		wsTickets:     make(map[string]wsTicket),
 	}
 	go gw.updateRegistriesDaily()
 	go gw.updateYSFRegistryHourly()
@@ -325,6 +333,7 @@ func main() {
 	go gw.runYorkshireConferenceSupervisor()
 
 	http.HandleFunc("/ws", gw.handleWS)
+	http.HandleFunc("/api/ws_ticket", gw.handleWSTicket)
 	http.HandleFunc("/api/state", gw.handleState)
 	http.HandleFunc("/api/system", handleSystemStats)
 	http.HandleFunc("/api/vocoder/health", gw.handleVocoderHealth)
@@ -343,7 +352,7 @@ func main() {
 	http.HandleFunc("/api/allstar_config", gw.handleAllStarConfig)
 	http.HandleFunc("/api/echolink_config", gw.handleEchoLinkConfig)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
-	http.Handle("/", http.FileServer(http.Dir("/var/www/dvhub")))
+	http.Handle("/", noStoreDashboard(http.FileServer(http.Dir("/var/www/dvhub"))))
 
 	fmt.Println("[SYS] Yorkshire Link HUB v2.0 - hardware AMBE only")
 	if runtime.GOOS == "windows" {
@@ -893,6 +902,71 @@ func authenticatedUser(r *http.Request) string {
 	return strings.ToUpper(strings.TrimSpace(r.Header.Get("X-DVHub-Authenticated-User")))
 }
 
+func noStoreDashboard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/dashboard.html" {
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (g *Gateway) handleWSTicket(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	user := authenticatedUser(r)
+	if user == "" {
+		http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
+		return
+	}
+	random := make([]byte, 32)
+	if _, err := cryptorand.Read(random); err != nil {
+		http.Error(w, `{"error":"Unable to create WebSocket ticket"}`, http.StatusInternalServerError)
+		return
+	}
+	token := fmt.Sprintf("%x", random)
+	now := time.Now()
+	g.wsTicketMu.Lock()
+	if g.wsTickets == nil {
+		g.wsTickets = make(map[string]wsTicket)
+	}
+	for existing, ticket := range g.wsTickets {
+		if !ticket.expiresAt.After(now) {
+			delete(g.wsTickets, existing)
+		}
+	}
+	if len(g.wsTickets) >= 256 {
+		g.wsTicketMu.Unlock()
+		http.Error(w, `{"error":"Too many pending WebSocket connections"}`, http.StatusServiceUnavailable)
+		return
+	}
+	g.wsTickets[token] = wsTicket{user: user, expiresAt: now.Add(30 * time.Second)}
+	g.wsTicketMu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]any{"ticket": token, "expires_in_seconds": 30})
+}
+
+func (g *Gateway) consumeWSTicket(token string) string {
+	if len(token) != 64 {
+		return ""
+	}
+	g.wsTicketMu.Lock()
+	defer g.wsTicketMu.Unlock()
+	ticket, ok := g.wsTickets[token]
+	if !ok {
+		return ""
+	}
+	delete(g.wsTickets, token)
+	if !ticket.expiresAt.After(time.Now()) {
+		return ""
+	}
+	return ticket.user
+}
+
 func requireControlAuth(w http.ResponseWriter, r *http.Request) bool {
 	if authenticatedUser(r) == "" {
 		http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
@@ -978,7 +1052,7 @@ func (g *Gateway) reportRejectedDMR(id uint32) {
 }
 
 func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
-	user := authenticatedUser(r)
+	user := g.consumeWSTicket(r.URL.Query().Get("ticket"))
 	if user == "" {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
