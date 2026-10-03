@@ -171,7 +171,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private fun showSettings(): Boolean {
         val b = ViewSettingsBinding.inflate(layoutInflater); settingsView = b; replace(b.root)
         b.serverUrl.setText(settings.serverUrl); b.username.setText(settings.username); b.password.setText(settings.password)
-		b.callsign.setText(settings.callsign); b.dmrId.setText(settings.dmrId); b.essid.setText(settings.essid); b.manualDmrId.setText(settings.manualDmrId)
+        b.callsign.setText(settings.callsign); b.dmrId.setText(settings.dmrId); b.essid.setText(settings.essid); b.manualDmrId.setText(settings.manualDmrId)
         b.dv30Count.adapter = darkAdapter(listOf("One DV30 / DV3000", "Two DV30 / DV3000"))
         b.lookupCallsign.setOnClickListener { lookupCallsign(b) }
         b.useHardwareVocoder.setOnClickListener {
@@ -188,8 +188,15 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     }
 
     private fun saveSettings(b: ViewSettingsBinding, persist: Boolean) {
-		val candidate = GatewaySettings(b.serverUrl.text.toString().trimEnd('/'), b.username.text.toString(), b.password.text.toString(),
-			b.callsign.text.toString().uppercase(Locale.UK), b.dmrId.text.toString(), b.essid.text.toString().padStart(2, '0'), b.manualDmrId.text.toString())
+        val candidate = GatewaySettings(
+            b.serverUrl.text.toString().trimEnd('/'),
+            b.username.text.toString(),
+            b.password.text.toString(),
+            b.callsign.text.toString().uppercase(Locale.UK),
+            b.dmrId.text.toString(),
+            b.essid.text.toString().padStart(2, '0'),
+            b.manualDmrId.text.toString()
+        )
         if (!candidate.serverUrl.startsWith("https://") || candidate.password.isBlank() || candidate.dmrId.length != 7) {
             b.settingsStatus.text = "Use an HTTPS URL, gateway password and valid 7-digit DMR ID"; return
         }
