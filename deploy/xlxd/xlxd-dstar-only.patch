@@ -1,0 +1,59 @@
+diff --git a/src/cprotocols.cpp b/src/cprotocols.cpp
+index bed9744..c6bed71 100644
+--- a/src/cprotocols.cpp
++++ b/src/cprotocols.cpp
+@@ -30,5 +29,0 @@
+-#include "cdmrplusprotocol.h"
+-#include "cdmrmmdvmprotocol.h"
+-#include "cysfprotocol.h"
+-#include "cg3protocol.h"
+-#include "cimrsprotocol.h"
+@@ -93,4 +87,0 @@ bool CProtocols::Init(void)
+-        // create and initialize DMRPLUS
+-        delete m_Protocols[4];
+-        m_Protocols[4] = new CDmrplusProtocol;
+-        ok &= m_Protocols[4]->Init();
+@@ -98,4 +88,0 @@ bool CProtocols::Init(void)
+-        // create and initialize DMRMMDVM
+-        delete m_Protocols[5];
+-        m_Protocols[5] = new CDmrmmdvmProtocol;
+-        ok &= m_Protocols[5]->Init();
+@@ -103,4 +89,0 @@ bool CProtocols::Init(void)
+-        // create and initialize YSF
+-        delete m_Protocols[6];
+-        m_Protocols[6] = new CYsfProtocol;
+-        ok &= m_Protocols[6]->Init();
+@@ -108,4 +90,0 @@ bool CProtocols::Init(void)
+-        // create and initialize G3
+-        delete m_Protocols[7];
+-        m_Protocols[7] = new CG3Protocol;
+-        ok &= m_Protocols[7]->Init();
+@@ -113,4 +91,0 @@ bool CProtocols::Init(void)
+-        // create and initialize IMRS
+-        delete m_Protocols[8];
+-        m_Protocols[8] = new CImrsProtocol;
+-        ok &= m_Protocols[8]->Init();
+diff --git a/src/main.h b/src/main.h
+index 26b5ba2..d8f06ef 100644
+--- a/src/main.h
++++ b/src/main.h
+@@ -57 +57,2 @@
+-#define RUN_AS_DAEMON
++// systemd owns process supervision; keep xlxd in the foreground.
++//#define RUN_AS_DAEMON
+@@ -73 +74 @@
+-#define NB_OF_PROTOCOLS                 9
++#define NB_OF_PROTOCOLS                 4
+@@ -179,6 +180,6 @@
+-#define XML_PATH                        "/var/log/xlxd.xml"
+-#define WHITELIST_PATH                  "/xlxd/xlxd.whitelist"
+-#define BLACKLIST_PATH                  "/xlxd/xlxd.blacklist"
+-#define INTERLINKLIST_PATH              "/xlxd/xlxd.interlink"
+-#define TERMINALOPTIONS_PATH            "/xlxd/xlxd.terminal"
+-#define DEBUGDUMP_PATH                  "/var/log/xlxd.debug"
++#define XML_PATH                        "/var/lib/xlxd/xlxd.xml"
++#define WHITELIST_PATH                  "/etc/xlxd/xlxd.whitelist"
++#define BLACKLIST_PATH                  "/etc/xlxd/xlxd.blacklist"
++#define INTERLINKLIST_PATH              "/etc/xlxd/xlxd.interlink"
++#define TERMINALOPTIONS_PATH            "/etc/xlxd/xlxd.terminal"
++#define DEBUGDUMP_PATH                  "/var/lib/xlxd/xlxd.debug"

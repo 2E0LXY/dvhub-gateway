@@ -9,6 +9,8 @@
 
 A control and monitoring gateway for DMR, YSF and cross-mode digital-voice services. AMBE encode/decode requires an allowlisted DV30/DV3000 hardware service. Browser-native DMR/YSF transmission is deliberately disabled until the native framers implement the full published wire formats; live cross-mode voice uses the MMDVM gateway services.
 
+The repository also contains a staged, fail-closed XLXd/DVxCode integration. It is not enabled by default and cannot start the DVxCode bridge until the codec source, validation record and configuration are present; see `docs/DVXCODE_INTEGRATION.md`.
+
 ## 🎯 Features
 
 ### Core Capabilities
