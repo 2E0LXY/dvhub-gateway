@@ -116,10 +116,12 @@ index 3a9d0f9..fdfe80a 100644
  				if( (m_usrpFrame[20] == USRP_TYPE_TEXT) && (m_usrpFrame[32] == TLV_TAG_SET_INFO) ){
 -					m_usrpcs = (char *)(m_usrpFrame + 46);
 +					std::string candidate((char *)(m_usrpFrame + 46));
-+					if (validIdentityCallsign(candidate))
-+						m_usrpcs = candidate;
-+					else if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5)
++					if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5)
 +						m_usrpcs = externalCallsign;
++					else if (validIdentityCallsign(candidate))
++						m_usrpcs = candidate;
++					else
++						m_usrpcs.clear();
  					
  					if(!m_usrpFrames){	
  						m_conv.putUSRPHeader();
@@ -146,4 +148,3 @@ index 3a9d0f9..fdfe80a 100644
  
  	::LogFinalise();
  
-

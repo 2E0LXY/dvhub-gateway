@@ -55,9 +55,13 @@ install -m 0755 /usr/local/bin/USRP2DMR-DV30 "$backup_dir/USRP2DMR-DV30"
 install -m 0755 /usr/local/bin/USRP2M17 "$backup_dir/USRP2M17"
 installed=1
 
+install -m 0755 "$work_dir/mmdvm-cm/USRP2DMR/USRP2DMR" /usr/local/bin/USRP2DMR-DV30.next
+install -m 0755 "$work_dir/mmdvm-cm/USRP2M17/USRP2M17" /usr/local/bin/USRP2M17.next
+runuser -u allstarbridge -- /usr/local/bin/USRP2DMR-DV30.next --version >/dev/null
+runuser -u m17 -- /usr/local/bin/USRP2M17.next --version >/dev/null
 systemctl stop usrp2dmr.service usrp2m17.service
-install -m 0755 "$work_dir/mmdvm-cm/USRP2DMR/USRP2DMR" /usr/local/bin/USRP2DMR-DV30
-install -m 0755 "$work_dir/mmdvm-cm/USRP2M17/USRP2M17" /usr/local/bin/USRP2M17
+mv -f /usr/local/bin/USRP2DMR-DV30.next /usr/local/bin/USRP2DMR-DV30
+mv -f /usr/local/bin/USRP2M17.next /usr/local/bin/USRP2M17
 install -m 0644 "$script_dir/usrp2dmr.service" /etc/systemd/system/usrp2dmr.service
 install -m 0644 "$repo_root/deploy/m17/usrp2m17.service" /etc/systemd/system/usrp2m17.service
 systemctl daemon-reload

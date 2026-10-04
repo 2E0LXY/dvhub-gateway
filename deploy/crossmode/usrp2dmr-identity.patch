@@ -102,7 +102,7 @@ index 6d0acd9..0edcd89 100644
  				if( (m_usrpFrame[20] == USRP_TYPE_TEXT) && (m_usrpFrame[32] == TLV_TAG_SET_INFO) ){
  					const uint32_t dmrsrc = (m_usrpFrame[34] << 16) | (m_usrpFrame[35] << 8) | m_usrpFrame[36];
  					m_dmrSrc = (dmrsrc > 100000) ? dmrsrc : m_defsrcid;
-+					if (dmrsrc <= 100000 && externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5) {
++					if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5) {
 +						const uint32_t mapped = m_dmrlookup->findID(externalCallsign);
 +						if (mapped > 100000U)
 +							m_dmrSrc = mapped;
@@ -148,4 +148,3 @@ index 6d0acd9..0edcd89 100644
  
  	if (m_xlxReflectors != NULL)
  		delete m_xlxReflectors;
-
