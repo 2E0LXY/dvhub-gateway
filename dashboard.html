@@ -433,6 +433,37 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Comprehensive operational health -->
+            <div class="section-card">
+                <div class="section-header">
+                    <span>Live Health Checks</span>
+                    <span class="chip chip-err" id="health-summary">FAULTS PRESENT</span>
+                </div>
+                <div class="p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2" id="health-check-grid">
+                    <div class="data-row"><span class="data-label">HTTPS &amp; Login</span><span class="chip chip-err" id="health-auth">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Caddy Proxy</span><span class="chip chip-err" id="health-caddy">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Dashboard API</span><span class="chip chip-err" id="health-api">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Live WebSocket</span><span class="chip chip-err" id="health-websocket">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">DVHub Gateway</span><span class="chip chip-err" id="health-gateway">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">GitOps Deployment</span><span class="chip chip-err" id="health-gitops">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Protected Configuration</span><span class="chip chip-err" id="health-config">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Europe/London Clock</span><span class="chip chip-err" id="health-timezone">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Swap Protection</span><span class="chip chip-err" id="health-swap">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">YSF Reflector</span><span class="chip chip-err" id="health-ysf">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">YSF → DMR Bridge</span><span class="chip chip-err" id="health-ysf-bridge">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">P25 Reflector</span><span class="chip chip-err" id="health-p25">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">P25 → DMR Bridge</span><span class="chip chip-err" id="health-p25-bridge">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">NXDN Reflector</span><span class="chip chip-err" id="health-nxdn">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">NXDN → DMR Bridge</span><span class="chip chip-err" id="health-nxdn-bridge">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">Local DMR Master</span><span class="chip chip-err" id="health-master">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">TG23530 Conference</span><span class="chip chip-err" id="health-conference">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">AllStar 530471</span><span class="chip chip-err" id="health-allstar">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">EchoLink 621907</span><span class="chip chip-err" id="health-echolink">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">DV30 AMBE Hardware</span><span class="chip chip-err" id="health-vocoder">FAULT</span></div>
+                </div>
+                <div class="px-4 pb-3 text-[8px] text-gray-500" id="health-detail">Waiting for the first complete health pass…</div>
+            </div>
             
             <!-- Gateway Activity -->
             <div class="section-card">
@@ -1341,6 +1372,77 @@
         
         let systemStatsBusy = false;
         let systemStatsTimer = null;
+        let healthMatrixBusy = false;
+
+        function setHealth(id, healthy, goodText = 'GOOD', faultText = 'FAULT') {
+            const chip = document.getElementById(id);
+            if (!chip) return;
+            chip.textContent = healthy ? goodText : faultText;
+            chip.className = healthy ? 'chip chip-ok' : 'chip chip-err';
+            chip.dataset.healthy = healthy ? '1' : '0';
+        }
+
+        function updateHealthSummary() {
+            const checks = [...document.querySelectorAll('#health-check-grid .chip')];
+            const faults = checks.filter(check => check.dataset.healthy !== '1').length;
+            const summary = document.getElementById('health-summary');
+            if (!summary) return;
+            summary.textContent = faults === 0 ? 'ALL CHECKS GOOD' : `${faults} FAULT${faults === 1 ? '' : 'S'}`;
+            summary.className = faults === 0 ? 'chip chip-ok' : 'chip chip-err';
+        }
+
+        async function updateDynamicHealth() {
+            if (healthMatrixBusy || dashboardAuthFailed) return;
+            healthMatrixBusy = true;
+            try {
+                const paths = [
+                    '/api/yorkshire_conference', '/api/allstar_config',
+                    '/api/echolink_config', '/api/vocoder/health'
+                ];
+                const responses = await Promise.all(paths.map(path => fetch(path + '?_=' + Date.now(), {
+                    cache: 'no-store', credentials: 'include'
+                })));
+                const payloads = await Promise.all(responses.map(async response => {
+                    if (!response.ok) throw new Error(`Health endpoint HTTP ${response.status}`);
+                    return response.json();
+                }));
+                const [conference, allstar, echolink, vocoder] = payloads;
+                setHealth('health-conference', conference.ready === true, 'ACTIVE');
+                setHealth('health-allstar', allstar.registered === true && allstar.services_active === true, 'ACTIVE');
+                setHealth('health-echolink', echolink.ready === true, 'ACTIVE');
+                setHealth('health-vocoder', vocoder.online === true, 'ONLINE');
+                document.getElementById('health-detail').textContent = `Revision ${document.getElementById('health-gitops')?.title || 'unknown'} · Last complete check ${new Date().toLocaleTimeString()}`;
+            } catch (error) {
+                console.error('[HEALTH] Complete health pass failed:', error);
+            } finally {
+                healthMatrixBusy = false;
+                updateHealthSummary();
+            }
+        }
+
+        function updateSystemHealth(stats) {
+            setHealth('health-auth', location.protocol === 'https:', 'GOOD');
+            setHealth('health-caddy', stats.caddy_service === true, 'ACTIVE');
+            setHealth('health-api', true, 'GOOD');
+            setHealth('health-websocket', Boolean(ws && ws.readyState === WebSocket.OPEN), 'ACTIVE');
+            setHealth('health-gateway', stats.gateway_service === true, 'ACTIVE');
+            const revisionGood = stats.gitops_timer === true && /^[a-f0-9]{40}$/.test(String(stats.gitops_revision || ''));
+            setHealth('health-gitops', revisionGood, 'SYNCED');
+            const gitops = document.getElementById('health-gitops');
+            if (gitops) gitops.title = String(stats.gitops_revision || 'revision unavailable');
+            setHealth('health-config', stats.config_access === true, 'READABLE');
+            setHealth('health-timezone', stats.timezone_correct === true, 'GOOD');
+            setHealth('health-swap', stats.swap_active === true, 'ACTIVE');
+            setHealth('health-ysf', stats.ysf_reflector === true, 'ACTIVE');
+            setHealth('health-ysf-bridge', stats.ysf_bridge === true, 'ACTIVE');
+            setHealth('health-p25', stats.p25_reflector === true, 'ACTIVE');
+            setHealth('health-p25-bridge', stats.p25_bridge === true, 'ACTIVE');
+            setHealth('health-nxdn', stats.nxdn_reflector === true, 'ACTIVE');
+            setHealth('health-nxdn-bridge', stats.nxdn_bridge === true, 'ACTIVE');
+            setHealth('health-master', stats.local_master === true, 'ACTIVE');
+            updateHealthSummary();
+            void updateDynamicHealth();
+        }
 
         async function updateSystemStats() {
             if (systemStatsBusy) return;
@@ -1373,10 +1475,13 @@
                 updateReflectorChip('p25-bridge-status', Boolean(stats.p25_bridge));
                 updateReflectorChip('nxdn-service-status', Boolean(stats.nxdn_reflector));
                 updateReflectorChip('nxdn-bridge-status', Boolean(stats.nxdn_bridge));
+                updateSystemHealth(stats);
             } catch (err) {
                 console.error('[SYS] Telemetry update failed:', err);
                 document.getElementById('hw-cpu').innerText = '-';
                 document.getElementById('hw-updated').innerText = 'UPDATE FAILED';
+                setHealth('health-api', false);
+                updateHealthSummary();
             } finally {
                 systemStatsBusy = false;
             }
@@ -2414,6 +2519,8 @@
                     wsReconnectAttempts = 0;
                     document.getElementById('ws-failure-banner')?.classList.add('hidden');
                     document.getElementById('ws-indicator').className = 'status-indicator status-ok';
+                    setHealth('health-websocket', true, 'ACTIVE');
+                    updateHealthSummary();
                     
                     if (linkState.active) {
                         ws.send(JSON.stringify({ 
@@ -2439,6 +2546,8 @@
                 ws.onclose = () => {
                     ws = null;
                     document.getElementById('ws-indicator').className = 'status-indicator status-err';
+                    setHealth('health-websocket', false);
+                    updateHealthSummary();
                     if(isTransmitting) stopTX();
                     scheduleWebSocketReconnect();
                 };
@@ -2446,6 +2555,8 @@
                 ws.onerror = (error) => {
                     console.error('[WS] Error:', error);
                     document.getElementById('ws-indicator').className = 'status-indicator status-err';
+                    setHealth('health-websocket', false);
+                    updateHealthSummary();
                 };
                 
                 ws.onmessage = (e) => {

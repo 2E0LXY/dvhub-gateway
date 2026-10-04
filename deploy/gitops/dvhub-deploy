@@ -44,6 +44,11 @@ if [[ $EUID -ne 0 ]]; then
     exit 77
 fi
 
+# The gateway must be able to traverse this directory to read its protected
+# root:dvhub configuration files. Repair installations created by older
+# bootstrap revisions before the early "already current" exit below.
+install -d -o root -g dvhub -m 0750 /etc/dvhub
+
 install -d -m 0750 \
     "$STATE_DIR" \
     "$BACKUP_DIR" \

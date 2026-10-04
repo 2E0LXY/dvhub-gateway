@@ -11,7 +11,8 @@ for command in git go caddy curl python3 flock systemd-analyze; do
     command -v "$command" >/dev/null || { echo "missing required command: $command" >&2; exit 69; }
 done
 
-install -d -m 0750 /etc/dvhub /var/lib/dvhub-deploy
+install -d -o root -g dvhub -m 0750 /etc/dvhub
+install -d -m 0750 /var/lib/dvhub-deploy
 install -m 0755 "$script_dir/dvhub-deploy" /usr/local/sbin/dvhub-deploy
 install -m 0644 "$script_dir/dvhub-deploy.service" /etc/systemd/system/dvhub-deploy.service
 install -m 0644 "$script_dir/dvhub-deploy.timer" /etc/systemd/system/dvhub-deploy.timer

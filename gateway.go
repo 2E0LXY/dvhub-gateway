@@ -503,21 +503,59 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	allStar := readAllStarStatus()
 	echoLink := readEchoLinkStatus()
+	gitRevision := readSmallTextFile("/var/lib/dvhub-deploy/current-sha", 128)
+	timezone := readSmallTextFile("/etc/timezone", 128)
+	_, conferenceConfigErr := loadYorkshireConferenceConfig()
+	vocoderTargets := configuredVocoderTargets()
 	json.NewEncoder(w).Encode(map[string]any{
 		"hostname":         hostname,
 		"kernel":           strings.TrimSpace(string(kernelData)),
 		"platform":         readPlatform(),
 		"cpu_load":         readCPULoad(),
 		"temp_c":           readCPUTemperature(),
+		"gateway_service":  serviceActive("dvhub-gateway.service"),
+		"caddy_service":    serviceActive("caddy.service"),
+		"gitops_timer":     serviceActive("dvhub-deploy.timer"),
+		"gitops_revision":  gitRevision,
+		"timezone":         timezone,
+		"timezone_correct": timezone == "Europe/London",
+		"swap_active":      swapActive(),
+		"config_access":    conferenceConfigErr == nil,
+		"vocoder_config":   len(vocoderTargets) > 0,
+		"ysf_reflector":    serviceActive("ysfreflector.service"),
+		"ysf_bridge":       serviceActive("ysf2dmr.service"),
 		"p25_reflector":    serviceActive("p25reflector.service"),
 		"p25_bridge":       serviceActive("p252dmr.service"),
 		"nxdn_reflector":   serviceActive("nxdnreflector.service"),
 		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
+		"local_master":     serviceActive("dvhub-gateway.service"),
 		"allstar_bridge":   allStar.Registered,
 		"allstar_services": allStar.ServicesActive,
 		"echolink_ready":   echoLink.Ready,
 		"echolink_links":   len(echoLink.Connections),
 	})
+}
+
+func readSmallTextFile(path string, maximum int64) string {
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maximum))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func swapActive() bool {
+	data, err := os.ReadFile("/proc/swaps")
+	if err != nil {
+		return false
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	return len(lines) > 1
 }
 
 type allStarStatus struct {

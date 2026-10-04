@@ -138,6 +138,29 @@ func TestStateDoesNotExposeResolvedHomeAddress(t *testing.T) {
 	}
 }
 
+func TestSystemStatsIncludesOperationalHealthFields(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	handleSystemStats(recorder, httptest.NewRequest(http.MethodGet, "/api/system", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("system status returned %d", recorder.Code)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{
+		"gateway_service", "caddy_service", "gitops_timer", "gitops_revision",
+		"timezone", "timezone_correct", "swap_active", "config_access",
+		"vocoder_config", "ysf_reflector", "ysf_bridge", "p25_reflector",
+		"p25_bridge", "nxdn_reflector", "nxdn_bridge", "local_master",
+		"allstar_bridge", "allstar_services", "echolink_ready",
+	} {
+		if _, ok := payload[field]; !ok {
+			t.Errorf("system status is missing %q", field)
+		}
+	}
+}
+
 func TestDMRFingerprintIgnoresNetworkRewrites(t *testing.T) {
 	frameA := make([]byte, 55)
 	copy(frameA[:4], "DMRD")
