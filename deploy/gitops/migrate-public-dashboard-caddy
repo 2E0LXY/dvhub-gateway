@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || { echo "Run as root" >&2; exit 1; }
+
+readonly CADDYFILE=/etc/caddy/Caddyfile
+readonly MIGRATION_ROOT=/var/lib/dvhub-deploy/migrations
+readonly PUBLIC_HOST=ai.2e0lxy.uk
+readonly PUBLIC_IP=194.146.49.25
+umask 077
+
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_dir="$MIGRATION_ROOT/public-dashboard-$timestamp"
+candidate="$(mktemp /tmp/dvhub-public-caddy.XXXXXX)"
+cleanup() { rm -f -- "$candidate"; }
+trap cleanup EXIT
+
+install -d -m 0700 "$backup_dir"
+cp -a -- "$CADDYFILE" "$backup_dir/Caddyfile"
+
+# Preserve the already-installed operator and bcrypt hash without printing
+# either value. The migration changes routing only; it never resets auth.
+read -r admin_user admin_hash < <(
+    awk '$1 ~ /^[A-Za-z0-9_-]+$/ && $2 ~ /^\$2[aby]\$/ { print $1, $2; exit }' "$CADDYFILE"
+)
+[[ $admin_user =~ ^[A-Za-z0-9_-]+$ ]]
+[[ $admin_hash =~ ^\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$ ]]
+[[ -s /etc/caddy/certs/194.146.49.25-fullchain.pem ]]
+[[ -s /etc/caddy/certs/194.146.49.25-privkey.pem ]]
+
+cat >"$candidate" <<EOF
+(dvhub-live) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+
+	route {
+		request_header -X-DVHub-Authenticated-User
+
+		handle /admin* {
+			basicauth {
+				$admin_user $admin_hash
+			}
+			reverse_proxy unix//run/dvhub/gateway.sock {
+				header_up X-DVHub-Authenticated-User $admin_user
+			}
+		}
+
+		@authenticated_ticket {
+			path /api/ws_ticket
+			header Authorization *
+		}
+		handle @authenticated_ticket {
+			basicauth {
+				$admin_user $admin_hash
+			}
+			reverse_proxy unix//run/dvhub/gateway.sock {
+				header_up X-DVHub-Authenticated-User $admin_user
+			}
+		}
+
+		handle /api/ws_ticket {
+			reverse_proxy unix//run/dvhub/gateway.sock
+		}
+		handle /api/public/* {
+			reverse_proxy unix//run/dvhub/gateway.sock
+		}
+		handle /ws {
+			reverse_proxy unix//run/dvhub/gateway.sock {
+				flush_interval -1
+			}
+		}
+		handle /api/* {
+			basicauth {
+				$admin_user $admin_hash
+			}
+			reverse_proxy unix//run/dvhub/gateway.sock {
+				header_up X-DVHub-Authenticated-User $admin_user
+			}
+		}
+		handle /talkgroups.js {
+			reverse_proxy unix//run/dvhub/gateway.sock
+		}
+		handle / {
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			reverse_proxy unix//run/dvhub/gateway.sock
+		}
+		handle /dashboard.html {
+			header Cache-Control "no-store, no-cache, must-revalidate"
+			reverse_proxy unix//run/dvhub/gateway.sock
+		}
+		handle {
+			root * /var/www/dvhub
+			file_server
+		}
+	}
+}
+
+http://$PUBLIC_HOST {
+	import dvhub-live
+}
+
+http://$PUBLIC_IP {
+	handle /.well-known/acme-challenge/* {
+		root * /var/www/acme
+		file_server
+	}
+	handle {
+		redir https://$PUBLIC_IP{uri} permanent
+	}
+}
+
+https://$PUBLIC_IP {
+	tls /etc/caddy/certs/194.146.49.25-fullchain.pem /etc/caddy/certs/194.146.49.25-privkey.pem
+	import dvhub-live
+}
+EOF
+
+caddy fmt --overwrite "$candidate"
+caddy validate --config "$candidate" --adapter caddyfile
+install -o root -g caddy -m 0640 "$candidate" "$CADDYFILE"
+
+rollback() {
+    cp -a -- "$backup_dir/Caddyfile" "$CADDYFILE"
+    systemctl reload caddy.service || systemctl restart caddy.service
+}
+
+if ! systemctl reload caddy.service; then
+    rollback
+    exit 1
+fi
+
+health_failed=0
+curl -fsS --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/api/public/dashboard >/dev/null || health_failed=1
+curl -fsS --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/ >/dev/null || health_failed=1
+[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/admin) == 401 ]] || health_failed=1
+[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/api/system) == 401 ]] || health_failed=1
+
+if (( health_failed )); then
+    rollback
+    echo "Public dashboard migration failed health checks and was rolled back" >&2
+    exit 1
+fi
+
+echo "Public dashboard routing installed; backup retained at $backup_dir"
