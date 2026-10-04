@@ -107,7 +107,7 @@ var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func cfg() Config {
 	return Config{Slot: 2, Talkgroup: 235, ColourCode: 1, FallbackID: 2351999, GatewayCall: "2E0LXY",
-		Module: 'B', Tick: time.Millisecond, Timeout: 2 * time.Second, Lookahead: true}
+		Module: 'B', Tick: time.Millisecond, Timeout: 2 * time.Second, Lookahead: true, MaxQueue: 100000}
 }
 
 func waitFor(t *testing.T, cond func() bool) {
@@ -261,6 +261,72 @@ func TestDMRToDStarMetadataAndVoice(t *testing.T) {
 		t.Fatalf("position %+v", d.Pos)
 	}
 	t.Logf("D-STAR: header %s, text %q, pos %.4f,%.4f, %d frames", out[0].hdr.MY, d.Text, d.Pos.Lat, d.Pos.Lon, frames)
+}
+
+// A stalled network sink must not grow latency without bound, and dropping
+// must keep the DMR superframe sequence intact.
+func TestQueueCapKeepsSuperframes(t *testing.T) {
+	vec := vectors(t)[:300]
+	dm := &fakeDMR{in: make(chan hbp.Data, 1)}
+	ds := &fakeDS{in: make(chan dstar.Packet, 1)}
+	c := cfg()
+	c.MaxQueue = 60 // 20 bursts
+	b := New(c, dm, ds, testDB(), quiet)
+	now := time.Unix(1000, 0)
+	b.now = func() time.Time { return now }
+	h := dstar.Header{MY: "M0ABC", YOUR: "CQCQCQ"}
+	b.onDStar(dstar.Packet{StreamID: 5, Header: &h})
+	for i, f := range vec {
+		b.onDStar(dstar.Packet{StreamID: 5, Seq: uint8(i % 21), AMBE: f})
+	}
+	b.tick() // queue-cap check runs on tick
+	if n := len(b.toDMR.out); n > 20+6+1 {
+		t.Fatalf("queue %d bursts after cap", n)
+	}
+	if b.Snapshot().Dropped == 0 {
+		t.Fatal("no drops counted")
+	}
+	out := b.toDMR.out
+	if out[0].FrameType != hbp.FrameDataSync {
+		t.Fatal("header dropped")
+	}
+	for i, d := range out[1:] {
+		want := i % 6
+		if (want == 0) != (d.FrameType == hbp.FrameVoiceSync) {
+			t.Fatalf("superframe broken at %d", i)
+		}
+	}
+}
+
+func TestTimeOutTimer(t *testing.T) {
+	dm := &fakeDMR{in: make(chan hbp.Data, 1)}
+	ds := &fakeDS{in: make(chan dstar.Packet, 1)}
+	c := cfg()
+	c.MaxCall = time.Second
+	b := New(c, dm, ds, testDB(), quiet)
+	now := time.Unix(1000, 0)
+	b.now = func() time.Time { return now }
+	vec := vectors(t)
+	h := dstar.Header{MY: "M0ABC", YOUR: "CQCQCQ"}
+	b.onDStar(dstar.Packet{StreamID: 6, Header: &h})
+	for i := 0; i < 100; i++ {
+		now = now.Add(20 * time.Millisecond)
+		b.onDStar(dstar.Packet{StreamID: 6, Seq: uint8(i % 21), AMBE: vec[i%len(vec)]})
+		b.tick()
+	}
+	if b.Snapshot().TOT != 1 {
+		t.Fatalf("TOT not triggered: %+v", b.Snapshot())
+	}
+}
+
+func TestPanicRecovery(t *testing.T) {
+	dm := &fakeDMR{in: make(chan hbp.Data, 1)}
+	ds := &fakeDS{in: make(chan dstar.Packet, 1)}
+	b := New(cfg(), dm, ds, testDB(), quiet)
+	b.safe("test", func() { panic("boom") })
+	if b.Snapshot().Panics != 1 {
+		t.Fatal("panic not recovered/counted")
+	}
 }
 
 func TestUnknownCallsignUsesFallback(t *testing.T) {

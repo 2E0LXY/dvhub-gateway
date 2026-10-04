@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/2E0LXY/dvxcode/ambe"
@@ -49,6 +51,8 @@ type Config struct {
 	Suffix      string // D-STAR MY suffix for DMR-originated calls (default "DMR")
 	Tick        time.Duration
 	Timeout     time.Duration // end a call after this much silence
+	MaxCall     time.Duration // force-end calls longer than this (time-out timer; default 180 s)
+	MaxQueue    int           // max queued output frames per direction before dropping oldest (default 150 = 3 s)
 	Lookahead   bool
 }
 
@@ -58,6 +62,12 @@ func (c *Config) defaults() {
 	}
 	if c.Timeout == 0 {
 		c.Timeout = 600 * time.Millisecond
+	}
+	if c.MaxCall == 0 {
+		c.MaxCall = 180 * time.Second
+	}
+	if c.MaxQueue == 0 {
+		c.MaxQueue = 150
 	}
 	if c.Suffix == "" {
 		c.Suffix = "DMR"
@@ -84,8 +94,49 @@ type Bridge struct {
 	ownDS map[uint16]time.Time
 	now   func() time.Time
 	tickN int
-	// Stats.
-	Calls int
+	// Stats (written only by the Run goroutine; read via Snapshot).
+	Calls  int
+	stats  Counters
+	statMu sync.Mutex
+}
+
+// Counters are operational statistics for monitoring.
+type Counters struct {
+	Calls       int64
+	ToDMR       int64
+	ToDStar     int64
+	Dropped     int64 // output frames dropped by queue cap
+	Panics      int64 // recovered event-handler panics (calls reset)
+	TimedOut    int64 // calls ended by silence timeout
+	TOT         int64 // calls ended by the time-out timer
+	ActiveToDMR string
+	ActiveToDS  string
+}
+
+// Snapshot returns a copy of the counters (safe from any goroutine).
+func (b *Bridge) Snapshot() Counters {
+	b.statMu.Lock()
+	defer b.statMu.Unlock()
+	return b.stats
+}
+
+func (b *Bridge) count(f func(*Counters)) {
+	b.statMu.Lock()
+	f(&b.stats)
+	b.statMu.Unlock()
+}
+
+// safe runs an event handler; a panic resets call state instead of
+// killing the process (the network sessions keep running).
+func (b *Bridge) safe(name string, f func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			b.log.Error("bridge: recovered panic; active calls reset", "handler", name, "panic", r, "stack", string(debug.Stack()))
+			b.toDMR, b.toDS = nil, nil
+			b.count(func(c *Counters) { c.Panics++; c.ActiveToDMR, c.ActiveToDS = "", "" })
+		}
+	}()
+	f()
 }
 
 // New creates a bridge.
@@ -110,11 +161,11 @@ func (b *Bridge) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case p := <-b.ds.Recv():
-			b.onDStar(p)
+			b.safe("dstar", func() { b.onDStar(p) })
 		case d := <-b.dm.Recv():
-			b.onDMR(d)
+			b.safe("dmr", func() { b.onDMR(d) })
 		case <-t.C:
-			b.tick()
+			b.safe("tick", b.tick)
 		}
 	}
 }
@@ -203,6 +254,7 @@ func (b *Bridge) startToDMR(p dstar.Packet) *dsCall {
 	b.buildLCs(c)
 	b.toDMR = c
 	b.Calls++
+	b.count(func(k *Counters) { k.Calls++; k.ToDMR++; k.ActiveToDMR = c.call })
 	b.log.Info("D-STAR → DMR start", "call", c.call, "suffix", c.suffix, "dmr_src", c.src, "tg", b.cfg.Talkgroup)
 
 	var hdr dmr.Burst
@@ -340,6 +392,7 @@ type dmrCall struct {
 	lastVSeq int
 	ending   bool
 	frames   int
+	started  time.Time
 }
 
 func (b *Bridge) onDMR(d hbp.Data) {
@@ -390,7 +443,7 @@ func (b *Bridge) onDMR(d hbp.Data) {
 }
 
 func (b *Bridge) startToDS(d hbp.Data) *dmrCall {
-	c := &dmrCall{stream: d.StreamID, src: d.Src, dst: d.Dst, lastVSeq: -1}
+	c := &dmrCall{stream: d.StreamID, src: d.Src, dst: d.Dst, lastVSeq: -1, started: b.now()}
 	c.call = b.cfg.GatewayCall
 	name := ""
 	if e, ok := b.db.Callsign(d.Src); ok {
@@ -414,6 +467,7 @@ func (b *Bridge) startToDS(d hbp.Data) *dmrCall {
 	c.out = append(c.out, dsOut{header: &h})
 	b.toDS = c
 	b.Calls++
+	b.count(func(k *Counters) { k.Calls++; k.ToDStar++; k.ActiveToDS = c.call })
 	b.log.Info("DMR → D-STAR start", "src", d.Src, "call", c.call, "tg", d.Dst)
 	return c
 }
@@ -493,7 +547,29 @@ func (b *Bridge) tick() {
 	if c := b.toDMR; c != nil {
 		if !c.ending && now.Sub(c.lastRx) > b.cfg.Timeout {
 			b.log.Warn("D-STAR stream timed out", "call", c.call)
+			b.count(func(k *Counters) { k.TimedOut++ })
 			b.endToDMR(c)
+		}
+		if !c.ending && now.Sub(c.started) > b.cfg.MaxCall {
+			b.log.Warn("D-STAR call exceeded time-out timer", "call", c.call)
+			b.count(func(k *Counters) { k.TOT++ })
+			b.endToDMR(c)
+		}
+		if lim := b.cfg.MaxQueue / 3; len(c.out) > lim+6 && !c.ending {
+			// Drop whole superframes (6 bursts, A..F) after any header so
+			// the receiver's voice sequence and embedded LC stay aligned.
+			h := 0
+			for h < len(c.out) && c.out[h].FrameType == hbp.FrameDataSync {
+				h++
+			}
+			for h < len(c.out) && c.out[h].FrameType != hbp.FrameVoiceSync {
+				h++
+			}
+			n := (len(c.out) - lim) / 6 * 6
+			if n > 0 && h+n <= len(c.out) {
+				c.out = append(c.out[:h], c.out[h+n:]...)
+				b.count(func(k *Counters) { k.Dropped += int64(3 * n) })
+			}
 		}
 		if tickN%3 == 0 && len(c.out) > 0 && (len(c.out) >= 2 || c.ending) {
 			if err := b.dm.Send(c.out[0]); err != nil {
@@ -503,6 +579,7 @@ func (b *Bridge) tick() {
 		}
 		if c.ending && len(c.out) == 0 {
 			b.toDMR = nil
+			b.count(func(k *Counters) { k.ActiveToDMR = "" })
 		}
 	}
 	// D-STAR out: header immediately, then one frame per tick after a
@@ -510,7 +587,23 @@ func (b *Bridge) tick() {
 	if c := b.toDS; c != nil {
 		if !c.ending && now.Sub(c.lastRx) > b.cfg.Timeout {
 			b.log.Warn("DMR stream timed out", "call", c.call)
+			b.count(func(k *Counters) { k.TimedOut++ })
 			b.endToDS(c)
+		}
+		if !c.ending && now.Sub(c.started) > b.cfg.MaxCall {
+			b.log.Warn("DMR call exceeded time-out timer", "call", c.call)
+			b.count(func(k *Counters) { k.TOT++ })
+			b.endToDS(c)
+		}
+		if len(c.out) > b.cfg.MaxQueue && !c.ending {
+			// Keep any pending header; drop the oldest voice frames.
+			h := 0
+			for h < len(c.out) && c.out[h].header != nil {
+				h++
+			}
+			n := len(c.out) - b.cfg.MaxQueue
+			c.out = append(c.out[:h], c.out[h+n:]...)
+			b.count(func(k *Counters) { k.Dropped += int64(n) })
 		}
 		for len(c.out) > 0 && c.out[0].header != nil {
 			b.ds.SendHeader(c.dsID, *c.out[0].header)
@@ -526,6 +619,7 @@ func (b *Bridge) tick() {
 		}
 		if c.ending && len(c.out) == 0 {
 			b.toDS = nil
+			b.count(func(k *Counters) { k.ActiveToDS = "" })
 		}
 	}
 	for k, t := range b.ownDM {

@@ -43,7 +43,14 @@ Removes the tandem re-estimation that causes warble.
     go run ./cmd/xcbench -out bench_out                    # results + WAVs
 
 Latency: 20 ms (lookahead) by default; `-low-latency` removes it.
-Cost: ≈215 µs/frame/stream on x86-64 (≈1% of a core).
+
+| Cost (x86-64, one core) | Per 20 ms frame | Streams per core (theoretical) |
+|---|---|---|
+| Decode (dequantise) | 0.25 µs | — |
+| Encode (closed-loop quantise) | 17 µs | — |
+| Transcode end-to-end | 21–23 µs | ≈850 |
+
+Zero heap allocations on the encode/decode path.
 
 ## Metadata translation (dvxbridge)
 
@@ -122,6 +129,18 @@ Parametric figures do not depend on it.
 | D-STAR C1 failure, C0 good | Partial concealment: keep pitch/voicing/gain, borrow shape |
 | Isolated octave outliers | Lookahead repair (neighbours agree, outlier > 1.6×) |
 | Index flicker | Pitch and V/UV hysteresis |
+
+## Reliability
+
+| Measure | Detail |
+|---|---|
+| Fuzzing | `go test -fuzz` targets: AMBE FEC, DMR bursts/LC/TA/GPS, DSVT/header/slow data/DPRS, DMRD, transcoder (output always FEC-clean), bridge event loop |
+| Input sanitising | Non-finite or out-of-range MBE targets → silence frame (counted) |
+| Panic containment | Event handlers recover; active calls reset, network sessions keep running |
+| Time-out timer | Calls force-ended after `MaxCall` (default 180 s) |
+| Bounded latency | Output queues capped (default 3 s); DMR drops whole superframes to keep A–F/LC alignment |
+| Reconnect | HomeBrew and DExtra: exponential backoff 2 s → 60 s with jitter; reset after a healthy session |
+| Monitoring | `status = 127.0.0.1:9180` → `/status` JSON counters, `/healthz` 200/503 |
 
 ## Known limits
 
