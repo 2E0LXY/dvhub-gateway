@@ -557,9 +557,17 @@ func readTimezone() string {
 	if err != nil {
 		return ""
 	}
+	return timezoneFromLink(link)
+}
+
+func timezoneFromLink(link string) string {
 	const zoneinfo = "/usr/share/zoneinfo/"
 	if strings.HasPrefix(link, zoneinfo) {
 		return strings.TrimPrefix(link, zoneinfo)
+	}
+	const relativeZoneinfo = "../usr/share/zoneinfo/"
+	if strings.HasPrefix(link, relativeZoneinfo) {
+		return strings.TrimPrefix(link, relativeZoneinfo)
 	}
 	return ""
 }

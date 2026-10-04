@@ -161,6 +161,18 @@ func TestSystemStatsIncludesOperationalHealthFields(t *testing.T) {
 	}
 }
 
+func TestTimezoneFromLink(t *testing.T) {
+	for link, want := range map[string]string{
+		"/usr/share/zoneinfo/Europe/London":   "Europe/London",
+		"../usr/share/zoneinfo/Europe/London": "Europe/London",
+		"/unexpected/timezone":                "",
+	} {
+		if got := timezoneFromLink(link); got != want {
+			t.Errorf("timezoneFromLink(%q) = %q, want %q", link, got, want)
+		}
+	}
+}
+
 func TestDMRFingerprintIgnoresNetworkRewrites(t *testing.T) {
 	frameA := make([]byte, 55)
 	copy(frameA[:4], "DMRD")
