@@ -3822,7 +3822,16 @@ func (g *Gateway) handleTalkgroups(w http.ResponseWriter, r *http.Request) {
 			if resp != nil {
 				resp.Body.Close()
 			}
-			http.Error(w, `{"error":"Talkgroup source unavailable"}`, http.StatusBadGateway)
+			// The dashboard ships a curated built-in list for every supported
+			// network. Keep that list usable when the optional remote catalogue is
+			// unavailable or rate-limited instead of turning a provider problem
+			// into a browser-visible 502.
+			json.NewEncoder(w).Encode(map[string]any{
+				"network":    network,
+				"source":     "built-in fallback",
+				"talkgroups": []Talkgroup{},
+				"degraded":   true,
+			})
 			return
 		}
 		source = resp.Body

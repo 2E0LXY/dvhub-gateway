@@ -27,7 +27,6 @@
     @dashboard path / /dashboard.html
     header @dashboard Cache-Control "no-store, no-cache, must-revalidate"
     reverse_proxy @dashboard unix//run/dvhub/gateway.sock {
-        header_up -X-DVHub-Authenticated-User
         # This is a single-operator appliance. Set the identity explicitly
         # after Basic Auth so older Debian Caddy releases cannot lose the
         # authenticated-user placeholder between nested routes.
@@ -39,11 +38,9 @@
         header_up -X-DVHub-Authenticated-User
     }
     reverse_proxy /api/* unix//run/dvhub/gateway.sock {
-        header_up -X-DVHub-Authenticated-User
         header_up X-DVHub-Authenticated-User 2E0LXY
     }
     reverse_proxy /talkgroups.js unix//run/dvhub/gateway.sock {
-        header_up -X-DVHub-Authenticated-User
         header_up X-DVHub-Authenticated-User 2E0LXY
     }
 
