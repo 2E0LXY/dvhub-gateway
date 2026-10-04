@@ -39,17 +39,21 @@ func (p *Params) EnvelopeAt(hz float64) (float64, float64) {
 	return envelope{p}.at(2 * math.Pi * hz / 8000)
 }
 
-// Interpolate returns the midpoint of a and b: geometric-mean pitch,
-// averaged log envelope, majority voicing (ties voiced).
-func Interpolate(a, b Params) Params {
-	w := float32(math.Sqrt(float64(a.W0) * float64(b.W0)))
+// Interpolate returns the midpoint of a and b (see InterpolateAt).
+func Interpolate(a, b Params) Params { return InterpolateAt(a, b, 0.5) }
+
+// InterpolateAt returns the frame a fraction t (0..1) of the way from a to b:
+// log-linear pitch, linear log envelope, weighted voicing (≥½ voiced).
+func InterpolateAt(a, b Params, t float64) Params {
+	w := float32(math.Exp2((1-t)*math.Log2(float64(a.W0)) + t*math.Log2(float64(b.W0))))
 	ra, rb := Resample(a, w), Resample(b, w)
 	q := ra
-	q.Gamma = (a.Gamma + b.Gamma) / 2
+	tf := float32(t)
+	q.Gamma = (1-tf)*a.Gamma + tf*b.Gamma
 	for l := 1; l <= q.L; l++ {
-		q.Log2Ml[l] = (ra.Log2Ml[l] + rb.Log2Ml[l]) / 2
+		q.Log2Ml[l] = (1-tf)*ra.Log2Ml[l] + tf*rb.Log2Ml[l]
 		q.Vl[l] = 0
-		if ra.Vl[l]+rb.Vl[l] >= 1 {
+		if (1-t)*float64(ra.Vl[l])+t*float64(rb.Vl[l]) >= 0.5 {
 			q.Vl[l] = 1
 		}
 	}

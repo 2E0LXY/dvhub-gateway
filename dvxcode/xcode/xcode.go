@@ -15,6 +15,13 @@ type Options struct {
 	// Conceal replaces erased or FEC-unreliable frames with a decaying
 	// repeat of the last good frame instead of passing corrupted parameters.
 	Conceal bool
+	// SuspectCheck verifies frames whose FEC is near its limit against their
+	// neighbours (requires Lookahead) and fully conceals rather than partially
+	// conceals when the pitch word needed 3 corrections.
+	SuspectCheck bool
+	// LookaheadFrames is the lookahead depth (1..4, default 2 = 40 ms).
+	// Deeper windows let concealment interpolate across longer error bursts.
+	LookaheadFrames int
 	// Lookahead delays output by one frame (20 ms) so isolated pitch
 	// outliers (octave errors) can be repaired from both neighbours.
 	Lookahead bool
@@ -27,13 +34,14 @@ type Options struct {
 }
 
 // DefaultOptions favour stability over minimum latency.
-var DefaultOptions = Options{Conceal: true, Lookahead: true, MaxRepeats: 3, RepeatDecay: 0.5, Encoder: mbe.DefaultEncoderOptions}
+var DefaultOptions = Options{Conceal: true, SuspectCheck: true, Lookahead: true, LookaheadFrames: 2, MaxRepeats: 3, RepeatDecay: 0.5, Encoder: mbe.DefaultEncoderOptions}
 
 // Stats counts per-stream events.
 type Stats struct {
 	Frames, Voice, Silence, Tone, Erasure int
 	BadFEC, Concealed, Muted              int
 	PartialConceal, Interpolated          int
+	SuspectRepairs                        int
 	PitchRepairs                          int
 }
 
@@ -41,21 +49,29 @@ type item struct {
 	p         mbe.Params
 	silence   bool
 	concealed bool // whole frame repeated from history; refine with lookahead
+	suspect   bool // FEC near its limit: pitch may be a miscorrection; verify against neighbours
+	tag       byte // provenance for diagnostics: g good, s suspect, p partial, c concealed, i interpolated, r repaired, m muted
 }
 
 // Transcoder converts one voice stream. Not safe for concurrent use; create
 // one per call/stream and call Reset at stream start.
 type Transcoder struct {
-	src, dst ambe.Mode
-	dec      *mbe.Decoder
-	enc      *mbe.Encoder
-	srcEnc   *mbe.Encoder // only for null-frame detection
-	opt      Options
-	last     mbe.Params
-	hasLast  bool
-	repeats  int
-	q        []item // lookahead window (max 3)
-	Stats    Stats
+	src, dst   ambe.Mode
+	dec        *mbe.Decoder
+	enc        *mbe.Encoder
+	srcEnc     *mbe.Encoder // only for null-frame detection
+	opt        Options
+	last       mbe.Params
+	hasLast    bool
+	repeats    int
+	q          []item  // frames waiting in the lookahead window
+	prevOut    item    // last emitted (after repair)
+	trace      *[]byte // optional provenance trace (tests/diagnostics)
+	trusted    item    // last emitted frame known to be good
+	hasTrusted bool
+	trustAge   int // frames emitted since trusted
+	hasPrevOut bool
+	Stats      Stats
 }
 
 // New returns a transcoder from src to dst.
@@ -71,7 +87,7 @@ func (t *Transcoder) Reset() {
 	t.enc = mbe.NewEncoder(t.dst)
 	t.enc.Opt = t.opt.Encoder
 	t.srcEnc = mbe.NewEncoder(t.src)
-	t.hasLast, t.repeats, t.q = false, 0, t.q[:0]
+	t.hasLast, t.repeats, t.q, t.hasPrevOut, t.hasTrusted = false, 0, t.q[:0], false, false
 }
 
 // Target returns the receiver-side parameters of the last emitted frame.
@@ -119,6 +135,11 @@ func (t *Transcoder) decodeOne(in [9]byte) item {
 	if !reliable(t.src, st) {
 		t.Stats.BadFEC++
 	}
+	// At high BER a Golay word that needed all 3 corrections is often a
+	// miscorrection of 5+ errors (measured: ~25-50% wrong pitch MSBs when
+	// the rest of the frame is also damaged). Such frames are kept but
+	// marked so the lookahead can check them against their neighbours.
+	suspect := t.opt.Conceal && t.opt.SuspectCheck && (st.C0 >= 3 || (st.C0 >= 2 && (st.C1 >= 3 || !st.C1Parity)))
 	switch {
 	case k == mbe.Silence && good:
 		t.Stats.Silence++
@@ -133,7 +154,11 @@ func (t *Transcoder) decodeOne(in [9]byte) item {
 	case k == mbe.Voice && good:
 		t.Stats.Voice++
 		t.last, t.hasLast, t.repeats = p, true, 0
-		return item{p: p}
+		tg := byte('g')
+		if suspect {
+			tg = 's'
+		}
+		return item{p: p, suspect: suspect, tag: tg}
 	}
 	// Erasure or unreliable: never pass corrupted parameters on (the
 	// classic "R2-D2" warble). Roll the source predictor back and conceal.
@@ -144,7 +169,7 @@ func (t *Transcoder) decodeOne(in [9]byte) item {
 	// Partial concealment (D-STAR): C0 good, C1 parity failed. Pitch, voicing
 	// and gain are trustworthy; only the spectral shape bits are suspect, so
 	// keep the new pitch/voicing/level and borrow the last good shape.
-	if k == mbe.Voice && t.src == ambe.DStar && c0ok(st) && t.hasLast {
+	if k == mbe.Voice && t.src == ambe.DStar && c0ok(st) && (st.C0 < 3 || !t.opt.SuspectCheck) && t.hasLast {
 		t.dec.Decode(bits) // advance the gain predictor with the trusted gain bits
 		q := mbe.Resample(t.last, p.W0)
 		q.Gamma = p.Gamma
@@ -158,7 +183,7 @@ func (t *Transcoder) decodeOne(in [9]byte) item {
 		t.dec.SetPrev(q)
 		t.last, t.repeats = q, 0
 		t.Stats.PartialConceal++
-		return item{p: q}
+		return item{p: q, suspect: st.C0 >= 2, tag: 'p'}
 	}
 	if t.hasLast && t.repeats < t.opt.MaxRepeats {
 		t.repeats++
@@ -168,7 +193,7 @@ func (t *Transcoder) decodeOne(in [9]byte) item {
 			c.Log2Ml[l] -= t.opt.RepeatDecay * float32(t.repeats)
 		}
 		t.dec.SetPrev(c)
-		return item{p: c, concealed: true}
+		return item{p: c, concealed: true, tag: 'c'}
 	}
 	t.Stats.Muted++
 	t.hasLast = false
@@ -181,12 +206,6 @@ func voiced(it item) bool { return !it.silence && it.p.VoicedFraction(1000) >= 0
 // replaces a concealed (repeated) frame by interpolating its neighbours so the
 // pitch keeps moving instead of stalling.
 func (t *Transcoder) repair(a, b, c *item) {
-	if b.concealed && !a.silence && !c.silence && !c.concealed {
-		b.p = mbe.Interpolate(a.p, c.p)
-		b.concealed = false
-		t.Stats.Interpolated++
-		return
-	}
 	if !voiced(*a) || !voiced(*b) || !voiced(*c) {
 		return
 	}
@@ -211,24 +230,134 @@ func (t *Transcoder) emit(it item) [9]byte {
 	return ambe.Encode(t.dst, bits)
 }
 
-// Frame transcodes one 20 ms frame. With Lookahead the returned frame is the
-// previous input's (first call returns target silence).
-func (t *Transcoder) Frame(in [9]byte) [9]byte {
-	it := t.decodeOne(in)
+// depth returns the lookahead depth in frames (0 when disabled).
+func (t *Transcoder) depth() int {
 	if !t.opt.Lookahead {
+		return 0
+	}
+	return max(1, min(t.opt.LookaheadFrames, 4))
+}
+
+// push queues an item and emits the frame that leaves the lookahead window.
+func (t *Transcoder) push(it item) [9]byte {
+	D := t.depth()
+	if D == 0 {
 		return t.emit(it)
 	}
 	t.q = append(t.q, it)
-	if len(t.q) == 1 {
-		return t.emit(item{silence: true})
+	if len(t.q) <= D {
+		return t.emit(item{silence: true}) // start-up delay
 	}
-	if len(t.q) == 3 {
-		t.repair(&t.q[0], &t.q[1], &t.q[2])
-		t.q = t.q[1:]
-	}
-	// Emit the middle (or first, at start) element: one frame of delay.
-	return t.emit(t.q[len(t.q)-2])
+	return t.release()
 }
+
+// release finalises and emits the oldest queued item.
+func (t *Transcoder) release() [9]byte {
+	b := t.q[0]
+	t.finish(&b, t.q[1:])
+	t.q = append(t.q[:0], t.q[1:]...)
+	t.prevOut, t.hasPrevOut = b, true
+	switch {
+	case b.silence:
+		t.hasTrusted = false
+	case !b.suspect && !b.concealed:
+		t.trusted, t.hasTrusted, t.trustAge = b, true, 0
+	default:
+		t.trustAge++
+	}
+	if t.trace != nil {
+		*t.trace = append(*t.trace, b.tag)
+	}
+	return t.emit(b)
+}
+
+// anchorAhead returns the first fully trustworthy frame in ahead (not
+// silence, concealed or FEC-suspect). Failing that, under heavy errors, it
+// accepts a suspect frame whose pitch is plausible relative to a (speech
+// pitch moves at most ~0.25 octave per frame).
+func anchorAhead(a *item, k float64, ahead []item) (int, bool) {
+	for pass := 0; pass < 2; pass++ {
+		for j := range ahead {
+			c := &ahead[j]
+			if c.silence {
+				break
+			}
+			if c.concealed {
+				continue
+			}
+			if !c.suspect {
+				return j, true
+			}
+			if pass == 1 && voiced(*a) && voiced(*c) &&
+				math.Abs(math.Log2(float64(c.p.W0)/float64(a.p.W0))) <= 0.25*(k+float64(j+1)) {
+				return j, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// interp is InterpolateAt, but pitch only comes from voiced endpoints:
+// an unvoiced frame's fundamental is arbitrary and must not steer pitch.
+func interp(a, c *item, frac float64) mbe.Params {
+	q := mbe.InterpolateAt(a.p, c.p, frac)
+	va, vc := voiced(*a), voiced(*c)
+	switch {
+	case va && !vc:
+		q = mbe.Resample(q, a.p.W0)
+	case vc && !va:
+		q = mbe.Resample(q, c.p.W0)
+	}
+	return q
+}
+
+// finish applies lookahead repairs to b. References are the last trusted
+// emitted frame (never an unverified suspect one, so errors cannot cascade)
+// and the next trusted frame in the lookahead window.
+func (t *Transcoder) finish(b *item, ahead []item) {
+	if b.silence || !t.hasTrusted || t.trustAge > 6 {
+		return
+	}
+	a := &t.trusted
+	k := float64(t.trustAge + 1) // distance a -> b in frames
+	j, ok := anchorAhead(a, k, ahead)
+	frac := k / (k + float64(j+1))
+	switch {
+	case b.concealed:
+		if ok {
+			b.p = interp(a, &ahead[j], frac)
+			b.concealed, b.tag = false, 'i'
+			t.Stats.Interpolated++
+		}
+		return
+	case b.suspect:
+		if !voiced(*a) {
+			return
+		}
+		if ok && voiced(ahead[j]) {
+			want := math.Exp2((1-frac)*math.Log2(float64(a.p.W0)) + frac*math.Log2(float64(ahead[j].p.W0)))
+			if math.Abs(math.Log2(float64(b.p.W0)/want)) > suspectTol {
+				b.p = mbe.InterpolateAt(a.p, ahead[j].p, frac)
+				b.suspect, b.tag = false, 'r'
+				t.Stats.SuspectRepairs++
+			} else {
+				b.suspect = false // verified
+			}
+		} else if voiced(*b) && math.Abs(math.Log2(float64(b.p.W0)/float64(a.p.W0))) > 0.4*k {
+			b.p = mbe.Resample(b.p, a.p.W0)
+			b.suspect, b.tag = false, 'r'
+			t.Stats.SuspectRepairs++
+		}
+		return
+	}
+	if len(ahead) > 0 && t.trustAge == 0 {
+		t.repair(a, b, &ahead[0])
+	}
+}
+
+// Frame transcodes one 20 ms frame. With Lookahead the returned frame is
+// delayed by the lookahead depth (start-up frames are silence).
+func (t *Transcoder) Frame(in [9]byte) [9]byte { return t.push(t.decodeOne(in)) }
 
 // Lost conceals a frame that never arrived (network loss). Same timing as Frame.
 func (t *Transcoder) Lost() [9]byte {
@@ -249,26 +378,18 @@ func (t *Transcoder) Lost() [9]byte {
 		t.hasLast = false
 		it = item{silence: true}
 	}
-	if !t.opt.Lookahead {
-		return t.emit(it)
-	}
-	t.q = append(t.q, it)
-	if len(t.q) == 1 {
-		return t.emit(item{silence: true})
-	}
-	if len(t.q) == 3 {
-		t.repair(&t.q[0], &t.q[1], &t.q[2])
-		t.q = t.q[1:]
-	}
-	return t.emit(t.q[len(t.q)-2])
+	return t.push(it)
 }
 
-// Flush emits the frame held for lookahead (call at end of stream).
-func (t *Transcoder) Flush() ([9]byte, bool) {
-	if !t.opt.Lookahead || len(t.q) == 0 {
-		return [9]byte{}, false
+// Flush emits every frame still held for lookahead (call at end of stream).
+func (t *Transcoder) Flush() [][9]byte {
+	var out [][9]byte
+	for len(t.q) > 0 {
+		out = append(out, t.release())
 	}
-	it := t.q[len(t.q)-1]
-	t.q = t.q[:0]
-	return t.emit(it), true
+	return out
 }
+
+// suspectTol is the pitch deviation (octaves) from the expected trajectory
+// beyond which a FEC-suspect frame is treated as a miscorrection.
+var suspectTol = 0.15
