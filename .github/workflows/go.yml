@@ -27,8 +27,10 @@ jobs:
             deploy/allstar/dvhub-configure-allstar-node \
             deploy/allstar/dvhub-allstar-status \
             deploy/allstar/dvhub-allstar-control \
-            deploy/allstar/dvhub-echolink-status
+            deploy/allstar/dvhub-echolink-status \
+            deploy/m17/install-m17.sh
           python3 -m py_compile deploy/allstar/dvhub-configure-echolink
+          python3 -m py_compile deploy/m17/configure-asl-m17.py
           sudo visudo -cf deploy/allstar/dvhub-allstar.sudoers
       - name: Validate dashboard JavaScript
         run: |

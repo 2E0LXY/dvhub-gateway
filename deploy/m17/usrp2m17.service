@@ -1,0 +1,28 @@
+[Unit]
+Description=Yorkshire Link M17 to AllStar bridge
+Documentation=https://github.com/ShaYmez/MMDVM_CM
+Wants=network-online.target mrefd.service asterisk.service
+After=network-online.target mrefd.service asterisk.service
+
+[Service]
+Type=simple
+User=m17
+Group=m17
+LogsDirectory=usrp2m17
+LogsDirectoryMode=0750
+ExecStart=/usr/local/bin/USRP2M17 /etc/dvhub/USRP2M17.ini
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/log/usrp2m17
+
+[Install]
+WantedBy=multi-user.target

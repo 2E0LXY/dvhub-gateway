@@ -1,0 +1,30 @@
+[Unit]
+Description=Yorkshire Link M17-YLH reflector
+Documentation=https://github.com/n7tae/mrefd
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=m17
+Group=m17
+RuntimeDirectory=mrefd
+RuntimeDirectoryMode=0750
+LogsDirectory=mrefd
+LogsDirectoryMode=0750
+ExecStart=/usr/local/bin/mrefd /etc/mrefd/mrefd.cfg
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/run/mrefd /var/log/mrefd
+
+[Install]
+WantedBy=multi-user.target

@@ -1467,7 +1467,12 @@
             setHealth('health-p25-bridge', stats.p25_bridge === true, 'ACTIVE');
             setHealth('health-nxdn', stats.nxdn_reflector === true, 'ACTIVE');
             setHealth('health-nxdn-bridge', stats.nxdn_bridge === true, 'ACTIVE');
-			setHealth('health-m17', stats.m17_bridge === true, 'ACTIVE', 'NOT INSTALLED');
+			setHealth(
+				'health-m17',
+				stats.m17_reflector === true && stats.m17_bridge === true,
+				'ACTIVE',
+				stats.m17_reflector === true ? 'BRIDGE FAULT' : 'NOT INSTALLED'
+			);
             setHealth('health-master', stats.local_master === true, 'ACTIVE');
 
 			const quality = stats.quality || {};

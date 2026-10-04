@@ -28,3 +28,10 @@ traffic goes to the gateway's loopback hardware broker at `127.0.0.1:2461`, so
 P25 and AllStar converters share the bounded DV30/DV3000 pool. Frames fail
 closed whenever the hardware pool is busy or unavailable. Network
 passwords remain only in protected server-side configuration.
+
+## M17 to the shared AllStar PCM bus
+
+M17-YLH module A connects through `USRP2M17` to private local app_rpt node
+`1998`. That node is permanently linked to public node `530471`, allowing M17,
+EchoLink and AllStar to share the same PCM bus and existing USRP2DMR/DV30
+conversion. See `deploy/m17/README.md` for the pinned build and installation.
