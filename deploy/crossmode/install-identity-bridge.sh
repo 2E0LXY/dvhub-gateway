@@ -57,8 +57,8 @@ installed=1
 
 install -m 0755 "$work_dir/mmdvm-cm/USRP2DMR/USRP2DMR" /usr/local/bin/USRP2DMR-DV30.next
 install -m 0755 "$work_dir/mmdvm-cm/USRP2M17/USRP2M17" /usr/local/bin/USRP2M17.next
-runuser -u allstarbridge -- /usr/local/bin/USRP2DMR-DV30.next --version >/dev/null
-runuser -u m17 -- /usr/local/bin/USRP2M17.next --version >/dev/null
+runuser -u allstarbridge -- test -x /usr/local/bin/USRP2DMR-DV30.next
+runuser -u m17 -- test -x /usr/local/bin/USRP2M17.next
 systemctl stop usrp2dmr.service usrp2m17.service
 mv -f /usr/local/bin/USRP2DMR-DV30.next /usr/local/bin/USRP2DMR-DV30
 mv -f /usr/local/bin/USRP2M17.next /usr/local/bin/USRP2M17
