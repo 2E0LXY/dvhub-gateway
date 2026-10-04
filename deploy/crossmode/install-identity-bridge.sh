@@ -67,10 +67,18 @@ install -m 0644 "$repo_root/deploy/m17/usrp2m17.service" /etc/systemd/system/usr
 systemctl daemon-reload
 systemctl start usrp2dmr.service usrp2m17.service
 
-systemctl is-active --quiet usrp2dmr.service
-systemctl is-active --quiet usrp2m17.service
-ss -lun | grep -qE '127\.0\.0\.1:35171[[:space:]]'
-ss -lun | grep -qE '127\.0\.0\.1:35172[[:space:]]'
+ready=0
+for _ in {1..20}; do
+    if systemctl is-active --quiet usrp2dmr.service && \
+       systemctl is-active --quiet usrp2m17.service && \
+       ss -lun | grep -qE '127\.0\.0\.1:35171[[:space:]]' && \
+       ss -lun | grep -qE '127\.0\.0\.1:35172[[:space:]]'; then
+        ready=1
+        break
+    fi
+    sleep 1
+done
+[[ $ready -eq 1 ]]
 
 trap - ERR
 echo "Cross-mode identity side-channel installed and both converters are active."
