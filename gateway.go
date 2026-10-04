@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"math"
@@ -407,6 +408,7 @@ func main() {
 
 	http.HandleFunc("/ws", gw.handleWS)
 	http.HandleFunc("/api/ws_ticket", gw.handleWSTicket)
+	http.HandleFunc("/api/public/dashboard", gw.handlePublicDashboard)
 	http.HandleFunc("/api/state", gw.handleState)
 	http.HandleFunc("/api/system", handleSystemStats)
 	http.HandleFunc("/api/vocoder/health", gw.handleVocoderHealth)
@@ -906,6 +908,90 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+var publicDashboardCache struct {
+	sync.Mutex
+	updated    time.Time
+	routes     []map[string]any
+	conference map[string]any
+	system     map[string]any
+}
+
+// cachedPublicDashboardStatus prevents public polling from turning systemctl
+// and the Asterisk status helpers into load-bearing request paths.
+func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]any, map[string]any) {
+	publicDashboardCache.Lock()
+	defer publicDashboardCache.Unlock()
+	if time.Since(publicDashboardCache.updated) < 5*time.Second && publicDashboardCache.routes != nil {
+		return publicDashboardCache.routes, publicDashboardCache.conference, publicDashboardCache.system
+	}
+	conference := g.yorkshireConferenceStatus()
+	allStar := readAllStarStatus()
+	echoLink := readEchoLinkStatus()
+	service := func(name string) bool { return serviceActive(name) }
+	status := func(required ...bool) string {
+		for _, ready := range required {
+			if !ready {
+				return "fault"
+			}
+		}
+		return "good"
+	}
+	publicDashboardCache.routes = []map[string]any{
+		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": "TG23530 · FreeSTAR · BrandMeister · TGIF"},
+		{"id": "ysf", "label": "YSF", "status": status(service("ysfreflector.service"), service("ysf2dmr.service")), "detail": "Yorkshire Link reflector"},
+		{"id": "nxdn", "label": "NXDN", "status": status(service("nxdnreflector.service"), service("nxdn2dmr.service")), "detail": "Local reflector · 23530"},
+		{"id": "p25", "label": "P25", "status": status(service("p25reflector.service"), service("p252dmr.service")), "detail": "Local reflector · 23530"},
+		{"id": "m17", "label": "M17", "status": status(service("mrefd.service"), service("usrp2m17.service")), "detail": "M17-23530 · ASL PCM bus"},
+		{"id": "dstar", "label": "D-STAR", "status": "inactive", "detail": "Not configured"},
+		{"id": "echolink", "label": "EchoLink", "status": status(echoLink.Ready), "detail": fmt.Sprintf("Via AllStar · %d linked", len(echoLink.Connections))},
+		{"id": "allstar", "label": "AllStar", "status": status(allStar.Registered, allStar.ServicesActive), "detail": "Node 530471 · PCM bus"},
+		{"id": "conference", "label": "TG23530", "status": status(conference["ready"] == true), "detail": "Yorkshire conference"},
+	}
+	publicDashboardCache.conference = conference
+	publicDashboardCache.system = map[string]any{
+		"gateway": service("dvhub-gateway.service"), "proxy": service("caddy.service"),
+		"deployment_timer": service("dvhub-deploy.timer"), "revision": readSmallTextFile("/var/lib/dvgateway/deployed-sha", 128),
+	}
+	publicDashboardCache.updated = time.Now()
+	return publicDashboardCache.routes, publicDashboardCache.conference, publicDashboardCache.system
+}
+
+// handlePublicDashboard exposes only operational health and passive media
+// telemetry. It intentionally excludes credentials, contact details, peer
+// addresses and every mutation surface used by the authenticated admin UI.
+func (g *Gateway) handlePublicDashboard(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	routes, cachedConference, system := g.cachedPublicDashboardStatus()
+	conference := make(map[string]any, len(cachedConference))
+	for key, value := range cachedConference {
+		conference[key] = value
+	}
+	g.bridgeMu.Lock()
+	route := g.bridge
+	g.bridgeMu.Unlock()
+	conference["talker"] = g.bridgeTalker(route)
+
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"routes":       routes,
+		"conference":   conference,
+		"capabilities": map[string]any{"web_comms": false, "web_comms_transport": "not_installed"},
+		"quality": map[string]any{
+			"monitoring":   map[string]any{"mode": "passive", "adds_media_load": false},
+			"host_network": hostNetworkQuality.snapshot(),
+			"dmr_media":    dmrMediaQuality.snapshot(),
+			"vocoder":      dv30MediaQuality.snapshot(),
+		},
+		"system": system,
+	})
+}
+
 func readSmallTextFile(path string, maximum int64) string {
 	file, err := os.Open(path)
 	if err != nil {
@@ -1390,14 +1476,10 @@ func (g *Gateway) issueWSTicket(user string) (string, error) {
 
 func (g *Gateway) dashboardStaticHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/dashboard.html" {
+		if r.URL.Path == "/" || r.URL.Path == "/dashboard.html" || r.URL.Path == "/admin" || r.URL.Path == "/admin/" {
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			user := authenticatedUser(r)
-			if user == "" {
-				http.Error(w, "authentication required", http.StatusUnauthorized)
-				return
-			}
 			page, err := os.ReadFile("/var/www/dvhub/dashboard.html")
 			if err != nil {
 				http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
@@ -1409,6 +1491,7 @@ func (g *Gateway) dashboardStaticHandler(next http.Handler) http.Handler {
 				return
 			}
 			page = []byte(strings.Replace(string(page), `<meta name="dvhub-ws-ticket" content="">`, `<meta name="dvhub-ws-ticket" content="`+ticket+`">`, 1))
+			page = []byte(strings.Replace(string(page), `<meta name="dvhub-auth-user" content="">`, `<meta name="dvhub-auth-user" content="`+template.HTMLEscapeString(user)+`">`, 1))
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(page)
 			return
@@ -1425,33 +1508,29 @@ func (g *Gateway) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := authenticatedUser(r)
-	if user == "" {
-		http.Error(w, `{"error":"Authentication required"}`, http.StatusUnauthorized)
-		return
-	}
 	token, err := g.issueWSTicket(user)
 	if err != nil {
 		http.Error(w, `{"error":"Unable to create WebSocket ticket"}`, http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ticket": token, "expires_in_seconds": 30})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ticket": token, "expires_in_seconds": 30, "authenticated": user != ""})
 }
 
-func (g *Gateway) consumeWSTicket(token string) string {
+func (g *Gateway) consumeWSTicket(token string) (string, bool) {
 	if len(token) != 64 {
-		return ""
+		return "", false
 	}
 	g.wsTicketMu.Lock()
 	defer g.wsTicketMu.Unlock()
 	ticket, ok := g.wsTickets[token]
 	if !ok {
-		return ""
+		return "", false
 	}
 	delete(g.wsTickets, token)
 	if !ticket.expiresAt.After(time.Now()) {
-		return ""
+		return "", false
 	}
-	return ticket.user
+	return ticket.user, true
 }
 
 func requireControlAuth(w http.ResponseWriter, r *http.Request) bool {
@@ -1539,8 +1618,8 @@ func (g *Gateway) reportRejectedDMR(id uint32) {
 }
 
 func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
-	user := g.consumeWSTicket(r.URL.Query().Get("ticket"))
-	if user == "" {
+	user, ticketOK := g.consumeWSTicket(r.URL.Query().Get("ticket"))
+	if !ticketOK {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -1584,6 +1663,10 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 		if msgType == websocket.TextMessage {
 			var req map[string]any
 			if err := json.Unmarshal(msg, &req); err != nil {
+				continue
+			}
+			if _, isCommand := req["cmd"]; isCommand && client.user == "" {
+				g.sendClientText(client, map[string]any{"type": "control_status", "state": "denied", "reason": "Administrator authentication required"})
 				continue
 			}
 
@@ -1744,6 +1827,10 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 
 		} else if msgType == websocket.BinaryMessage {
+			if client.user == "" {
+				g.sendClientText(client, map[string]any{"type": "control_status", "state": "denied", "reason": "Administrator authentication required"})
+				continue
+			}
 			g.sendClientText(client, map[string]any{"type": "tx_status", "state": "denied", "reason": "Native browser audio is unavailable"})
 		}
 	}

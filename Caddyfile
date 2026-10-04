@@ -13,39 +13,69 @@
         -Server
     }
 
-    @protected not path /ysf-status.html /api/public/ysf_dashboard /ws
-    # `basicauth` is the pre-2.8 name and remains a supported alias in current
-    # Caddy. Keeping it here lets the Debian-packaged Caddy validate this file.
-    basicauth @protected {
-        {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
-    }
+    # Public status routes are read-only. Admin pages and all remaining API
+    # endpoints retain Basic Auth, and the browser can never choose the
+    # identity header presented to the gateway.
+    route {
+        request_header -X-DVHub-Authenticated-User
 
-    # Never trust an identity header supplied by the browser. Each protected
-    # upstream route below replaces it with Caddy's authenticated username.
-    request_header -X-DVHub-Authenticated-User
+        handle /admin* {
+            basicauth {
+                {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
+            }
+            reverse_proxy unix//run/dvhub/gateway.sock {
+                header_up X-DVHub-Authenticated-User 2E0LXY
+            }
+        }
 
-    @dashboard path / /dashboard.html
-    header @dashboard Cache-Control "no-store, no-cache, must-revalidate"
-    reverse_proxy @dashboard unix//run/dvhub/gateway.sock {
-        # This is a single-operator appliance. Set the identity explicitly
-        # after Basic Auth so older Debian Caddy releases cannot lose the
-        # authenticated-user placeholder between nested routes.
-        header_up X-DVHub-Authenticated-User 2E0LXY
-    }
+        @authenticated_ticket {
+            path /api/ws_ticket
+            header Authorization *
+        }
+        handle @authenticated_ticket {
+            basicauth {
+                {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
+            }
+            reverse_proxy unix//run/dvhub/gateway.sock {
+                header_up X-DVHub-Authenticated-User 2E0LXY
+            }
+        }
 
-    reverse_proxy /ws unix//run/dvhub/gateway.sock {
-        flush_interval -1
-        header_up -X-DVHub-Authenticated-User
+        handle /api/ws_ticket {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /api/public/* {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /ws {
+            reverse_proxy unix//run/dvhub/gateway.sock {
+                flush_interval -1
+            }
+        }
+        handle /api/* {
+            basicauth {
+                {$DVHUB_USER:2E0LXY} {$DVHUB_PASSWORD_HASH}
+            }
+            reverse_proxy unix//run/dvhub/gateway.sock {
+                header_up X-DVHub-Authenticated-User 2E0LXY
+            }
+        }
+        handle /talkgroups.js {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle / {
+            header Cache-Control "no-store, no-cache, must-revalidate"
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /dashboard.html {
+            header Cache-Control "no-store, no-cache, must-revalidate"
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle {
+            root * /var/www/dvhub
+            file_server
+        }
     }
-    reverse_proxy /api/* unix//run/dvhub/gateway.sock {
-        header_up X-DVHub-Authenticated-User 2E0LXY
-    }
-    reverse_proxy /talkgroups.js unix//run/dvhub/gateway.sock {
-        header_up X-DVHub-Authenticated-User 2E0LXY
-    }
-
-    root * /var/www/dvhub
-    file_server
 }
 
 ai.2e0lxy.uk, https://194.146.49.25 {

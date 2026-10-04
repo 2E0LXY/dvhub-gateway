@@ -22,13 +22,26 @@ func TestWebSocketRequiresOneTimeTicket(t *testing.T) {
 	}
 }
 
-func TestWebSocketTicketIsAuthenticatedAndSingleUse(t *testing.T) {
+func TestWebSocketTicketSupportsPublicReadOnlyAndIsSingleUse(t *testing.T) {
 	gateway := &Gateway{wsTickets: make(map[string]wsTicket)}
 
 	unauthenticated := httptest.NewRecorder()
 	gateway.handleWSTicket(unauthenticated, httptest.NewRequest(http.MethodGet, "/api/ws_ticket", nil))
-	if unauthenticated.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated ticket request returned %d, want 401", unauthenticated.Code)
+	if unauthenticated.Code != http.StatusOK {
+		t.Fatalf("public ticket request returned %d, want 200", unauthenticated.Code)
+	}
+	var publicPayload struct {
+		Ticket        string `json:"ticket"`
+		Authenticated bool   `json:"authenticated"`
+	}
+	if err := json.Unmarshal(unauthenticated.Body.Bytes(), &publicPayload); err != nil {
+		t.Fatal(err)
+	}
+	if publicPayload.Authenticated || len(publicPayload.Ticket) != 64 {
+		t.Fatalf("public ticket payload was unexpected: %+v", publicPayload)
+	}
+	if user, ok := gateway.consumeWSTicket(publicPayload.Ticket); !ok || user != "" {
+		t.Fatalf("public ticket resolved to user %q with valid=%v", user, ok)
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/ws_ticket", nil)
@@ -47,10 +60,10 @@ func TestWebSocketTicketIsAuthenticatedAndSingleUse(t *testing.T) {
 	if len(payload.Ticket) != 64 {
 		t.Fatalf("ticket length is %d, want 64", len(payload.Ticket))
 	}
-	if user := gateway.consumeWSTicket(payload.Ticket); user != "2E0LXY" {
-		t.Fatalf("ticket resolved to %q, want 2E0LXY", user)
+	if user, ok := gateway.consumeWSTicket(payload.Ticket); !ok || user != "2E0LXY" {
+		t.Fatalf("ticket resolved to %q with valid=%v, want 2E0LXY", user, ok)
 	}
-	if user := gateway.consumeWSTicket(payload.Ticket); user != "" {
+	if user, ok := gateway.consumeWSTicket(payload.Ticket); ok {
 		t.Fatalf("ticket was reusable by %q", user)
 	}
 }
@@ -70,6 +83,30 @@ func TestControlRequiresAuthenticationAndCSRFHeader(t *testing.T) {
 		if recorder.Code != test.want {
 			t.Fatalf("control auth returned %d, want %d", recorder.Code, test.want)
 		}
+	}
+}
+
+func TestPublicDashboardIsReadOnlyAndDoesNotExposeSecrets(t *testing.T) {
+	gateway := &Gateway{}
+	for index := range gateway.sessions {
+		gateway.sessions[index] = &UserSession{ID: index + 1}
+	}
+	recorder := httptest.NewRecorder()
+	gateway.handlePublicDashboard(recorder, httptest.NewRequest(http.MethodGet, "/api/public/dashboard", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("public dashboard returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	body := strings.ToLower(recorder.Body.String())
+	for _, forbidden := range []string{"password", "email", "address", "contact", "secret"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("public dashboard exposed forbidden field %q", forbidden)
+		}
+	}
+
+	postRecorder := httptest.NewRecorder()
+	gateway.handlePublicDashboard(postRecorder, httptest.NewRequest(http.MethodPost, "/api/public/dashboard", strings.NewReader("{}")))
+	if postRecorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("public dashboard accepted POST with status %d", postRecorder.Code)
 	}
 }
 
