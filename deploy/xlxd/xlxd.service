@@ -1,0 +1,31 @@
+[Unit]
+Description=Yorkshire Link D-STAR XLXd reflector
+Documentation=https://github.com/LX3JL/xlxd
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=true
+EnvironmentFile=/etc/dvhub/xlxd.env
+StateDirectory=xlxd
+StateDirectoryMode=0750
+ConfigurationDirectory=xlxd
+ConfigurationDirectoryMode=0750
+ExecStart=/usr/local/bin/xlxd ${XLX_CALLSIGN} ${XLX_LISTEN_IP} ${XLX_TRANSCODER_IP}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

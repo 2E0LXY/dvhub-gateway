@@ -187,15 +187,44 @@ func TestSystemStatsIncludesOperationalHealthFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, field := range []string{
-		"gateway_service", "caddy_service", "gitops_timer", "gitops_revision",
+		"gateway_service", "caddy_service", "gitops_timer", "gitops_revision", "public_url",
 		"timezone", "timezone_correct", "swap_active", "config_access",
 		"vocoder_config", "ysf_reflector", "ysf_bridge", "p25_reflector",
 		"p25_bridge", "nxdn_reflector", "nxdn_bridge", "local_master",
-		"m17_bridge", "allstar_bridge", "allstar_services", "echolink_ready", "quality",
+		"m17_bridge", "xlxd_reflector", "dvxcode_bridge", "allstar_bridge", "allstar_services", "echolink_ready", "quality",
 	} {
 		if _, ok := payload[field]; !ok {
 			t.Errorf("system status is missing %q", field)
 		}
+	}
+}
+
+func TestModeControlRequiresAuthenticationAndRejectsUnknownTargets(t *testing.T) {
+	gateway := &Gateway{}
+	tests := []struct {
+		name     string
+		user     string
+		control  string
+		body     string
+		wantCode int
+	}{
+		{"unauthenticated", "", "1", `{"mode":"ysf","component":"reflector","action":"restart"}`, http.StatusUnauthorized},
+		{"missing csrf", "2E0LXY", "", `{"mode":"ysf","component":"reflector","action":"restart"}`, http.StatusForbidden},
+		{"unknown mode", "2E0LXY", "1", `{"mode":"zello","component":"reflector","action":"start"}`, http.StatusBadRequest},
+		{"unknown component", "2E0LXY", "1", `{"mode":"ysf","component":"database","action":"start"}`, http.StatusBadRequest},
+		{"unknown action", "2E0LXY", "1", `{"mode":"ysf","component":"reflector","action":"enable"}`, http.StatusBadRequest},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/mode_control", strings.NewReader(test.body))
+			request.Header.Set("X-DVHub-Authenticated-User", test.user)
+			request.Header.Set("X-DVHub-Control", test.control)
+			gateway.handleModeControl(recorder, request)
+			if recorder.Code != test.wantCode {
+				t.Fatalf("mode control returned %d, want %d: %s", recorder.Code, test.wantCode, recorder.Body.String())
+			}
+		})
 	}
 }
 

@@ -5,7 +5,7 @@ set -euo pipefail
 
 readonly CADDYFILE=/etc/caddy/Caddyfile
 readonly MIGRATION_ROOT=/var/lib/dvhub-deploy/migrations
-readonly PUBLIC_HOST=ai.2e0lxy.uk
+readonly PUBLIC_HOST=dvhub.2e0lxy.uk
 readonly PUBLIC_IP=194.146.49.25
 umask 077
 
@@ -102,7 +102,7 @@ cat >"$candidate" <<EOF
 	}
 }
 
-http://$PUBLIC_HOST {
+https://$PUBLIC_HOST {
 	import dvhub-live
 }
 
@@ -137,10 +137,10 @@ if ! systemctl reload caddy.service; then
 fi
 
 health_failed=0
-curl -fsS --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/api/public/dashboard >/dev/null || health_failed=1
-curl -fsS --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/ >/dev/null || health_failed=1
-[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/admin) == 401 ]] || health_failed=1
-[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 -H "Host: $PUBLIC_HOST" http://127.0.0.1/api/system) == 401 ]] || health_failed=1
+curl -fsS --max-time 8 --resolve "$PUBLIC_HOST:443:127.0.0.1" "https://$PUBLIC_HOST/api/public/dashboard" >/dev/null || health_failed=1
+curl -fsS --max-time 8 --resolve "$PUBLIC_HOST:443:127.0.0.1" "https://$PUBLIC_HOST/" >/dev/null || health_failed=1
+[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$PUBLIC_HOST:443:127.0.0.1" "https://$PUBLIC_HOST/admin") == 401 ]] || health_failed=1
+[[ $(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 --resolve "$PUBLIC_HOST:443:127.0.0.1" "https://$PUBLIC_HOST/api/system") == 401 ]] || health_failed=1
 
 if (( health_failed )); then
     rollback

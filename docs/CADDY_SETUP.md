@@ -95,12 +95,12 @@ sudo journalctl -u caddy -f
 **Before starting Caddy, ensure DNS is configured:**
 
 ```
-A Record: ai.2e0lxy.uk → your-server-ip
+A Record: dvhub.2e0lxy.uk → 194.146.49.25 (DNS only)
 ```
 
 **Wait for DNS propagation:**
 ```bash
-dig ai.2e0lxy.uk +short
+dig dvhub.2e0lxy.uk +short
 # Should return your server IP
 ```
 

@@ -418,6 +418,7 @@ func main() {
 	http.HandleFunc("/api/dmr_lookup", gw.handleDMRLookup)
 	http.HandleFunc("/api/talkgroups", gw.handleTalkgroups)
 	http.HandleFunc("/api/ysf_control", gw.handleYSFControl)
+	http.HandleFunc("/api/mode_control", gw.handleModeControl)
 	http.HandleFunc("/api/ysf_dashboard", gw.handleYSFDashboard)
 	http.HandleFunc("/api/public/ysf_dashboard", gw.handlePublicYSFDashboard)
 	http.HandleFunc("/api/ysf_identity", gw.handleYSFIdentity)
@@ -881,6 +882,7 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"caddy_service":    serviceActive("caddy.service"),
 		"gitops_timer":     serviceActive("dvhub-deploy.timer"),
 		"gitops_revision":  gitRevision,
+		"public_url":       appConfig.PublicURL,
 		"timezone":         timezone,
 		"timezone_correct": timezone == "Europe/London",
 		"swap_active":      swapActive(),
@@ -894,6 +896,8 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
 		"m17_reflector":    serviceActive("mrefd.service"),
 		"m17_bridge":       serviceActive("mrefd.service") && serviceActive("usrp2m17.service"),
+		"xlxd_reflector":   serviceActive("xlxd.service"),
+		"dvxcode_bridge":   serviceActive("dvxbridge.service"),
 		"local_master":     serviceActive("dvhub-gateway.service"),
 		"allstar_bridge":   allStar.Registered,
 		"allstar_services": allStar.ServicesActive,
@@ -936,13 +940,20 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		}
 		return "good"
 	}
+	xlxdActive, dvxcodeActive := service("xlxd.service"), service("dvxbridge.service")
+	dstarStatus, dstarDetail := "inactive", "XLXd / DVxCode staged — not running"
+	if xlxdActive && dvxcodeActive {
+		dstarStatus, dstarDetail = "good", "XLXd module A · DVxCode shadow bridge"
+	} else if xlxdActive || dvxcodeActive {
+		dstarStatus, dstarDetail = "fault", "XLXd / DVxCode service mismatch"
+	}
 	publicDashboardCache.routes = []map[string]any{
 		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": "TG23530 · FreeSTAR · BrandMeister · TGIF"},
 		{"id": "ysf", "label": "YSF", "status": status(service("ysfreflector.service"), service("ysf2dmr.service")), "detail": "Yorkshire Link reflector"},
 		{"id": "nxdn", "label": "NXDN", "status": status(service("nxdnreflector.service"), service("nxdn2dmr.service")), "detail": "Local reflector · 23530"},
 		{"id": "p25", "label": "P25", "status": status(service("p25reflector.service"), service("p252dmr.service")), "detail": "Local reflector · 23530"},
 		{"id": "m17", "label": "M17", "status": status(service("mrefd.service"), service("usrp2m17.service")), "detail": "M17-23530 · ASL PCM bus"},
-		{"id": "dstar", "label": "D-STAR", "status": "inactive", "detail": "Not configured"},
+		{"id": "dstar", "label": "D-STAR", "status": dstarStatus, "detail": dstarDetail},
 		{"id": "echolink", "label": "EchoLink", "status": status(echoLink.Ready), "detail": fmt.Sprintf("Via AllStar · %d linked", len(echoLink.Connections))},
 		{"id": "allstar", "label": "AllStar", "status": status(allStar.Registered, allStar.ServicesActive), "detail": "Node 530471 · PCM bus"},
 		{"id": "conference", "label": "TG23530", "status": status(conference["ready"] == true), "detail": "Yorkshire conference"},
@@ -3677,6 +3688,77 @@ func (g *Gateway) handleYSFControl(w http.ResponseWriter, r *http.Request) {
 
 func serviceActive(name string) bool {
 	return exec.Command("/usr/bin/systemctl", "is-active", "--quiet", name).Run() == nil
+}
+
+var modeServices = map[string]map[string]string{
+	"ysf":   {"reflector": "ysfreflector.service", "bridge": "ysf2dmr.service"},
+	"nxdn":  {"reflector": "nxdnreflector.service", "bridge": "nxdn2dmr.service"},
+	"p25":   {"reflector": "p25reflector.service", "bridge": "p252dmr.service"},
+	"m17":   {"reflector": "mrefd.service", "bridge": "usrp2m17.service"},
+	"dstar": {"reflector": "xlxd.service", "bridge": "dvxbridge.service"},
+}
+
+func (g *Gateway) handleModeControl(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	status := func() map[string]any {
+		result := make(map[string]any, len(modeServices))
+		for mode, components := range modeServices {
+			values := make(map[string]bool, len(components))
+			for component, unit := range components {
+				values[component] = serviceActive(unit)
+			}
+			result[mode] = values
+		}
+		return result
+	}
+	if r.Method == http.MethodGet {
+		_ = json.NewEncoder(w).Encode(map[string]any{"modes": status()})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !requireControlAuth(w, r) {
+		return
+	}
+	var request struct {
+		Mode      string `json:"mode"`
+		Component string `json:"component"`
+		Action    string `json:"action"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&request) != nil {
+		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
+		return
+	}
+	request.Mode = strings.ToLower(strings.TrimSpace(request.Mode))
+	request.Component = strings.ToLower(strings.TrimSpace(request.Component))
+	if request.Action != "start" && request.Action != "stop" && request.Action != "restart" {
+		http.Error(w, `{"error":"Unsupported service action"}`, http.StatusBadRequest)
+		return
+	}
+	components, ok := modeServices[request.Mode]
+	if !ok {
+		http.Error(w, `{"error":"Unsupported mode"}`, http.StatusBadRequest)
+		return
+	}
+	unit, ok := components[request.Component]
+	if !ok {
+		http.Error(w, `{"error":"Unsupported component"}`, http.StatusBadRequest)
+		return
+	}
+	command := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-service-control", request.Action, unit)
+	if output, err := command.CombinedOutput(); err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = "Service control failed"
+		}
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, message), http.StatusInternalServerError)
+		return
+	}
+	time.Sleep(250 * time.Millisecond)
+	_ = json.NewEncoder(w).Encode(map[string]any{"mode": request.Mode, "component": request.Component, "action": request.Action, "active": serviceActive(unit), "modes": status()})
 }
 
 func loadYorkshireConferenceConfig() (YorkshireConferenceConfig, error) {

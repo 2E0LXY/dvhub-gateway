@@ -1,0 +1,36 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+    echo "dvhub-service-control must run through sudo" >&2
+    exit 77
+fi
+
+action="${1:-}"
+unit="${2:-}"
+case "$action" in
+    start|stop|restart) ;;
+    *) echo "unsupported service action" >&2; exit 64 ;;
+esac
+
+case "$unit" in
+    ysfreflector.service|ysf2dmr.service|nxdnreflector.service|nxdn2dmr.service|\
+    p25reflector.service|p252dmr.service|mrefd.service|usrp2m17.service|\
+    xlxd.service|dvxbridge.service) ;;
+    *) echo "service is not in the DVHub control allowlist" >&2; exit 64 ;;
+esac
+
+if [[ $action != stop ]]; then
+    case "$unit" in
+        xlxd.service)
+            [[ -x /usr/local/bin/xlxd && -s /etc/dvhub/xlxd.env ]] || {
+                echo "XLXd is not installed and configured" >&2; exit 69;
+            } ;;
+        dvxbridge.service)
+            [[ -x /usr/local/bin/dvxbridge && -s /etc/dvhub/dvxbridge.ini && -s /etc/dvhub/dvxcode-validation.sha256 ]] || {
+                echo "DVxCode is not installed, configured and validated" >&2; exit 69;
+            } ;;
+    esac
+fi
+
+exec /usr/bin/systemctl "$action" "$unit"

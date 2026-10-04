@@ -1,0 +1,53 @@
+name: XLXd reflector build
+
+on:
+  push:
+    paths:
+      - 'deploy/xlxd/**'
+      - '.github/workflows/xlxd.yml'
+  pull_request:
+    paths:
+      - 'deploy/xlxd/**'
+      - '.github/workflows/xlxd.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installer
+        run: bash -n deploy/xlxd/install-xlxd.sh
+      - name: Fetch pinned XLXd source
+        run: |
+          git init -q /tmp/xlxd
+          git -C /tmp/xlxd remote add origin https://github.com/LX3JL/xlxd.git
+          git -C /tmp/xlxd fetch -q --depth 1 origin bf5d0148dbdf2534af129ca3cc034c5051dcfc8d
+          git -C /tmp/xlxd checkout -q --detach FETCH_HEAD
+          test "$(git -C /tmp/xlxd rev-parse HEAD)" = bf5d0148dbdf2534af129ca3cc034c5051dcfc8d
+      - name: Apply collision-safe D-STAR profile
+        run: |
+          git -C /tmp/xlxd apply --unidiff-zero --check "$GITHUB_WORKSPACE/deploy/xlxd/xlxd-dstar-only.patch"
+          git -C /tmp/xlxd apply --unidiff-zero "$GITHUB_WORKSPACE/deploy/xlxd/xlxd-dstar-only.patch"
+      - name: Build XLXd
+        run: make -C /tmp/xlxd/src -j"$(nproc)"
+      - name: Confirm foreground binary
+        run: |
+          set +e
+          output="$(/tmp/xlxd/src/xlxd 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q 'Usage: xlxd callsign xlxdip ambedip' <<<"$output"
+      - name: Validate hardened units
+        run: |
+          sudo install -m 0755 /bin/true /usr/local/bin/xlxd
+          sudo install -m 0755 /bin/true /usr/local/bin/dvxbridge
+          sudo install -d -m 0755 /etc/dvhub
+          sudo touch /etc/dvhub/dvxbridge.ini
+          sudo cp deploy/xlxd/xlxd.env.example /etc/dvhub-xlxd-ci.env
+          sed 's#/etc/dvhub/xlxd.env#/etc/dvhub-xlxd-ci.env#' deploy/xlxd/xlxd.service >/tmp/xlxd.service
+          sudo systemd-analyze verify /tmp/xlxd.service
+          sudo systemd-analyze verify deploy/xlxd/dvxbridge.service
