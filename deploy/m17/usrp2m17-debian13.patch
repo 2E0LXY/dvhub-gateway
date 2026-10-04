@@ -1,0 +1,37 @@
+diff --git a/USRP2M17/Conf.h b/USRP2M17/Conf.h
+index 867b6f5..6f33070 100644
+--- a/USRP2M17/Conf.h
++++ b/USRP2M17/Conf.h
+@@ -21,6 +21,7 @@
+ #if !defined(CONF_H)
+ #define	CONF_H
+ 
++#include <cstdint>
+ #include <string>
+ #include <vector>
+ 
+diff --git a/USRP2M17/ModeConv.h b/USRP2M17/ModeConv.h
+index 4bc2823..632296b 100644
+--- a/USRP2M17/ModeConv.h
++++ b/USRP2M17/ModeConv.h
+@@ -20,6 +20,8 @@
+ 
+ #include "RingBuffer.h"
+ #include "codec2/codec2.h"
++
++#include <cstdint>
+ 
+ const uint8_t TAG_HEADER = 0x00U;
+ const uint8_t TAG_DATA   = 0x01U;
+diff --git a/USRP2M17/USRP2M17.h b/USRP2M17/USRP2M17.h
+index 3a12866..34fc043 100644
+--- a/USRP2M17/USRP2M17.h
++++ b/USRP2M17/USRP2M17.h
+@@ -30,6 +30,7 @@
+ #include "Conf.h"
+ #include "Log.h"
+ 
++#include <cstdint>
+ #include <string>
+ 
+ class CUSRP2M17

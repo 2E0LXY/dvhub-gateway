@@ -13,6 +13,9 @@ Build inputs are pinned:
 - `n7tae/mrefd` `7ba8c9dc3de2a43f44ba05e53b010c26c4147f2f`
 - `ShaYmez/MMDVM_CM` `5c0a387da2cedfa47fc171fc57c48fee252c91aa`
 
+`usrp2m17-debian13.patch` adds the explicit `<cstdint>` includes required by
+Debian 13's current compiler; it does not alter protocol or audio behaviour.
+
 Install as root from a checked-out repository:
 
 ```sh

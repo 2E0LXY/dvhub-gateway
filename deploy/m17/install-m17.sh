@@ -55,6 +55,8 @@ make -C "$work_dir/mrefd" -j"$(nproc)"
 
 git clone --quiet "$MMDVM_REPO" "$work_dir/mmdvm-cm"
 git -C "$work_dir/mmdvm-cm" checkout --quiet "$MMDVM_SHA"
+git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2m17-debian13.patch"
+git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2m17-debian13.patch"
 make -C "$work_dir/mmdvm-cm/USRP2M17" -j"$(nproc)"
 
 id m17 >/dev/null 2>&1 || useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin m17
