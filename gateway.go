@@ -503,8 +503,8 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	allStar := readAllStarStatus()
 	echoLink := readEchoLinkStatus()
-	gitRevision := readSmallTextFile("/var/lib/dvhub-deploy/current-sha", 128)
-	timezone := readSmallTextFile("/etc/timezone", 128)
+	gitRevision := readSmallTextFile("/var/lib/dvgateway/deployed-sha", 128)
+	timezone := readTimezone()
 	_, conferenceConfigErr := loadYorkshireConferenceConfig()
 	vocoderTargets := configuredVocoderTargets()
 	json.NewEncoder(w).Encode(map[string]any{
@@ -547,6 +547,21 @@ func readSmallTextFile(path string, maximum int64) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+func readTimezone() string {
+	if timezone := readSmallTextFile("/etc/timezone", 128); timezone != "" {
+		return timezone
+	}
+	link, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return ""
+	}
+	const zoneinfo = "/usr/share/zoneinfo/"
+	if strings.HasPrefix(link, zoneinfo) {
+		return strings.TrimPrefix(link, zoneinfo)
+	}
+	return ""
 }
 
 func swapActive() bool {

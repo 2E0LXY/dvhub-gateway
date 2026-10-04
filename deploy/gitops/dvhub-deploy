@@ -9,6 +9,7 @@ readonly REPO_DIR="$STATE_DIR/repository.git"
 readonly BACKUP_DIR="$STATE_DIR/backups"
 readonly GO_STATE_DIR="$STATE_DIR/go"
 readonly CURRENT_SHA_FILE="$STATE_DIR/current-sha"
+readonly RUNTIME_SHA_FILE="/var/lib/dvgateway/deployed-sha"
 readonly LOCK_FILE="/run/lock/dvhub-deploy.lock"
 readonly WEB_ROOT="/var/www/dvhub"
 readonly BINARY="/usr/local/bin/dvhub-gateway"
@@ -279,6 +280,10 @@ for _ in {1..20}; do
             http://localhost/api/state >/dev/null; then
         printf '%s\n' "$target_sha" >"$CURRENT_SHA_FILE.new"
         mv -f -- "$CURRENT_SHA_FILE.new" "$CURRENT_SHA_FILE"
+        printf '%s\n' "$target_sha" >"$RUNTIME_SHA_FILE.new"
+        chown root:dvhub "$RUNTIME_SHA_FILE.new"
+        chmod 0640 "$RUNTIME_SHA_FILE.new"
+        mv -f -- "$RUNTIME_SHA_FILE.new" "$RUNTIME_SHA_FILE"
         trap - ERR
         find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
             | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf --
