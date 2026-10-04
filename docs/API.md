@@ -35,5 +35,10 @@ Vocoder targets must appear in `/etc/dvhub/vocoder-targets.txt`; `sw` and `hybri
 - `GET|POST /api/allstar_config` — inspect or control the AllStar node.
 - `GET|POST /api/echolink_config` — inspect EchoLink state or securely install a
   validated `-L`/`-R` account on AllStar node 530471.
+- `GET /api/system` — system/service health plus the passive `quality` object:
+  host-interface loss, DMR sequence loss/jitter and real DV30 media deadlines.
+  These counters observe live traffic without generating test audio.
+- `GET /api/vocoder/health` — cached DV30 identity/availability. The server's
+  idle-only worker owns probing; dashboard requests never probe the hardware.
 
 Passwords and API tokens are accepted only for the relevant control operation and are never returned by a status endpoint.

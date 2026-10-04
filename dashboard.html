@@ -461,6 +461,12 @@
                     <div class="data-row"><span class="data-label">AllStar 530471</span><span class="chip chip-err" id="health-allstar">FAULT</span></div>
                     <div class="data-row"><span class="data-label">EchoLink 621907</span><span class="chip chip-err" id="health-echolink">FAULT</span></div>
                     <div class="data-row"><span class="data-label">DV30 AMBE Hardware</span><span class="chip chip-err" id="health-vocoder">FAULT</span></div>
+                    <div class="data-row"><span class="data-label">M17 ↔ AllStar Bridge</span><span class="chip chip-err" id="health-m17">NOT INSTALLED</span></div>
+                    <div class="data-row"><span class="data-label">Passive Monitoring</span><span class="chip chip-idle" id="health-monitor-mode">CHECKING</span></div>
+                    <div class="data-row"><span class="data-label">Host RX Packet Loss</span><span class="chip chip-idle" id="health-host-loss">NO SAMPLE</span></div>
+                    <div class="data-row"><span class="data-label">DMR Media Packet Loss</span><span class="chip chip-idle" id="health-dmr-loss">NO TRAFFIC</span></div>
+                    <div class="data-row"><span class="data-label">DMR Jitter / Stutter</span><span class="chip chip-idle" id="health-media-stutter">NO TRAFFIC</span></div>
+                    <div class="data-row"><span class="data-label">DV30 Media Deadline</span><span class="chip chip-idle" id="health-vocoder-deadline">NO TRAFFIC</span></div>
                 </div>
                 <div class="px-4 pb-3 text-[8px] text-gray-500" id="health-detail">Waiting for the first complete health pass…</div>
             </div>
@@ -1375,20 +1381,36 @@
         let healthMatrixBusy = false;
 
         function setHealth(id, healthy, goodText = 'GOOD', faultText = 'FAULT') {
+			setHealthLevel(id, healthy ? 'good' : 'fault', healthy ? goodText : faultText);
+		}
+
+		function setHealthLevel(id, level, text, detail = '') {
             const chip = document.getElementById(id);
             if (!chip) return;
-            chip.textContent = healthy ? goodText : faultText;
-            chip.className = healthy ? 'chip chip-ok' : 'chip chip-err';
-            chip.dataset.healthy = healthy ? '1' : '0';
+			const normalized = ['good', 'warning', 'fault', 'idle'].includes(level) ? level : 'idle';
+			chip.textContent = text;
+			chip.className = `chip ${normalized === 'good' ? 'chip-ok' : normalized === 'warning' ? 'chip-warn' : normalized === 'fault' ? 'chip-err' : 'chip-idle'}`;
+			chip.dataset.level = normalized;
+			chip.dataset.healthy = normalized === 'good' ? '1' : normalized === 'fault' ? '0' : '';
+			chip.title = detail;
         }
 
         function updateHealthSummary() {
             const checks = [...document.querySelectorAll('#health-check-grid .chip')];
-            const faults = checks.filter(check => check.dataset.healthy !== '1').length;
+			const faults = checks.filter(check => check.dataset.level === 'fault').length;
+			const warnings = checks.filter(check => check.dataset.level === 'warning').length;
             const summary = document.getElementById('health-summary');
             if (!summary) return;
-            summary.textContent = faults === 0 ? 'ALL CHECKS GOOD' : `${faults} FAULT${faults === 1 ? '' : 'S'}`;
-            summary.className = faults === 0 ? 'chip chip-ok' : 'chip chip-err';
+			if (faults > 0) {
+				summary.textContent = `${faults} FAULT${faults === 1 ? '' : 'S'}${warnings ? ` · ${warnings} WARN` : ''}`;
+				summary.className = 'chip chip-err';
+			} else if (warnings > 0) {
+				summary.textContent = `${warnings} WARNING${warnings === 1 ? '' : 'S'}`;
+				summary.className = 'chip chip-warn';
+			} else {
+				summary.textContent = 'ALL ACTIVE CHECKS GOOD';
+				summary.className = 'chip chip-ok';
+			}
         }
 
         async function updateDynamicHealth() {
@@ -1410,7 +1432,13 @@
                 setHealth('health-conference', conference.ready === true, 'ACTIVE');
                 setHealth('health-allstar', allstar.registered === true && allstar.services_active === true, 'ACTIVE');
                 setHealth('health-echolink', echolink.ready === true, 'ACTIVE');
-                setHealth('health-vocoder', vocoder.online === true, 'ONLINE');
+				const probeRTT = Number(vocoder.round_trip_ms || 0);
+				const probeLevel = !vocoder.online ? 'fault' : probeRTT >= 40 ? 'fault' : probeRTT >= 20 ? 'warning' : 'good';
+				setHealthLevel(
+					'health-vocoder', probeLevel,
+					vocoder.online ? `ONLINE · ${probeRTT.toFixed(1)} ms` : 'OFFLINE',
+					`Cached idle-only probe; age ${Number(vocoder.probe_age_seconds || 0).toFixed(1)}s. Browser refreshes do not probe the vocoder.`
+				);
                 document.getElementById('health-detail').textContent = `Revision ${document.getElementById('health-gitops')?.title || 'unknown'} · Last complete check ${new Date().toLocaleTimeString()}`;
             } catch (error) {
                 console.error('[HEALTH] Complete health pass failed:', error);
@@ -1439,7 +1467,50 @@
             setHealth('health-p25-bridge', stats.p25_bridge === true, 'ACTIVE');
             setHealth('health-nxdn', stats.nxdn_reflector === true, 'ACTIVE');
             setHealth('health-nxdn-bridge', stats.nxdn_bridge === true, 'ACTIVE');
+			setHealth('health-m17', stats.m17_bridge === true, 'ACTIVE', 'NOT INSTALLED');
             setHealth('health-master', stats.local_master === true, 'ACTIVE');
+
+			const quality = stats.quality || {};
+			const monitoring = quality.monitoring || {};
+			setHealthLevel(
+				'health-monitor-mode',
+				monitoring.mode === 'passive' && monitoring.inline === false && monitoring.adds_media_load === false ? 'good' : 'fault',
+				monitoring.mode === 'passive' ? 'PASSIVE' : 'FAULT',
+				'OS and media counters are observed out of band; dashboard checks do not carry or delay audio.'
+			);
+
+			const hostNetwork = quality.host_network || {};
+			const hostLoss = Number(hostNetwork.loss_percent || 0);
+			setHealthLevel(
+				'health-host-loss', hostNetwork.level || 'idle',
+				hostNetwork.available ? `${hostLoss.toFixed(2)}%` : 'NO SAMPLE',
+				`${hostNetwork.interface || 'network'} · ${hostNetwork.dropped_packets || 0} dropped of ${(hostNetwork.received_packets || 0) + (hostNetwork.dropped_packets || 0)} packets in the passive ${hostNetwork.sample_seconds || 5}s sample`
+			);
+
+			const media = quality.dmr_media || {};
+			const mediaLoss = Number(media.loss_percent || 0);
+			const mediaLossLevel = media.loss_level || 'idle';
+			const mediaStutterLevel = media.stutter_level || 'idle';
+			setHealthLevel(
+				'health-dmr-loss', mediaLossLevel,
+				mediaLossLevel === 'idle' ? 'NO TRAFFIC' : `${mediaLoss.toFixed(2)}%`,
+				`${media.missing_packets || 0} missing of ${(media.received_packets || 0) + (media.missing_packets || 0)} DMR media packets in the last ${media.window_seconds || 300}s`
+			);
+			const jitter = Number(media.jitter_p95_ms || 0);
+			setHealthLevel(
+				'health-media-stutter', mediaStutterLevel,
+				mediaStutterLevel === 'idle' ? 'NO TRAFFIC' : `${jitter.toFixed(1)} ms · ${media.stutter_events || 0} EVENTS`,
+				`Passive DMR sequence timing: p95 jitter ${jitter.toFixed(2)} ms and ${media.stutter_events || 0} suspected stutter events`
+			);
+
+			const vocoderQuality = quality.vocoder || {};
+			const vocoderLevel = vocoderQuality.level || 'idle';
+			const vocoderP95 = Number(vocoderQuality.latency_p95_ms || 0);
+			setHealthLevel(
+				'health-vocoder-deadline', vocoderLevel,
+				vocoderLevel === 'idle' ? 'NO TRAFFIC' : `${vocoderP95.toFixed(1)} ms · ${vocoderQuality.failures || 0} MISS`,
+				`Actual media exchanges only: p95 ${vocoderP95.toFixed(2)} ms, max ${Number(vocoderQuality.latency_max_ms || 0).toFixed(2)} ms, ${Number(vocoderQuality.failure_percent || 0).toFixed(2)}% deadline failures`
+			);
             updateHealthSummary();
             void updateDynamicHealth();
         }

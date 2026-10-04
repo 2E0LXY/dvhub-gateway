@@ -274,6 +274,74 @@ type GatewayConfig struct {
 	Contact          string `json:"contact"`
 }
 
+type networkCounterSample struct {
+	Interface string
+	Packets   uint64
+	Dropped   uint64
+	Errors    uint64
+	At        time.Time
+}
+
+type passiveNetworkQuality struct {
+	mu          sync.RWMutex
+	previous    networkCounterSample
+	interfaceID string
+	packets     uint64
+	dropped     uint64
+	errors      uint64
+	lossPercent float64
+	updated     time.Time
+	hasDelta    bool
+}
+
+type dmrFlowQuality struct {
+	Sequence uint8
+	SeenAt   time.Time
+}
+
+type dmrQualityEvent struct {
+	At       time.Time
+	Received uint64
+	Missing  uint64
+	JitterMS float64
+	Stutter  bool
+}
+
+type passiveDMRQuality struct {
+	mu        sync.Mutex
+	flows     map[string]dmrFlowQuality
+	events    []dmrQualityEvent
+	lastPrune time.Time
+}
+
+type vocoderQualitySample struct {
+	At        time.Time
+	LatencyMS float64
+	Success   bool
+}
+
+type passiveVocoderQuality struct {
+	mu        sync.Mutex
+	samples   []vocoderQualitySample
+	lastUse   time.Time
+	lastPrune time.Time
+}
+
+type cachedVocoderProbe struct {
+	Health  dv30HealthPayload
+	RTT     float64
+	Online  bool
+	Checked time.Time
+}
+
+var (
+	hostNetworkQuality = passiveNetworkQuality{}
+	dmrMediaQuality    = passiveDMRQuality{flows: make(map[string]dmrFlowQuality)}
+	dv30MediaQuality   = passiveVocoderQuality{}
+	vocoderProbeMu     sync.RWMutex
+	vocoderProbes      = make(map[string]cachedVocoderProbe)
+)
+
 var (
 	udpPool           = sync.Pool{New: func() any { b := make([]byte, 2048); return &b }}
 	gw                *Gateway
@@ -312,6 +380,7 @@ func main() {
 	go gw.updateYSFRegistryHourly()
 	go gw.broadcastYSFDashboardLoop()
 	go gw.runLocalDMRMaster()
+	go runPassiveNetworkMonitor()
 
 	defaultDV30 := defaultVocoderTarget()
 	for i := 0; i < MaxUsers; i++ {
@@ -330,6 +399,7 @@ func main() {
 		go gw.runUDPListener(gw.sessions[i])
 	}
 	go gw.runLocalVocoderBroker("127.0.0.1:2461")
+	go gw.runVocoderHealthMonitor()
 	go gw.runYorkshireConferenceSupervisor()
 
 	http.HandleFunc("/ws", gw.handleWS)
@@ -491,6 +561,278 @@ func readCPUTemperature() *float64 {
 	return nil
 }
 
+func readNetworkCounterSample() (networkCounterSample, error) {
+	data, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		return networkCounterSample{}, err
+	}
+	var best networkCounterSample
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[0])
+		if name == "" || name == "lo" {
+			continue
+		}
+		fields := strings.Fields(parts[1])
+		if len(fields) < 4 {
+			continue
+		}
+		packets, packetErr := strconv.ParseUint(fields[1], 10, 64)
+		errors, errorsErr := strconv.ParseUint(fields[2], 10, 64)
+		dropped, droppedErr := strconv.ParseUint(fields[3], 10, 64)
+		if packetErr != nil || errorsErr != nil || droppedErr != nil {
+			continue
+		}
+		if best.Interface == "" || packets > best.Packets {
+			best = networkCounterSample{Interface: name, Packets: packets, Dropped: dropped, Errors: errors, At: time.Now()}
+		}
+	}
+	if best.Interface == "" {
+		return networkCounterSample{}, fmt.Errorf("no non-loopback network interface found")
+	}
+	return best, nil
+}
+
+func runPassiveNetworkMonitor() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		if sample, err := readNetworkCounterSample(); err == nil {
+			hostNetworkQuality.observe(sample)
+		}
+		<-ticker.C
+	}
+}
+
+func (quality *passiveNetworkQuality) observe(sample networkCounterSample) {
+	quality.mu.Lock()
+	defer quality.mu.Unlock()
+	previous := quality.previous
+	quality.previous = sample
+	quality.interfaceID = sample.Interface
+	quality.updated = sample.At
+	if previous.Interface != sample.Interface || previous.At.IsZero() || sample.Packets < previous.Packets || sample.Dropped < previous.Dropped {
+		return
+	}
+	quality.packets = sample.Packets - previous.Packets
+	quality.dropped = sample.Dropped - previous.Dropped
+	quality.errors = sample.Errors - previous.Errors
+	total := quality.packets + quality.dropped
+	quality.lossPercent = 0
+	quality.hasDelta = true
+	if total > 0 {
+		quality.lossPercent = 100 * float64(quality.dropped) / float64(total)
+	}
+}
+
+func qualityLevel(lossPercent float64, errors uint64, available bool) string {
+	if !available {
+		return "idle"
+	}
+	if errors > 0 || lossPercent >= 1 {
+		return "fault"
+	}
+	if lossPercent >= 0.1 {
+		return "warning"
+	}
+	return "good"
+}
+
+func (quality *passiveNetworkQuality) snapshot() map[string]any {
+	quality.mu.RLock()
+	defer quality.mu.RUnlock()
+	available := quality.hasDelta && !quality.updated.IsZero()
+	return map[string]any{
+		"mode": "passive", "interface": quality.interfaceID, "available": available,
+		"sample_seconds": 5, "received_packets": quality.packets, "dropped_packets": quality.dropped,
+		"errors": quality.errors, "loss_percent": quality.lossPercent,
+		"level": qualityLevel(quality.lossPercent, quality.errors, available),
+	}
+}
+
+func (quality *passiveDMRQuality) observe(route string, meta DMRTrafficMeta) {
+	if meta.StreamID == 0 {
+		return
+	}
+	now := time.Now()
+	key := fmt.Sprintf("%s/%d/%d", route, meta.RepeaterID, meta.StreamID)
+	quality.mu.Lock()
+	defer quality.mu.Unlock()
+	event := dmrQualityEvent{At: now, Received: 1}
+	advanceSequence := true
+	if previous, exists := quality.flows[key]; exists && now.Sub(previous.SeenAt) < 2*time.Second {
+		delta := int(uint8(meta.Sequence - previous.Sequence))
+		if delta > 1 && delta < 128 {
+			event.Missing = uint64(delta - 1)
+		}
+		// A backwards delta is a reordered/late duplicate, not evidence that
+		// the entire wraparound range was lost. Keep the newest sequence.
+		if delta >= 128 {
+			advanceSequence = false
+		}
+		intervalMS := float64(now.Sub(previous.SeenAt).Microseconds()) / 1000
+		event.JitterMS = math.Abs(intervalMS - 60)
+		event.Stutter = event.Missing > 0 || intervalMS > 120
+	}
+	if advanceSequence {
+		quality.flows[key] = dmrFlowQuality{Sequence: meta.Sequence, SeenAt: now}
+	}
+	quality.events = append(quality.events, event)
+	if now.Sub(quality.lastPrune) >= 30*time.Second {
+		quality.lastPrune = now
+		cutoff := now.Add(-5 * time.Minute)
+		first := 0
+		for first < len(quality.events) && quality.events[first].At.Before(cutoff) {
+			first++
+		}
+		if first > 0 {
+			quality.events = append([]dmrQualityEvent(nil), quality.events[first:]...)
+		}
+		for flowKey, flow := range quality.flows {
+			if now.Sub(flow.SeenAt) > 5*time.Minute {
+				delete(quality.flows, flowKey)
+			}
+		}
+	}
+}
+
+func (quality *passiveDMRQuality) snapshot() map[string]any {
+	quality.mu.Lock()
+	events := append([]dmrQualityEvent(nil), quality.events...)
+	quality.mu.Unlock()
+	cutoff := time.Now().Add(-5 * time.Minute)
+	var received, missing, stutters uint64
+	jitters := make([]float64, 0, len(events))
+	var lastSeen time.Time
+	for _, event := range events {
+		if event.At.Before(cutoff) {
+			continue
+		}
+		received += event.Received
+		missing += event.Missing
+		if event.JitterMS > 0 {
+			jitters = append(jitters, event.JitterMS)
+		}
+		if event.Stutter {
+			stutters++
+		}
+		if event.At.After(lastSeen) {
+			lastSeen = event.At
+		}
+	}
+	lossPercent := 0.0
+	if total := received + missing; total > 0 {
+		lossPercent = 100 * float64(missing) / float64(total)
+	}
+	sort.Float64s(jitters)
+	p95Jitter := percentile(jitters, 0.95)
+	active := !lastSeen.IsZero() && time.Since(lastSeen) < 30*time.Second
+	lossLevel := "idle"
+	stutterLevel := "idle"
+	if received > 0 {
+		lossLevel = qualityLevel(lossPercent, 0, true)
+		stutterLevel = "good"
+		if p95Jitter >= 40 || stutters >= 3 {
+			stutterLevel = "fault"
+		} else if p95Jitter >= 20 || stutters > 0 {
+			stutterLevel = "warning"
+		}
+	}
+	overallLevel := lossLevel
+	if stutterLevel == "fault" || (stutterLevel == "warning" && overallLevel == "good") {
+		overallLevel = stutterLevel
+	}
+	return map[string]any{
+		"mode": "passive", "window_seconds": 300, "active": active, "received_packets": received,
+		"missing_packets": missing, "loss_percent": lossPercent, "jitter_p95_ms": p95Jitter,
+		"stutter_events": stutters, "loss_level": lossLevel, "stutter_level": stutterLevel, "level": overallLevel,
+	}
+}
+
+func percentile(sortedValues []float64, percentileValue float64) float64 {
+	if len(sortedValues) == 0 {
+		return 0
+	}
+	index := int(math.Ceil(percentileValue*float64(len(sortedValues)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(sortedValues) {
+		index = len(sortedValues) - 1
+	}
+	return sortedValues[index]
+}
+
+func (quality *passiveVocoderQuality) observe(latency time.Duration, success bool) {
+	now := time.Now()
+	quality.mu.Lock()
+	defer quality.mu.Unlock()
+	quality.lastUse = now
+	quality.samples = append(quality.samples, vocoderQualitySample{At: now, LatencyMS: float64(latency.Microseconds()) / 1000, Success: success})
+	if now.Sub(quality.lastPrune) >= 30*time.Second {
+		quality.lastPrune = now
+		cutoff := now.Add(-5 * time.Minute)
+		first := 0
+		for first < len(quality.samples) && quality.samples[first].At.Before(cutoff) {
+			first++
+		}
+		if first > 0 {
+			quality.samples = append([]vocoderQualitySample(nil), quality.samples[first:]...)
+		}
+	}
+}
+
+func (quality *passiveVocoderQuality) recentlyActive(within time.Duration) bool {
+	quality.mu.Lock()
+	defer quality.mu.Unlock()
+	return !quality.lastUse.IsZero() && time.Since(quality.lastUse) < within
+}
+
+func (quality *passiveVocoderQuality) snapshot() map[string]any {
+	quality.mu.Lock()
+	samples := append([]vocoderQualitySample(nil), quality.samples...)
+	quality.mu.Unlock()
+	cutoff := time.Now().Add(-5 * time.Minute)
+	latencies := make([]float64, 0, len(samples))
+	var failures uint64
+	for _, sample := range samples {
+		if sample.At.Before(cutoff) {
+			continue
+		}
+		latencies = append(latencies, sample.LatencyMS)
+		if !sample.Success {
+			failures++
+		}
+	}
+	sort.Float64s(latencies)
+	p95 := percentile(latencies, 0.95)
+	maxLatency := 0.0
+	if len(latencies) > 0 {
+		maxLatency = latencies[len(latencies)-1]
+	}
+	failurePercent := 0.0
+	if len(latencies) > 0 {
+		failurePercent = 100 * float64(failures) / float64(len(latencies))
+	}
+	level := "idle"
+	if len(latencies) > 0 {
+		level = "good"
+		if failurePercent >= 2 || p95 >= 40 {
+			level = "fault"
+		} else if failurePercent > 0 || p95 >= 20 {
+			level = "warning"
+		}
+	}
+	return map[string]any{
+		"mode": "passive", "window_seconds": 300, "samples": len(latencies), "failures": failures,
+		"failure_percent": failurePercent, "latency_p95_ms": p95, "latency_max_ms": maxLatency,
+		"level": level,
+	}
+}
+
 func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -528,11 +870,18 @@ func handleSystemStats(w http.ResponseWriter, r *http.Request) {
 		"p25_bridge":       serviceActive("p252dmr.service"),
 		"nxdn_reflector":   serviceActive("nxdnreflector.service"),
 		"nxdn_bridge":      serviceActive("nxdn2dmr.service"),
+		"m17_bridge":       serviceActive("usrp2m17.service") || serviceActive("m172dmr.service"),
 		"local_master":     serviceActive("dvhub-gateway.service"),
 		"allstar_bridge":   allStar.Registered,
 		"allstar_services": allStar.ServicesActive,
 		"echolink_ready":   echoLink.Ready,
 		"echolink_links":   len(echoLink.Connections),
+		"quality": map[string]any{
+			"monitoring":   map[string]any{"mode": "passive", "inline": false, "adds_media_load": false},
+			"host_network": hostNetworkQuality.snapshot(),
+			"dmr_media":    dmrMediaQuality.snapshot(),
+			"vocoder":      dv30MediaQuality.snapshot(),
+		},
 	})
 }
 
@@ -867,10 +1216,11 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 		"state":              "offline",
 		"hardware_enabled":   g.sessions[0].UseHWVocoder.Load(),
 		"mode":               vocoderMode(g.sessions[0]),
+		"probe_mode":         "idle-cached",
 		"hardware_frames":    dv30HardwareFrames.Load(),
 		"software_fallbacks": 0,
 		"hardware_failures":  dv30HardwareFailures.Load(),
-		"message":            "No heartbeat reply",
+		"message":            "Waiting for the passive idle probe",
 	}
 	targets := sessionVocoderTargets(g.sessions[0])
 	response["configured_devices"] = len(targets)
@@ -881,16 +1231,27 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	devices := make([]map[string]any, 0, len(targets))
 	onlineCount := 0
+	checkedCount := 0
+	vocoderProbeMu.RLock()
+	defer vocoderProbeMu.RUnlock()
 	for index, target := range targets {
-		health, rtt, online := probeDV30Health(target)
-		device := map[string]any{"device": index + 1, "online": online, "state": "offline"}
-		if online {
+		probe, checked := vocoderProbes[target.String()]
+		device := map[string]any{"device": index + 1, "online": false, "state": "checking"}
+		if checked {
+			checkedCount++
+			device["checked_at"] = probe.Checked.UTC().Format(time.RFC3339)
+			device["probe_age_seconds"] = math.Round(time.Since(probe.Checked).Seconds()*10) / 10
+			device["online"] = probe.Online
+			device["state"] = "offline"
+		}
+		if checked && probe.Online {
 			onlineCount++
-			device["state"], device["product"], device["version"], device["round_trip_ms"] = "online", health.Product, health.Version, rtt
+			device["state"], device["product"], device["version"], device["round_trip_ms"] = "online", probe.Health.Product, probe.Health.Version, probe.RTT
 			if onlineCount == 1 {
-				response["product"], response["version"], response["round_trip_ms"] = health.Product, health.Version, rtt
-				response["uptime_seconds"], response["encoded"], response["decoded"] = health.UptimeSeconds, health.Encoded, health.Decoded
-				response["errors"], response["last_latency_ms"] = health.Errors, health.LastLatencyMS
+				response["product"], response["version"], response["round_trip_ms"] = probe.Health.Product, probe.Health.Version, probe.RTT
+				response["uptime_seconds"], response["encoded"], response["decoded"] = probe.Health.UptimeSeconds, probe.Health.Encoded, probe.Health.Decoded
+				response["errors"], response["last_latency_ms"] = probe.Health.Errors, probe.Health.LastLatencyMS
+				response["probe_age_seconds"] = math.Round(time.Since(probe.Checked).Seconds()*10) / 10
 			}
 		}
 		devices = append(devices, device)
@@ -899,8 +1260,27 @@ func (g *Gateway) handleVocoderHealth(w http.ResponseWriter, r *http.Request) {
 	response["online"] = onlineCount > 0
 	if onlineCount > 0 {
 		response["state"], response["message"] = "online", fmt.Sprintf("%d of %d AMBE devices online", onlineCount, len(targets))
+	} else if checkedCount > 0 {
+		response["message"] = "No heartbeat reply from the last idle-only probe"
 	}
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+func (g *Gateway) runVocoderHealthMonitor() {
+	for {
+		// A health check must never compete with a live 20 ms media frame. The
+		// browser reads this cache; only this worker probes, and only while idle.
+		if !dv30MediaQuality.recentlyActive(3 * time.Second) {
+			targets := sessionVocoderTargets(g.sessions[0])
+			for _, target := range targets {
+				health, rtt, online := probeDV30Health(target)
+				vocoderProbeMu.Lock()
+				vocoderProbes[target.String()] = cachedVocoderProbe{Health: health, RTT: rtt, Online: online, Checked: time.Now()}
+				vocoderProbeMu.Unlock()
+			}
+		}
+		time.Sleep(15 * time.Second)
+	}
 }
 
 func probeDV30Health(target *net.UDPAddr) (dv30HealthPayload, float64, bool) {
@@ -1759,6 +2139,7 @@ func (g *Gateway) runLocalDMRMaster() {
 		if len(packet) < 55 || string(packet[:4]) != "DMRD" {
 			continue
 		}
+		dmrMediaQuality.observe("local-master", parseDMRTrafficMeta(packet))
 		repeaterID := binary.BigEndian.Uint32(packet[11:15])
 		client := g.authenticatedMasterClient(repeaterID, remote)
 		if client == nil {
@@ -2371,6 +2752,8 @@ func (g *Gateway) runLocalVocoderBroker(address string) {
 		return
 	}
 	defer conn.Close()
+	_ = conn.SetReadBuffer(1 << 20)
+	_ = conn.SetWriteBuffer(1 << 20)
 	fmt.Printf("[VOC] Shared hardware broker listening on udp://%s\n", address)
 	type brokerJob struct {
 		request []byte
@@ -2537,6 +2920,8 @@ func acquireDV30Socket() *net.UDPConn {
 		for i := 0; i < cap(dv30Sockets); i++ {
 			conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 0})
 			if err == nil {
+				_ = conn.SetReadBuffer(1 << 20)
+				_ = conn.SetWriteBuffer(1 << 20)
 				dv30Sockets <- conn
 			}
 		}
@@ -2556,6 +2941,9 @@ func nextDV30Channel() byte {
 }
 
 func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte, minimumSize int, deadline time.Time) []byte {
+	started := time.Now()
+	success := false
+	defer func() { dv30MediaQuality.observe(time.Since(started), success) }()
 	if time.Until(deadline) <= 0 {
 		return nil
 	}
@@ -2584,6 +2972,7 @@ func exchangeDV30(request []byte, target *net.UDPAddr, replyOpcode, channel byte
 			return nil
 		}
 		if peer != nil && peer.IP.Equal(target.IP) && peer.Port == target.Port && n >= minimumSize && resp[0] == replyOpcode && resp[1] == channel {
+			success = true
 			return resp[:n]
 		}
 		conn.SetReadDeadline(deadline)
@@ -2712,6 +3101,7 @@ func resolveNetworkTarget(target string) *net.UDPAddr {
 // ============================================================================
 
 func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint32, sourceName string, meta DMRTrafficMeta) {
+	dmrMediaQuality.observe(fmt.Sprintf("node-%d/%s", nodeID, network), meta)
 	g.dbMutex.RLock()
 	info, exists := g.idDB[sourceID]
 	g.dbMutex.RUnlock()

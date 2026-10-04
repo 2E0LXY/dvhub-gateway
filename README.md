@@ -154,6 +154,16 @@ or join the live conference. D-Star stays disabled until a second dependable
 AMBE channel is available. The md380 software codec is test/standby only and is
 never selected automatically during a live transmission.
 
+### Passive media-quality monitoring
+
+The dashboard health matrix reads operating-system and media counters without
+placing a synthetic stream in the voice path. It reports five-second host RX
+drops, five-minute DMR sequence loss and p95 arrival jitter, plus real DV30
+media deadline latency and failures. `NO TRAFFIC` is intentionally neutral,
+not green. DV30 identity probes are cached by one server-side worker every 15
+seconds and are suspended while codec media is active, so opening additional
+dashboards cannot compete with live vocoder frames.
+
 Built-in DMR network DNS targets are configured in `dmrNetworkTargets` in `gateway.go`; master passwords and port overrides come from `/var/lib/dvgateway/DMR_Hosts.txt`. Site-specific public identity and vocoder addresses belong in `/etc/dvhub/gateway.json` and `/etc/dvhub/vocoder-targets.txt`; examples are under `deploy/`.
 
 ```go

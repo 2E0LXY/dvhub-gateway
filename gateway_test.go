@@ -153,11 +153,51 @@ func TestSystemStatsIncludesOperationalHealthFields(t *testing.T) {
 		"timezone", "timezone_correct", "swap_active", "config_access",
 		"vocoder_config", "ysf_reflector", "ysf_bridge", "p25_reflector",
 		"p25_bridge", "nxdn_reflector", "nxdn_bridge", "local_master",
-		"allstar_bridge", "allstar_services", "echolink_ready",
+		"m17_bridge", "allstar_bridge", "allstar_services", "echolink_ready", "quality",
 	} {
 		if _, ok := payload[field]; !ok {
 			t.Errorf("system status is missing %q", field)
 		}
+	}
+}
+
+func TestPassiveNetworkQualityReportsDeltaWithoutGeneratingTraffic(t *testing.T) {
+	quality := passiveNetworkQuality{}
+	now := time.Now()
+	quality.observe(networkCounterSample{Interface: "eth0", Packets: 1000, Dropped: 10, At: now})
+	quality.observe(networkCounterSample{Interface: "eth0", Packets: 1999, Dropped: 11, At: now.Add(5 * time.Second)})
+	snapshot := quality.snapshot()
+	if snapshot["received_packets"] != uint64(999) || snapshot["dropped_packets"] != uint64(1) {
+		t.Fatalf("unexpected passive network delta: %#v", snapshot)
+	}
+	if snapshot["level"] != "warning" {
+		t.Fatalf("network quality level = %v, want warning", snapshot["level"])
+	}
+}
+
+func TestPassiveDMRQualityDetectsSequenceGap(t *testing.T) {
+	quality := passiveDMRQuality{flows: make(map[string]dmrFlowQuality)}
+	quality.observe("test", DMRTrafficMeta{StreamID: 42, RepeaterID: 7, Sequence: 10})
+	quality.observe("test", DMRTrafficMeta{StreamID: 42, RepeaterID: 7, Sequence: 12})
+	snapshot := quality.snapshot()
+	if snapshot["missing_packets"] != uint64(1) {
+		t.Fatalf("missing packets = %v, want 1", snapshot["missing_packets"])
+	}
+	if snapshot["level"] != "fault" {
+		t.Fatalf("DMR quality level = %v, want fault", snapshot["level"])
+	}
+}
+
+func TestPassiveVocoderQualityFlagsDeadlineMiss(t *testing.T) {
+	quality := passiveVocoderQuality{}
+	quality.observe(12*time.Millisecond, true)
+	quality.observe(40*time.Millisecond, false)
+	snapshot := quality.snapshot()
+	if snapshot["failures"] != uint64(1) {
+		t.Fatalf("vocoder failures = %v, want 1", snapshot["failures"])
+	}
+	if snapshot["level"] != "fault" {
+		t.Fatalf("vocoder quality level = %v, want fault", snapshot["level"])
 	}
 }
 
