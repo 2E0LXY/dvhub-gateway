@@ -42,7 +42,7 @@ Removes the tandem re-estimation that causes warble.
     dvxcode -from dmr -to dstar -hex -stats < frames.hex
     go run ./cmd/xcbench -out bench_out                    # results + WAVs
 
-Latency: 20 ms (lookahead) by default; `-low-latency` removes it.
+Latency: 40 ms (2-frame lookahead) by default; `-low-latency` removes it.
 
 | Cost (x86-64, one core) | Per 20 ms frame | Streams per core (theoretical) |
 |---|---|---|
@@ -109,11 +109,21 @@ Half-duplex: one call at a time; own streams are never re-bridged.
 | 1 | 1.67 dB / 0% | 3.18 dB / 5.3% |
 | 4 | 2.28 dB / 0% | 4.49 dB / 33.2% |
 
-| BER | Pass-through pitch err / jitter | dvxcode pitch err / jitter (ref ≈59 ¢) |
-|---|---|---|
-| 3% | 0.00% / 59.0 ¢ | 0.00% / 58.1 ¢ |
-| 5% | 2.11% / 87.8 ¢ | 0.00% / 57.5 ¢ |
-| 8% | 10.75% / 155.5 ¢ | 5.35% / 94.4 ¢ |
+Channel errors (mean of 10 seeds; clean-source pitch jitter ≈58 ¢):
+
+| BER | Path | Pitch err >50 ¢ | Octave errors | LSD | Pitch jitter |
+|---|---|---|---|---|---|
+| 5% | pass-through | 2.11% | 0.85% | 3.31 dB | 82.9 ¢ |
+| 5% | dvxcode | 0.90% | 0.00% | 2.66 dB | 57.7 ¢ |
+| 8% | pass-through | 9.80% | 5.09% | 5.80 dB | 192.8 ¢ |
+| 8% | dvxcode | 4.97% | 0.32% | 4.09 dB | 59.6 ¢ |
+| 10% | pass-through | 16.99% | 9.28% | 7.76 dB | 284.3 ¢ |
+| 10% | dvxcode | 9.82% | 1.48% | 5.50 dB | 72.9 ¢ |
+
+Most remaining ">50 ¢" counts at high BER are interpolated frames: the
+interpolated pitch is smoother than the jittery source, which this metric
+scores as error. Octave errors and jitter (the audible warble) are the
+relevant columns.
 
 \* Tandem uses this project's analyser, not a DVSI chip; it overstates the gap.
 Parametric figures do not depend on it.
@@ -125,7 +135,9 @@ Parametric figures do not depend on it.
 | Tandem re-estimation | Parametric path only |
 | Encoder/receiver predictor drift | Shadow decoder; closed-loop quantisation |
 | Corrupted pitch word (R2-D2) | Extended-Golay detection → conceal; never pass garbage |
-| Stalled pitch during concealment | 20 ms lookahead: interpolate between neighbours |
+| Stalled pitch during concealment | 40 ms lookahead: interpolate across error bursts to the next trusted frame |
+| Golay miscorrections (5+ errors decoded as ≤3) | Words needing 3 corrections are "suspect": pitch verified against the trusted trajectory, replaced if >0.15 octave off |
+| Error cascades | Repairs reference only trusted frames, never unverified suspect ones |
 | D-STAR C1 failure, C0 good | Partial concealment: keep pitch/voicing/gain, borrow shape |
 | Isolated octave outliers | Lookahead repair (neighbours agree, outlier > 1.6×) |
 | Index flicker | Pitch and V/UV hysteresis |

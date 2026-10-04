@@ -75,7 +75,7 @@ func main() {
 			put(t.Frame(f))
 		}
 	}
-	if f, ok := t.Flush(); ok {
+	for _, f := range t.Flush() {
 		put(f)
 	}
 	if *stats {

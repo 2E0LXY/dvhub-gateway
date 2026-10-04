@@ -97,12 +97,10 @@ func parametric(src, dst ambe.Mode, in [][9]byte, opt xcode.Options) ([][9]byte,
 	for _, f := range in {
 		out = append(out, t.Frame(f))
 	}
-	if f, ok := t.Flush(); ok {
-		out = append(out, f)
-	}
+	out = append(out, t.Flush()...)
 	el := time.Since(start)
-	if opt.Lookahead && len(out) > 0 {
-		out = out[1:] // remove the one-frame lookahead delay for alignment
+	if d := lookahead(opt); d > 0 && len(out) >= d {
+		out = out[d:] // remove the lookahead delay for alignment
 	}
 	return out, t.Stats, el / time.Duration(max(1, len(in)))
 }
@@ -120,6 +118,13 @@ func addErrors(in [][9]byte, ber float64, seed int64) [][9]byte {
 		out[i] = f
 	}
 	return out
+}
+
+func lookahead(o xcode.Options) int {
+	if !o.Lookahead {
+		return 0
+	}
+	return max(1, min(o.LookaheadFrames, 4))
 }
 
 func tandem(src, dst ambe.Mode, in [][9]byte) [][9]byte {
@@ -147,6 +152,7 @@ func main() {
 	dstarPath := flag.String("dstar", "testdata/vectors/dstar_real.hex", "D-STAR frames (hex)")
 	outDir := flag.String("out", "bench_out", "directory for WAV output")
 	hops := flag.Int("hops", 4, "multi-hop chain length")
+	seeds := flag.Int("seeds", 10, "bit-error seeds to average")
 	flag.Parse()
 	must := func(err error) {
 		if err != nil {
@@ -186,30 +192,42 @@ func main() {
 	})
 	fmt.Printf("\nparametric stats: %+v\nper-frame cost: %v\n", st, perFrame)
 
-	// Channel errors: random bit errors on the D-STAR source frames.
-	fmt.Printf("\n## D-STAR → DMR with channel bit errors (reference: clean D-STAR decode)\n\n")
+	// Channel errors: random bit errors on the D-STAR source frames,
+	// averaged over several seeds (single runs are too noisy to compare).
+	fmt.Printf("\n## D-STAR → DMR with channel bit errors, mean of %d seeds (reference: clean D-STAR decode)\n\n", *seeds)
 	w0 := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(w0, "BER %\tpath\tbad FEC frames\tconcealed\tf0 err >50¢ %\toctave %\tLSD dB\tjitter out ¢ (clean ref)\t")
+	fmt.Fprintln(w0, "BER %\tpath\tf0 err >50¢ %\toctave %\tLSD dB\tjitter out ¢ (clean ref)\t")
 	pass := xcode.DefaultOptions
-	pass.Conceal, pass.Lookahead = false, false
+	pass.Conceal, pass.Lookahead, pass.SuspectCheck = false, false, false
 	pass.Encoder.PitchHysteresis, pass.Encoder.VUVHysteresis = 0, 0
-	for _, ber := range []float64{0.01, 0.03, 0.05, 0.08} {
-		noisy := addErrors(ds, ber, 99)
-		for _, c := range []struct {
-			name string
-			o    xcode.Options
-		}{{"pass-through (no anti-warble)", pass}, {"concealment + anti-warble", xcode.DefaultOptions}} {
-			out, st, _ := parametric(ambe.DStar, ambe.DMR, noisy, c.o)
-			dec := decodeStream(ambe.DMR, out)
-			m := compare(ref, dec)
-			fmt.Fprintf(w0, "%.0f\t%s\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.1f (%.1f)\t\n", ber*100, c.name, st.BadFEC, st.Concealed, m.PitchErrPct, m.OctavePct, m.LSDdB, m.JitterOut, m.JitterRef)
-			if ber == 0.08 {
-				tag := "pass"
-				if c.o.Conceal {
-					tag = "conceal"
+	v1 := xcode.DefaultOptions
+	v1.SuspectCheck, v1.LookaheadFrames = false, 1
+	d1, d3 := xcode.DefaultOptions, xcode.DefaultOptions
+	d1.LookaheadFrames, d3.LookaheadFrames = 1, 3
+	variants := []struct {
+		name string
+		o    xcode.Options
+	}{{"pass-through (no anti-warble)", pass}, {"concealment v1 (20 ms)", v1},
+		{"v2 suspect check, 20 ms", d1}, {"v2 suspect check, 40 ms (default)", xcode.DefaultOptions}, {"v2 suspect check, 60 ms", d3}}
+	for _, ber := range []float64{0.01, 0.03, 0.05, 0.08, 0.10} {
+		for _, c := range variants {
+			var pe, oe, lsd, jo, jr float64
+			for sd := 0; sd < *seeds; sd++ {
+				noisy := addErrors(ds, ber, int64(99+sd))
+				out, _, _ := parametric(ambe.DStar, ambe.DMR, noisy, c.o)
+				dec := decodeStream(ambe.DMR, out)
+				m := compare(ref, dec)
+				pe += m.PitchErrPct
+				oe += m.OctavePct
+				lsd += m.LSDdB
+				jo += m.JitterOut
+				jr += m.JitterRef
+				if ber == 0.08 && sd == 0 {
+					save(fmt.Sprintf("9_ber8_%s.wav", strings.Fields(c.name)[0]), dec)
 				}
-				save(fmt.Sprintf("9_ber8_%s.wav", tag), dec)
 			}
+			n := float64(*seeds)
+			fmt.Fprintf(w0, "%.0f\t%s\t%.2f\t%.2f\t%.2f\t%.1f (%.1f)\t\n", ber*100, c.name, pe/n, oe/n, lsd/n, jo/n, jr/n)
 		}
 	}
 	w0.Flush()

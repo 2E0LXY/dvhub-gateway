@@ -52,11 +52,19 @@ func TestSilenceMapsToSilence(t *testing.T) {
 	}
 }
 
-func TestLookaheadDelaysOneFrame(t *testing.T) {
+func TestLookaheadDelay(t *testing.T) {
 	tc := New(ambe.DStar, ambe.DMR, DefaultOptions)
 	vec := vectors(t)
-	if first := tc.Frame(vec[len(vec)/2]); first != dmrNull {
-		t.Fatalf("first output %x, want silence", first)
+	for i := 0; i < DefaultOptions.LookaheadFrames; i++ {
+		if out := tc.Frame(vec[len(vec)/2+i]); out != dmrNull {
+			t.Fatalf("start-up output %d = %x, want silence", i, out)
+		}
+	}
+	if out := tc.Frame(vec[len(vec)/2+5]); out == dmrNull {
+		t.Fatal("voice not emitted after lookahead delay")
+	}
+	if n := len(tc.Flush()); n != DefaultOptions.LookaheadFrames {
+		t.Fatalf("flush returned %d frames", n)
 	}
 }
 
@@ -128,7 +136,7 @@ func TestConcealmentFollowsNeighbours(t *testing.T) {
 		p, _ := dst.Decode(b)
 		outF = append(outF, p.F0Hz())
 	}
-	got := outF[idx+1] // one frame of lookahead delay
+	got := outF[idx+DefaultOptions.LookaheadFrames] // lookahead delay
 	want := math.Sqrt(ps[idx-1].F0Hz() * ps[idx+1].F0Hz())
 	if c := math.Abs(math.Log2(got/want)) * 1200; c > 100 {
 		t.Fatalf("concealed f0 %.1f Hz, neighbours imply %.1f Hz (%.0f cents)", got, want, c)

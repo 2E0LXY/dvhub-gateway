@@ -348,7 +348,7 @@ func (b *Bridge) endToDMR(c *dsCall) {
 	if c.ending {
 		return
 	}
-	if f, ok := c.xc.Flush(); ok {
+	for _, f := range c.xc.Flush() {
 		b.pushDMRFrame(c, f)
 	}
 	for len(c.pending) > 0 {
@@ -527,7 +527,7 @@ func (b *Bridge) endToDS(c *dmrCall) {
 	if c.ending {
 		return
 	}
-	if f, ok := c.xc.Flush(); ok {
+	for _, f := range c.xc.Flush() {
 		b.pushDSFrame(c, f)
 	}
 	c.out = append(c.out, dsOut{seq: c.dsSeq % 21, last: true})
