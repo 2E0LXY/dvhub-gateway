@@ -111,6 +111,14 @@ install_allstar_helpers() {
     mv -f -- "$ALLSTAR_SUDOERS.new" "$ALLSTAR_SUDOERS"
 }
 
+publish_runtime_sha() {
+    local revision=$1
+    printf '%s\n' "$revision" >"$RUNTIME_SHA_FILE.new"
+    chown root:dvhub "$RUNTIME_SHA_FILE.new"
+    chmod 0640 "$RUNTIME_SHA_FILE.new"
+    mv -f -- "$RUNTIME_SHA_FILE.new" "$RUNTIME_SHA_FILE"
+}
+
 if [[ "$target_sha" == "$current_sha" ]]; then
     # The deployer updates itself last. A newly added runtime helper is therefore
     # synchronised on the next timer pass even though the application SHA is
@@ -118,6 +126,7 @@ if [[ "$target_sha" == "$current_sha" ]]; then
     git -C "$REPO_DIR" archive "$target_sha" deploy/allstar | tar -x -C "$work_dir"
     validate_allstar_helpers "$work_dir"
     install_allstar_helpers "$work_dir"
+    publish_runtime_sha "$target_sha"
     echo "DVHub is already at $target_sha"
     exit 0
 fi
@@ -280,10 +289,7 @@ for _ in {1..20}; do
             http://localhost/api/state >/dev/null; then
         printf '%s\n' "$target_sha" >"$CURRENT_SHA_FILE.new"
         mv -f -- "$CURRENT_SHA_FILE.new" "$CURRENT_SHA_FILE"
-        printf '%s\n' "$target_sha" >"$RUNTIME_SHA_FILE.new"
-        chown root:dvhub "$RUNTIME_SHA_FILE.new"
-        chmod 0640 "$RUNTIME_SHA_FILE.new"
-        mv -f -- "$RUNTIME_SHA_FILE.new" "$RUNTIME_SHA_FILE"
+        publish_runtime_sha "$target_sha"
         trap - ERR
         find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
             | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r rm -rf --
