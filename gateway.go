@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
@@ -16,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -24,6 +26,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -441,7 +444,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Fatal(server.Serve(listener))
+	serverErrors := make(chan error, 1)
+	go func() { serverErrors <- server.Serve(listener) }()
+	shutdownSignal := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignal, os.Interrupt, syscall.SIGTERM)
+	select {
+	case serveErr := <-serverErrors:
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Fatal(serveErr)
+		}
+	case <-shutdownSignal:
+		fmt.Println("[SYS] Graceful shutdown: logging out DMR master sessions")
+		gw.logoutNetworkSessions()
+		shutdownContext, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if shutdownErr := server.Shutdown(shutdownContext); shutdownErr != nil {
+			log.Printf("[SYS] HTTP shutdown: %v", shutdownErr)
+		}
+	}
 }
 
 func gatewayHTTPListener() (net.Listener, error) {
@@ -2417,6 +2437,25 @@ func (g *Gateway) disconnectNetwork(s *UserSession, message string) {
 	s.mu.Unlock()
 	g.sendNetworkStatus(s, "disconnected", message)
 	g.updateBridgeStatus()
+}
+
+func (g *Gateway) logoutNetworkSessions() {
+	for _, session := range g.sessions {
+		if session == nil {
+			continue
+		}
+		session.mu.RLock()
+		connected := session.LinkActive && session.AuthStage == authRunning && session.Mode == "DMR"
+		repeaterID := session.RepeaterID
+		session.mu.RUnlock()
+		if !connected {
+			continue
+		}
+		packet := append([]byte("RPTCL"), writeUint32BE(repeaterID)...)
+		if err := g.writeNetworkPacket(session, packet); err != nil {
+			log.Printf("[NET] logout node %d: %v", session.ID, err)
+		}
+	}
 }
 
 func (g *Gateway) sendDMRAuthorisation(s *UserSession, salt []byte) {

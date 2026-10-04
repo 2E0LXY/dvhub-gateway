@@ -164,6 +164,11 @@ not green. DV30 identity probes are cached by one server-side worker every 15
 seconds and are suspended while codec media is active, so opening additional
 dashboards cannot compete with live vocoder frames.
 
+On an intentional gateway stop or GitOps replacement, active DMR sessions send
+`RPTCL` before the Unix-socket server exits. This prevents a master—especially
+TGIF—from retaining the previous UDP session and rejecting the immediate
+replacement login until its stale-session timeout expires.
+
 Built-in DMR network DNS targets are configured in `dmrNetworkTargets` in `gateway.go`; master passwords and port overrides come from `/var/lib/dvgateway/DMR_Hosts.txt`. Site-specific public identity and vocoder addresses belong in `/etc/dvhub/gateway.json` and `/etc/dvhub/vocoder-targets.txt`; examples are under `deploy/`.
 
 ```go

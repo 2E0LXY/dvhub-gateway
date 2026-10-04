@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -198,6 +199,37 @@ func TestPassiveVocoderQualityFlagsDeadlineMiss(t *testing.T) {
 	}
 	if snapshot["level"] != "fault" {
 		t.Fatalf("vocoder quality level = %v, want fault", snapshot["level"])
+	}
+}
+
+func TestGracefulShutdownLogsOutRunningDMRSessions(t *testing.T) {
+	master, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer master.Close()
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	gateway := &Gateway{}
+	gateway.sessions[0] = &UserSession{
+		ID: 1, Mode: "DMR", LinkActive: true, AuthStage: authRunning,
+		RepeaterID: 234439901, Conn: client, RemoteAddr: master.LocalAddr().(*net.UDPAddr),
+	}
+	gateway.logoutNetworkSessions()
+	if err := master.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	packet := make([]byte, 32)
+	n, _, err := master.ReadFromUDP(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 9 || string(packet[:5]) != "RPTCL" || binary.BigEndian.Uint32(packet[5:9]) != 234439901 {
+		t.Fatalf("unexpected logout packet: %x", packet[:n])
 	}
 }
 
