@@ -35,3 +35,18 @@ M17-YLH module A connects through `USRP2M17` to private local app_rpt node
 `1998`. That node is permanently linked to public node `530471`, allowing M17,
 EchoLink and AllStar to share the same PCM bus and existing USRP2DMR/DV30
 conversion. See `deploy/m17/README.md` for the pinned build and installation.
+
+Native identities cross that PCM-only hop through a loopback-only UDP metadata
+side-channel (`35171/35172`). M17 callsigns are accepted only when they map to
+the current DMR lookup database; unknown callsigns use the configured bridge
+ID. In the reverse direction, the DMR ID is resolved to a callsign before it is
+used as the M17 source. Messages are source-port checked, expire after five
+seconds, and are cleared at end-of-transmission to prevent stale attribution.
+
+## Latency profile
+
+DMR-facing converters use a 120 ms receive jitter buffer (two 60 ms DMR
+bursts). The previous 500 ms setting added avoidable delay on the low-latency
+VPS-to-FreeSTAR route. Do not reduce it below 120 ms without measuring live
+loss and late-frame concealment; a single-burst buffer has little tolerance
+for scheduler or network jitter.

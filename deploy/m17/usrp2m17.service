@@ -8,6 +8,8 @@ After=network-online.target mrefd.service asterisk.service
 Type=simple
 User=m17
 Group=m17
+Environment=DVHUB_IDENTITY_RX_PORT=35172
+Environment=DVHUB_IDENTITY_PEER_PORT=35171
 LogsDirectory=usrp2m17
 LogsDirectoryMode=0750
 ExecStart=/usr/local/bin/USRP2M17 /etc/dvhub/USRP2M17.ini

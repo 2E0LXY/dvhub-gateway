@@ -10,6 +10,8 @@ User=allstarbridge
 Group=allstarbridge
 WorkingDirectory=/var/lib/usrp2dmr
 Environment=DV30_ADDRESS=127.0.0.1:2461
+Environment=DVHUB_IDENTITY_RX_PORT=35171
+Environment=DVHUB_IDENTITY_PEER_PORT=35172
 ExecStart=/usr/local/bin/USRP2DMR-DV30 /etc/usrp2dmr/USRP2DMR.ini
 Restart=on-failure
 RestartSec=3

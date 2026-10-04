@@ -1,0 +1,149 @@
+warning: in the working copy of 'USRP2M17/USRP2M17.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/USRP2M17/USRP2M17.cpp b/USRP2M17/USRP2M17.cpp
+index 3a9d0f9..fdfe80a 100644
+--- a/USRP2M17/USRP2M17.cpp
++++ b/USRP2M17/USRP2M17.cpp
+@@ -42,9 +42,33 @@ const char* HEADER4 = "Copyright(C) 2021 by AD8DP";
+ #include <cstring>
+ #include <clocale>
+ #include <cctype>
++#include <ctime>
+ 
+ static bool m_killed = false;
+ 
++static bool validIdentityCallsign(const std::string& callsign)
++{
++	if (callsign.size() < 3U || callsign.size() > 9U)
++		return false;
++
++	for (std::string::const_iterator it = callsign.begin(); it != callsign.end(); ++it) {
++		if (!::isalnum(static_cast<unsigned char>(*it)) && *it != '/' && *it != '-')
++			return false;
++	}
++
++	return true;
++}
++
++static void sendIdentity(CUDPSocket* socket, const in_addr& address, unsigned int port, bool active, const std::string& callsign)
++{
++	if (socket == NULL || port == 0U)
++		return;
++
++	char message[64U];
++	::snprintf(message, sizeof(message), "DVHUBID1 M17 %u %s", active ? 1U : 0U, active ? callsign.c_str() : "-");
++	socket->write(reinterpret_cast<const unsigned char*>(message), ::strlen(message), address, port);
++}
++
+ void sig_handler(int signo)
+ {
+ 	if (signo == SIGTERM) {
+@@ -280,6 +304,28 @@ int CUSRP2M17::run()
+ 		return 1;
+ 	}
+ 
++	CUDPSocket* identitySocket = NULL;
++	unsigned int identityRxPort = 0U;
++	unsigned int identityPeerPort = 0U;
++	const char* identityRxText = ::getenv("DVHUB_IDENTITY_RX_PORT");
++	const char* identityPeerText = ::getenv("DVHUB_IDENTITY_PEER_PORT");
++	if (identityRxText != NULL && identityPeerText != NULL) {
++		identityRxPort = static_cast<unsigned int>(::atoi(identityRxText));
++		identityPeerPort = static_cast<unsigned int>(::atoi(identityPeerText));
++		if (identityRxPort > 0U && identityRxPort <= 65535U && identityPeerPort > 0U && identityPeerPort <= 65535U) {
++			identitySocket = new CUDPSocket("127.0.0.1", identityRxPort);
++			if (!identitySocket->open()) {
++				delete identitySocket;
++				identitySocket = NULL;
++				LogWarning("Cannot open the DVHub identity side-channel");
++			}
++		}
++	}
++	const in_addr identityAddress = CUDPSocket::lookup("127.0.0.1");
++	std::string externalCallsign;
++	bool externalIdentityActive = false;
++	time_t externalIdentityUpdated = 0;
++
+ 	CTimer networkWatchdog(100U, 0U, 1500U);
+ 	CTimer pollTimer(1000U, 8U);
+ 	CStopWatch stopWatch;
+@@ -304,6 +350,27 @@ int CUSRP2M17::run()
+ 		
+ 		uint32_t ms = stopWatch.elapsed();
+ 
++		if (identitySocket != NULL) {
++			unsigned char identityBuffer[64U];
++			in_addr sourceAddress;
++			unsigned int sourcePort = 0U;
++			int identityLength = 0;
++			while ((identityLength = identitySocket->read(identityBuffer, sizeof(identityBuffer) - 1U, sourceAddress, sourcePort)) > 0) {
++				if (sourceAddress.s_addr != identityAddress.s_addr || sourcePort != identityPeerPort)
++					continue;
++				identityBuffer[identityLength] = 0x00U;
++				unsigned int active = 0U;
++				char callsign[16U] = {0};
++				if (::sscanf(reinterpret_cast<const char*>(identityBuffer), "DVHUBID1 DMR %u %15s", &active, callsign) == 2) {
++					std::string candidate(callsign);
++					std::transform(candidate.begin(), candidate.end(), candidate.begin(), ::toupper);
++					externalIdentityActive = active == 1U && validIdentityCallsign(candidate);
++					externalCallsign = externalIdentityActive ? candidate : std::string();
++					externalIdentityUpdated = ::time(NULL);
++				}
++			}
++		}
++
+ 		if (m17Watch.elapsed() > M17_FRAME_PER) {
+ 			uint32_t m17FrameType = m_conv.getM17(m_m17Frame);
+ 			
+@@ -385,6 +452,10 @@ int CUSRP2M17::run()
+ 				decode_callsign(cs);
+ 				std::string css((char *)cs);
+ 				m_usrpcs = css.substr(0, css.find(' '));
++				if (m_m17Frame[34] == 0 && m_m17Frame[35] == 0)
++					sendIdentity(identitySocket, identityAddress, identityPeerPort, validIdentityCallsign(m_usrpcs), m_usrpcs);
++				else if (m_m17Frame[34U] & 0x80U)
++					sendIdentity(identitySocket, identityAddress, identityPeerPort, false, std::string());
+ 				 
+ 				m_m17Frames++;
+ 			}
+@@ -451,11 +522,16 @@ int CUSRP2M17::run()
+ 				m_conv.putUSRPEOT();
+ 				m_usrpcs.clear();
+ 				m_usrpFrames = 0U;
++				externalIdentityActive = false;
+ 			}
+ 
+ 			if( (!memcmp(m_usrpFrame, "USRP", 4)) && len == 352) {
+ 				if( (m_usrpFrame[20] == USRP_TYPE_TEXT) && (m_usrpFrame[32] == TLV_TAG_SET_INFO) ){
+-					m_usrpcs = (char *)(m_usrpFrame + 46);
++					std::string candidate((char *)(m_usrpFrame + 46));
++					if (validIdentityCallsign(candidate))
++						m_usrpcs = candidate;
++					else if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5)
++						m_usrpcs = externalCallsign;
+ 					
+ 					if(!m_usrpFrames){	
+ 						m_conv.putUSRPHeader();
+@@ -465,7 +541,10 @@ int CUSRP2M17::run()
+ 				}
+ 				else if( (m_usrpFrame[20] == USRP_TYPE_VOICE) && (m_usrpFrame[15] == USRP_KEYUP_TRUE) ){
+ 					if(!m_usrpFrames){
+-						m_usrpcs.clear();
++						if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5)
++							m_usrpcs = externalCallsign;
++						else
++							m_usrpcs.clear();
+ 						m_conv.putUSRPHeader();
+ 						LogMessage("USRP voice received as first frame");
+ 					}
+@@ -494,6 +573,10 @@ int CUSRP2M17::run()
+ 	m_usrpNetwork->close();
+ 	delete m_usrpNetwork;
+ 	delete m_m17Network;
++	if (identitySocket != NULL) {
++		identitySocket->close();
++		delete identitySocket;
++	}
+ 
+ 	::LogFinalise();
+ 
+

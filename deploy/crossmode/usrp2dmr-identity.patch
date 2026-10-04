@@ -1,0 +1,151 @@
+warning: in the working copy of 'USRP2DMR/USRP2DMR.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/USRP2DMR/USRP2DMR.cpp b/USRP2DMR/USRP2DMR.cpp
+index 6d0acd9..0edcd89 100644
+--- a/USRP2DMR/USRP2DMR.cpp
++++ b/USRP2DMR/USRP2DMR.cpp
+@@ -45,9 +45,30 @@ const char* HEADER4 = "Copyright(C) 2021 by AD8DP, CA6JAU, G4KLX and others";
+ #include <cstring>
+ #include <clocale>
+ #include <cctype>
++#include <ctime>
+ 
+ int end = 0;
+ 
++static bool validIdentityCallsign(const std::string& callsign)
++{
++	if (callsign.size() < 3U || callsign.size() > 9U)
++		return false;
++	for (std::string::const_iterator it = callsign.begin(); it != callsign.end(); ++it) {
++		if (!::isalnum(static_cast<unsigned char>(*it)) && *it != '/' && *it != '-')
++			return false;
++	}
++	return true;
++}
++
++static void sendIdentity(CUDPSocket* socket, const in_addr& address, unsigned int port, bool active, const std::string& callsign)
++{
++	if (socket == NULL || port == 0U)
++		return;
++	char message[64U];
++	::snprintf(message, sizeof(message), "DVHUBID1 DMR %u %s", active ? 1U : 0U, active ? callsign.c_str() : "-");
++	socket->write(reinterpret_cast<const unsigned char*>(message), ::strlen(message), address, port);
++}
++
+ void sig_handler(int signo)
+ {
+ 	if (signo == SIGTERM) {
+@@ -248,6 +269,28 @@ int CUSRP2DMR::run()
+ 	m_dmrlookup = new CDMRLookup(lookupFile, reloadTime);
+ 	m_dmrlookup->read();
+ 
++	CUDPSocket* identitySocket = NULL;
++	unsigned int identityRxPort = 0U;
++	unsigned int identityPeerPort = 0U;
++	const char* identityRxText = ::getenv("DVHUB_IDENTITY_RX_PORT");
++	const char* identityPeerText = ::getenv("DVHUB_IDENTITY_PEER_PORT");
++	if (identityRxText != NULL && identityPeerText != NULL) {
++		identityRxPort = static_cast<unsigned int>(::atoi(identityRxText));
++		identityPeerPort = static_cast<unsigned int>(::atoi(identityPeerText));
++		if (identityRxPort > 0U && identityRxPort <= 65535U && identityPeerPort > 0U && identityPeerPort <= 65535U) {
++			identitySocket = new CUDPSocket("127.0.0.1", identityRxPort);
++			if (!identitySocket->open()) {
++				delete identitySocket;
++				identitySocket = NULL;
++				LogWarning("Cannot open the DVHub identity side-channel");
++			}
++		}
++	}
++	const in_addr identityAddress = CUDPSocket::lookup("127.0.0.1");
++	std::string externalCallsign;
++	bool externalIdentityActive = false;
++	time_t externalIdentityUpdated = 0;
++
+ 	if (m_dmrpc)
+ 		m_dmrflco = FLCO_USER_USER;
+ 	else
+@@ -277,6 +320,27 @@ int CUSRP2DMR::run()
+ 		CDMRData tx_dmrdata;
+ 		unsigned int ms = stopWatch.elapsed();
+ 
++		if (identitySocket != NULL) {
++			unsigned char identityBuffer[64U];
++			in_addr sourceAddress;
++			unsigned int sourcePort = 0U;
++			int identityLength = 0;
++			while ((identityLength = identitySocket->read(identityBuffer, sizeof(identityBuffer) - 1U, sourceAddress, sourcePort)) > 0) {
++				if (sourceAddress.s_addr != identityAddress.s_addr || sourcePort != identityPeerPort)
++					continue;
++				identityBuffer[identityLength] = 0x00U;
++				unsigned int active = 0U;
++				char callsign[16U] = {0};
++				if (::sscanf(reinterpret_cast<const char*>(identityBuffer), "DVHUBID1 M17 %u %15s", &active, callsign) == 2) {
++					std::string candidate(callsign);
++					std::transform(candidate.begin(), candidate.end(), candidate.begin(), ::toupper);
++					externalIdentityActive = active == 1U && validIdentityCallsign(candidate);
++					externalCallsign = externalIdentityActive ? candidate : std::string();
++					externalIdentityUpdated = ::time(NULL);
++				}
++			}
++		}
++
+ 		if (m_dmrNetwork->isConnected() && !m_xlxmodule.empty() && !m_xlxConnected) {
+ 			writeXLXLink(m_defsrcid, m_dstid, m_dmrNetwork);
+ 			LogMessage("XLX, Linking to reflector XLX%03u, module %s", m_xlxrefl, m_xlxmodule.c_str());
+@@ -289,12 +353,18 @@ int CUSRP2DMR::run()
+ 				LogMessage("USRP received end of voice transmission, %.1f seconds", float(m_usrpFrames) / 50.0F);
+ 				m_conv.putUSRPEOT();
+ 				m_usrpFrames = 0U;
++				externalIdentityActive = false;
+ 			}
+ 
+ 			if( (!memcmp(m_usrpFrame, "USRP", 4)) && len == 352) {
+ 				if( (m_usrpFrame[20] == USRP_TYPE_TEXT) && (m_usrpFrame[32] == TLV_TAG_SET_INFO) ){
+ 					const uint32_t dmrsrc = (m_usrpFrame[34] << 16) | (m_usrpFrame[35] << 8) | m_usrpFrame[36];
+ 					m_dmrSrc = (dmrsrc > 100000) ? dmrsrc : m_defsrcid;
++					if (dmrsrc <= 100000 && externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5) {
++						const uint32_t mapped = m_dmrlookup->findID(externalCallsign);
++						if (mapped > 100000U)
++							m_dmrSrc = mapped;
++					}
+ 					if(!m_usrpFrames){	
+ 						m_conv.putUSRPHeader();
+ 						LogMessage("USRP text info received as first frame");
+@@ -304,6 +374,11 @@ int CUSRP2DMR::run()
+ 				else if( (m_usrpFrame[20] == USRP_TYPE_VOICE) && (m_usrpFrame[15] == USRP_KEYUP_TRUE) ){
+ 					if(!m_usrpFrames){
+ 						m_dmrSrc = m_defsrcid;
++						if (externalIdentityActive && (::time(NULL) - externalIdentityUpdated) <= 5) {
++							const uint32_t mapped = m_dmrlookup->findID(externalCallsign);
++							if (mapped > 100000U)
++								m_dmrSrc = mapped;
++						}
+ 						m_conv.putUSRPHeader();
+ 						LogMessage("USRP voice received as first frame");
+ 					}
+@@ -510,12 +585,14 @@ int CUSRP2DMR::run()
+ 					m_dmrFrames = 0U;
+ 					m_dmrinfo = false;
+ 					m_firstSync = false;
++					sendIdentity(identitySocket, identityAddress, identityPeerPort, false, std::string());
+ 				}
+ 
+ 				if((DataType == DT_VOICE_LC_HEADER) && (DataType != m_dmrLastDT)) {
+ 					std::string netSrc = m_dmrlookup->findCS(m_dmrSrc);
+ 					std::string netDst = (netflco == FLCO_GROUP ? "TG " : "") + m_dmrlookup->findCS(m_dmrDst);
+ 					m_usrpcs = netSrc;
++					sendIdentity(identitySocket, identityAddress, identityPeerPort, validIdentityCallsign(netSrc), netSrc);
+ 					m_conv.putDMRHeader();
+ 					LogMessage("DMR header received from %s to %s", netSrc.c_str(), netDst.c_str());
+ 
+@@ -648,6 +725,10 @@ int CUSRP2DMR::run()
+ 	m_dmrNetwork->close();
+ 	delete m_dmrNetwork;
+ 	delete m_usrpNetwork;
++	if (identitySocket != NULL) {
++		identitySocket->close();
++		delete identitySocket;
++	}
+ 
+ 	if (m_xlxReflectors != NULL)
+ 		delete m_xlxReflectors;
+
