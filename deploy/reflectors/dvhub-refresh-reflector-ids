@@ -1,0 +1,37 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly RAW_DMR=/var/lib/dvgateway/dmrid.dat
+readonly FORMATTED_DMR=/var/lib/dvgateway/DMRIds.dat
+readonly NXDN_URL=https://www.radioid.net/static/nxdn.csv
+
+dmr_tmp="$(mktemp /var/lib/dvgateway/DMRIds.dat.XXXXXX)"
+nxdn_tmp="$(mktemp /var/lib/nxdnreflector/NXDN.csv.XXXXXX)"
+cleanup() { rm -f -- "$dmr_tmp" "$nxdn_tmp"; }
+trap cleanup EXIT
+
+[[ -s "$RAW_DMR" ]]
+
+# MMDVM_CM's DMRLookup tokenises on whitespace, while RadioID's dmrid.dat is
+# semicolon-delimited. Keep every ID for forward ID-to-callsign display, but
+# write non-subscriber IDs first so a seven-digit subscriber ID wins the
+# reverse callsign-to-ID lookup when a callsign owns both kinds of record.
+awk -F';' 'NF >= 2 && $1 ~ /^[0-9]+$/ && length($1) != 7 { print $1, toupper($2) }' "$RAW_DMR" >"$dmr_tmp"
+awk -F';' 'NF >= 2 && $1 ~ /^[0-9]+$/ && length($1) == 7 { print $1, toupper($2) }' "$RAW_DMR" >>"$dmr_tmp"
+
+dmr_count="$(wc -l <"$dmr_tmp")"
+[[ $dmr_count -ge 100000 ]]
+
+curl -fsS --retry 3 --connect-timeout 15 --max-time 120 -o "$nxdn_tmp" "$NXDN_URL"
+nxdn_count="$(grep -cvE '^(#|$)' "$nxdn_tmp")"
+[[ $nxdn_count -ge 1000 ]]
+
+install -o dvhub -g dvhub -m 0644 "$dmr_tmp" "$FORMATTED_DMR"
+install -o p25reflector -g p25reflector -m 0644 "$dmr_tmp" /var/lib/p25reflector/DMRIds.dat
+install -o nxdnbridge -g nxdnbridge -m 0644 "$dmr_tmp" /var/lib/nxdn2dmr/DMRIds.dat
+install -o p25bridge -g p25bridge -m 0644 "$dmr_tmp" /var/lib/p252dmr/DMRIds.dat
+install -o allstarbridge -g allstarbridge -m 0644 "$dmr_tmp" /var/lib/usrp2dmr/DMRIds.dat
+install -o nxdnreflector -g nxdnreflector -m 0644 "$nxdn_tmp" /var/lib/nxdnreflector/NXDN.csv
+install -o nxdnbridge -g nxdnbridge -m 0644 "$nxdn_tmp" /var/lib/nxdn2dmr/NXDN.csv
+
+echo "Installed $dmr_count DMR and $nxdn_count NXDN identity records."

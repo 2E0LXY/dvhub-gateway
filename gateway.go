@@ -3654,7 +3654,7 @@ TGListFile=/var/lib/dvgateway/TGList-DMR.txt
 Debug=0
 
 [DMR Id Lookup]
-File=/var/lib/dvgateway/dmrid.dat
+File=/var/lib/dvgateway/DMRIds.dat
 Time=24
 DropUnknown=0
 
@@ -3949,7 +3949,7 @@ TGListFile=/var/lib/dvgateway/TGList-DMR.txt
 Debug=0
 
 [DMR Id Lookup]
-File=/var/lib/dvgateway/dmrid.dat
+File=/var/lib/dvgateway/DMRIds.dat
 Time=24
 DropUnknown=0
 
