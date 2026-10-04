@@ -105,7 +105,7 @@ index 3a9d0f9..fdfe80a 100644
  				 
  				m_m17Frames++;
  			}
-@@ -451,11 +522,16 @@ int CUSRP2M17::run()
+@@ -451,11 +522,18 @@ int CUSRP2M17::run()
  				m_conv.putUSRPEOT();
  				m_usrpcs.clear();
  				m_usrpFrames = 0U;
@@ -125,7 +125,7 @@ index 3a9d0f9..fdfe80a 100644
  					
  					if(!m_usrpFrames){	
  						m_conv.putUSRPHeader();
-@@ -465,7 +541,10 @@ int CUSRP2M17::run()
+@@ -465,7 +543,10 @@ int CUSRP2M17::run()
  				}
  				else if( (m_usrpFrame[20] == USRP_TYPE_VOICE) && (m_usrpFrame[15] == USRP_KEYUP_TRUE) ){
  					if(!m_usrpFrames){
@@ -137,7 +137,7 @@ index 3a9d0f9..fdfe80a 100644
  						m_conv.putUSRPHeader();
  						LogMessage("USRP voice received as first frame");
  					}
-@@ -494,6 +573,10 @@ int CUSRP2M17::run()
+@@ -494,6 +575,10 @@ int CUSRP2M17::run()
  	m_usrpNetwork->close();
  	delete m_usrpNetwork;
  	delete m_m17Network;
