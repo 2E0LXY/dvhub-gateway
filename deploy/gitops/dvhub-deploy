@@ -136,6 +136,7 @@ if [[ "$target_sha" == "$current_sha" ]]; then
     git -C "$REPO_DIR" archive "$target_sha" deploy/allstar deploy/reflectors | tar -x -C "$work_dir"
     validate_allstar_helpers "$work_dir"
     install_allstar_helpers "$work_dir"
+    systemctl daemon-reload
     publish_runtime_sha "$target_sha"
     echo "DVHub is already at $target_sha"
     exit 0
