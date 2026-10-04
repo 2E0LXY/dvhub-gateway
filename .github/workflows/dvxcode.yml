@@ -1,0 +1,49 @@
+name: dvxcode (staged transcoder/bridge)
+
+# Isolated from the gateway build: runs only when dvxcode/ changes and never
+# touches the root module (dvxcode/ is a separate Go module).
+on:
+  push:
+    paths: ['dvxcode/**', '.github/workflows/dvxcode.yml']
+  pull_request:
+    paths: ['dvxcode/**', '.github/workflows/dvxcode.yml']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: dvxcode
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache-dependency-path: dvxcode/go.mod
+      - name: Fetch pinned reference implementations (test vectors only)
+        working-directory: ${{ runner.temp }}
+        run: |
+          fetch() { git init -q "$1" && git -C "$1" fetch -q --depth 1 "$2" "$3" && git -C "$1" checkout -q FETCH_HEAD; }
+          fetch mbelib    https://github.com/szechyjs/mbelib.git  9a04ed5c78176a9965f3d43f7aa1b1f5330e771f
+          fetch dsd       https://github.com/szechyjs/dsd.git     59423fa46be8b41ef0bd2f3d2b45590600be29f0
+          fetch MMDVMHost https://github.com/g4klx/MMDVMHost.git  590c531391dfd3146073afbc3956f70d42c62a46
+      - name: Generate golden vectors
+        run: make -C reference golden MBELIB=${{ runner.temp }}/mbelib DSD=${{ runner.temp }}/dsd MMDVM=${{ runner.temp }}/MMDVMHost
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Build binaries
+        run: |
+          for a in amd64 arm64 arm; do
+            for c in dvxcode dvxbridge mbedump; do
+              CGO_ENABLED=0 GOOS=linux GOARCH=$a go build -trimpath -ldflags="-s -w" -o dist/$c-linux-$a ./cmd/$c
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dvxcode-binaries
+          path: dvxcode/dist/
