@@ -57,6 +57,35 @@ var cbDStar = codebooks{AmbePlusLtable[:], &AmbePlusLmprbl, AmbePlusDg[:], &Ambe
 
 func cosf(x float64) float32 { return float32(math.Cos(float64(float32(x)))) }
 
+// Precomputed DCT kernels (identical values to computing cosf inline, so
+// results stay bit-exact with the mbelib golden vectors).
+//
+//	cos8[m][i] = cos(π(m-1)(i-½)/8)            m,i = 1..8
+//	cosJ[J][k][j] = cos(π(k-1)(j-½)/J)          J = 1..17, k,j = 1..J
+var (
+	cos8  [9][9]float32
+	cosJ  [18][18][18]float32
+	cos8d [9][9]float64
+	cosJd [18][18][18]float64
+)
+
+func init() {
+	for m := 1; m <= 8; m++ {
+		for i := 1; i <= 8; i++ {
+			cos8[m][i] = cosf(math.Pi * float64(float32(m-1)) * (float64(i) - 0.5) / 8)
+			cos8d[m][i] = math.Cos(math.Pi * float64(m-1) * (float64(i) - 0.5) / 8)
+		}
+	}
+	for J := 1; J <= 17; J++ {
+		for k := 1; k <= J; k++ {
+			for j := 1; j <= J; j++ {
+				cosJ[J][k][j] = cosf(math.Pi * float64(float32(k-1)) * (float64(j) - 0.5) / float64(J))
+				cosJd[J][k][j] = math.Cos(math.Pi * float64(k-1) * (float64(j) - 0.5) / float64(J))
+			}
+		}
+	}
+}
+
 func (d *Decoder) decode(ix Indices) Kind {
 	cur, prev := &d.cur, &d.prev
 	cb := &cbDMR
@@ -128,7 +157,7 @@ func (d *Decoder) decode(ix Indices) Kind {
 			if m == 1 {
 				am = 1
 			}
-			sum += am * Gm[m] * cosf(math.Pi*float64(float32(m-1))*(float64(i)-0.5)/8)
+			sum += am * Gm[m] * cos8[m][i]
 		}
 		Ri[i] = sum
 	}
@@ -168,7 +197,7 @@ func (d *Decoder) decode(ix Indices) Kind {
 				if k == 1 {
 					ak = 1
 				}
-				sum += ak * Cik[i][k] * cosf(math.Pi*float64(float32(k-1))*(float64(j)-0.5)/float64(ji))
+				sum += ak * Cik[i][k] * cosJ[ji][k][j]
 			}
 			Tl[l] = sum
 			l++

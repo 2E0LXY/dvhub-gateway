@@ -2,7 +2,6 @@ package mbe
 
 import (
 	"math"
-	"sort"
 
 	"github.com/2E0LXY/dvxcode/ambe"
 )
@@ -41,6 +40,7 @@ type EncoderStats struct {
 	PitchHolds  int     // frames where hysteresis kept the previous pitch index
 	VUVHolds    int     // frames where hysteresis kept the previous V/UV index
 	SqErrLog2   float64 // sum of squared log2 magnitude error (decoded vs target)
+	Rejected    int     // non-finite or out-of-range targets replaced by silence
 	ErrHarmonic int
 }
 
@@ -87,6 +87,33 @@ func MaxVoiceB0(m ambe.Mode) int {
 	return 119
 }
 
+// sane rejects targets that would poison the quantiser (NaN/Inf, absurd
+// pitch or level). Log magnitudes are clamped to a safe range in place.
+func sane(p *Params) bool {
+	w := float64(p.W0)
+	if math.IsNaN(w) || math.IsInf(w, 0) || w <= 0 || w > math.Pi/4 || p.L < 1 || p.L > MaxL {
+		return false
+	}
+	for l := 1; l <= p.L; l++ {
+		v := float64(p.Log2Ml[l])
+		if math.IsNaN(v) {
+			return false
+		}
+		p.Log2Ml[l] = float32(max(-20, min(v, 20)))
+	}
+	return true
+}
+
+var log2F0 [2][128]float64
+
+func init() {
+	for _, m := range []ambe.Mode{ambe.DStar, ambe.DMR} {
+		for b := 0; b <= MaxVoiceB0(m); b++ {
+			log2F0[m][b] = math.Log2(F0Index(m, b))
+		}
+	}
+}
+
 // IsNull reports whether bits are the mode's silence/null frame.
 func (e *Encoder) IsNull(b ambe.Bits49) bool { return b == e.silence }
 
@@ -121,20 +148,25 @@ func (v envelope) at(w float64) (log2m float64, voiced float64) {
 // Encode quantises one voiced/unvoiced frame described by target (any w0
 // grid, e.g. the source codec's decoded parameters) and returns the bits.
 func (e *Encoder) Encode(target Params) ambe.Bits49 {
+	if !sane(&target) {
+		e.Stats.Rejected++
+		return e.EncodeSilence()
+	}
 	var ix Indices
 	env := envelope{&target}
 
 	// --- Pitch (b0) with hysteresis.
-	fT := float64(target.W0) / (2 * math.Pi)
+	lT := math.Log2(float64(target.W0) / (2 * math.Pi))
+	lt := &log2F0[e.mode]
 	best, bestD := 0, math.Inf(1)
 	for b := 0; b <= MaxVoiceB0(e.mode); b++ {
-		if d := math.Abs(math.Log2(F0Index(e.mode, b) / fT)); d < bestD {
+		if d := math.Abs(lt[b] - lT); d < bestD {
 			best, bestD = b, d
 		}
 	}
 	step := 0.0215 // octaves per index (both tables)
 	if e.hasPrev && e.Opt.PitchHysteresis > 0 && e.prevB0 != best {
-		dPrev := math.Abs(math.Log2(F0Index(e.mode, e.prevB0) / fT))
+		dPrev := math.Abs(lt[e.prevB0] - lT)
 		if dPrev-bestD < e.Opt.PitchHysteresis*step {
 			best = e.prevB0
 			e.Stats.PitchHolds++
@@ -160,19 +192,28 @@ func (e *Encoder) Encode(target Params) ambe.Bits49 {
 	if e.mode == ambe.DStar {
 		nVuv = 16
 	}
-	vuv := func(b1, l int) float64 {
+	// Per codebook band j: cost if the band is decoded voiced (W1) or
+	// unvoiced (W0). Exactly Σ wt·|vuv−V| regrouped by band.
+	var W0, W1 [8]float64
+	for l := 1; l <= L; l++ {
 		jl := int(float32(l) * 16 * float32(f0))
-		if e.mode == ambe.DStar {
-			return float64(AmbePlusVuv[b1][jl])
-		}
-		return float64(AmbeVuv[b1][jl])
+		W1[jl] += wt[l] * (1 - V[l])
+		W0[jl] += wt[l] * V[l]
 	}
-	costs := make([]float64, nVuv)
+	var costs [32]float64
 	bb := 0
 	for b1 := 0; b1 < nVuv; b1++ {
+		row := &AmbeVuv[b1]
+		if e.mode == ambe.DStar {
+			row = &AmbePlusVuv[b1]
+		}
 		var c float64
-		for l := 1; l <= L; l++ {
-			c += wt[l] * math.Abs(vuv(b1, l)-V[l])
+		for j := 0; j < 8; j++ {
+			if row[j] != 0 {
+				c += W1[j]
+			} else {
+				c += W0[j]
+			}
 		}
 		costs[b1] = c
 		if c < costs[bb] {
@@ -229,7 +270,7 @@ func (e *Encoder) Encode(target Params) ambe.Bits49 {
 		for k := 1; k <= J; k++ {
 			var s float64
 			for j := 1; j <= J; j++ {
-				s += R[l0+j-1] * math.Cos(math.Pi*float64(k-1)*(float64(j)-0.5)/float64(J))
+				s += R[l0+j-1] * cosJd[J][k][j]
 			}
 			C[i][k] = s / float64(J)
 		}
@@ -274,6 +315,34 @@ func (e *Encoder) Encode(target Params) ambe.Bits49 {
 	return bits
 }
 
+const maxTopK = 32
+
+// topK keeps the K smallest (err, idx) pairs, sorted ascending.
+type topK struct {
+	n, k int
+	idx  [maxTopK]int
+	err  [maxTopK]float64
+}
+
+func (t *topK) init(k int) { t.n, t.k = 0, k }
+
+func (t *topK) offer(i int, e float64) {
+	if t.n == t.k && e >= t.err[t.n-1] {
+		return
+	}
+	p := t.n
+	if t.n < t.k {
+		t.n++
+	} else {
+		p = t.k - 1
+	}
+	for p > 0 && t.err[p-1] > e {
+		t.err[p], t.idx[p] = t.err[p-1], t.idx[p-1]
+		p--
+	}
+	t.err[p], t.idx[p] = e, i
+}
+
 func (e *Encoder) searchPRBA(C *[5][18]float64, Ji *[5]int, L int) (int, int) {
 	rc := 1 / (2 * math.Sqrt2)
 	// Target G (m = 2..8) from C[i][1..2].
@@ -285,7 +354,7 @@ func (e *Encoder) searchPRBA(C *[5][18]float64, Ji *[5]int, L int) (int, int) {
 	var G [9]float64
 	for m := 2; m <= 8; m++ {
 		for i := 1; i <= 8; i++ {
-			G[m] += R8[i] * math.Cos(math.Pi*float64(m-1)*(float64(i)-0.5)/8)
+			G[m] += R8[i] * cos8d[m][i]
 		}
 		G[m] /= 8
 	}
@@ -293,7 +362,7 @@ func (e *Encoder) searchPRBA(C *[5][18]float64, Ji *[5]int, L int) (int, int) {
 	var A [9][9]float64 // A[i][m] : ΔR8_i per ΔG_m
 	for i := 1; i <= 8; i++ {
 		for m := 2; m <= 8; m++ {
-			A[i][m] = 2 * math.Cos(math.Pi*float64(m-1)*(float64(i)-0.5)/8)
+			A[i][m] = 2 * cos8d[m][i]
 		}
 	}
 	var M [8][9]float64
@@ -332,39 +401,45 @@ func (e *Encoder) searchPRBA(C *[5][18]float64, Ji *[5]int, L int) (int, int) {
 		}
 		return s
 	}
-	type cand struct {
-		i int
-		e float64
-		d [9]float64
+	// Top-K preselection per codebook on its own sub-quadratic form, then
+	// exact joint evaluation. Fixed-size arrays: no allocation, no sorting.
+	K := max(1, min(e.Opt.TopK, maxTopK))
+	var top3, top4 topK
+	top3.init(K)
+	top4.init(K)
+	var d [9]float64
+	for n := range e.cb.prba24 {
+		v := &e.cb.prba24[n]
+		d[2], d[3], d[4] = float64(v[0])-G[2], float64(v[1])-G[3], float64(v[2])-G[4]
+		top3.offer(n, quad(&d, 2, 4))
 	}
-	var c3 []cand
-	for n, v := range e.cb.prba24 {
-		var d [9]float64
-		for k := 0; k < 3; k++ {
-			d[2+k] = float64(v[k]) - G[2+k]
-		}
-		c3 = append(c3, cand{n, quad(&d, 2, 4), d})
+	for n := range e.cb.prba58 {
+		v := &e.cb.prba58[n]
+		d[5], d[6], d[7], d[8] = float64(v[0])-G[5], float64(v[1])-G[6], float64(v[2])-G[7], float64(v[3])-G[8]
+		top4.offer(n, quad(&d, 5, 8))
 	}
-	var c4 []cand
-	for n, v := range e.cb.prba58 {
-		var d [9]float64
+	// Joint error = e3 + e4 + 2·d3ᵀ Q34 d4 (Q symmetric). Precompute
+	// w = Q34ᵀ d3 per PRBA24 candidate so each pair costs 4 multiplies.
+	var d4s [maxTopK][4]float64
+	for b := 0; b < top4.n; b++ {
+		v4 := &e.cb.prba58[top4.idx[b]]
 		for k := 0; k < 4; k++ {
-			d[5+k] = float64(v[k]) - G[5+k]
+			d4s[b][k] = float64(v4[k]) - G[5+k]
 		}
-		c4 = append(c4, cand{n, quad(&d, 5, 8), d})
 	}
-	K := max(1, e.Opt.TopK)
-	sort.Slice(c3, func(a, b int) bool { return c3[a].e < c3[b].e })
-	sort.Slice(c4, func(a, b int) bool { return c4[a].e < c4[b].e })
-	b3, b4, be := 0, 0, math.Inf(1)
-	for _, x := range c3[:min(K, len(c3))] {
-		for _, y := range c4[:min(K, len(c4))] {
-			d := x.d
-			for m := 5; m <= 8; m++ {
-				d[m] = y.d[m]
-			}
-			if v := quad(&d, 2, 8); v < be {
-				b3, b4, be = x.i, y.i, v
+	b3, b4, be := top3.idx[0], top4.idx[0], math.Inf(1)
+	for a := 0; a < top3.n; a++ {
+		v3 := &e.cb.prba24[top3.idx[a]]
+		d3 := [3]float64{float64(v3[0]) - G[2], float64(v3[1]) - G[3], float64(v3[2]) - G[4]}
+		var w [4]float64
+		for k := 0; k < 4; k++ {
+			w[k] = d3[0]*Q[2][5+k] + d3[1]*Q[3][5+k] + d3[2]*Q[4][5+k]
+		}
+		for b := 0; b < top4.n; b++ {
+			x := &d4s[b]
+			v := top3.err[a] + top4.err[b] + 2*(w[0]*x[0]+w[1]*x[1]+w[2]*x[2]+w[3]*x[3])
+			if v < be {
+				b3, b4, be = top3.idx[a], top4.idx[b], v
 			}
 		}
 	}

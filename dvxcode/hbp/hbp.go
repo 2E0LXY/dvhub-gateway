@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -172,14 +173,23 @@ func (c *Client) setUp(v bool) {
 
 // Run connects and services the session until ctx ends, reconnecting as needed.
 func (c *Client) Run(ctx context.Context) error {
+	backoff := 2 * time.Second
 	for ctx.Err() == nil {
-		if err := c.session(ctx); err != nil && ctx.Err() == nil {
-			c.log.Warn("hbp: session ended", "err", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(5 * time.Second):
-			}
+		start := time.Now()
+		err := c.session(ctx)
+		if ctx.Err() != nil {
+			break
 		}
+		if time.Since(start) > time.Minute {
+			backoff = 2 * time.Second // session was healthy: reset
+		}
+		wait := backoff + time.Duration(rand.Int63n(int64(backoff/2)+1))
+		c.log.Warn("hbp: session ended, reconnecting", "err", err, "in", wait.Round(time.Millisecond))
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+		backoff = min(backoff*2, time.Minute)
 	}
 	return ctx.Err()
 }

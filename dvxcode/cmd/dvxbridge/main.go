@@ -10,9 +10,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -85,6 +87,35 @@ func (c ini) num(sec, key string, def uint64) uint64 {
 func (c ini) float(sec, key string) float64 {
 	v, _ := strconv.ParseFloat(c.str(sec, key, "0"), 64)
 	return v
+}
+
+// serveStatus exposes /status (JSON counters) and /healthz (200 when both
+// network links are up, else 503) for monitoring. Bind to localhost and put
+// Caddy in front if it must be reachable remotely.
+func serveStatus(ctx context.Context, addr string, b *bridge.Bridge, dm *hbp.Client, ds *dstar.DExtra, log *slog.Logger) {
+	start := time.Now()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(struct {
+			Uptime  string          `json:"uptime"`
+			HBPUp   bool            `json:"hbp_up"`
+			DExtra  bool            `json:"dextra_up"`
+			Counter bridge.Counters `json:"counters"`
+		}{time.Since(start).Round(time.Second).String(), dm.Up(), ds.Up(), b.Snapshot()})
+	})
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		if dm.Up() && ds.Up() {
+			w.Write([]byte("ok\n"))
+			return
+		}
+		http.Error(w, "link down", http.StatusServiceUnavailable)
+	})
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() { <-ctx.Done(); srv.Close() }()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Error("status server", "err", err)
+	}
 }
 
 func fatal(err error) {
@@ -173,6 +204,9 @@ func main() {
 	go ds.Run(ctx)
 	log.Info("dvxbridge starting", "dmr_tg", bc.Talkgroup, "slot", bc.Slot, "reflector", xc.Reflector, "module", string(xc.ReflectorModule))
 	b := bridge.New(bc, dm, ds, db, log)
+	if addr := c.str("general", "status", ""); addr != "" {
+		go serveStatus(ctx, addr, b, dm, ds, log)
+	}
 	b.Run(ctx)
 	time.Sleep(200 * time.Millisecond) // let unlink/RPTCL go out
 }

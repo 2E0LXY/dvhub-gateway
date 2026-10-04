@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -131,14 +132,23 @@ func (x *DExtra) SendVoice(id uint16, seq uint8, last bool, ambe [9]byte, data [
 
 // Run links and services the reflector connection until ctx ends.
 func (x *DExtra) Run(ctx context.Context) error {
+	backoff := 2 * time.Second
 	for ctx.Err() == nil {
-		if err := x.session(ctx); err != nil && ctx.Err() == nil {
-			x.log.Warn("dextra: link lost", "err", err)
-			select {
-			case <-ctx.Done():
-			case <-time.After(5 * time.Second):
-			}
+		start := time.Now()
+		err := x.session(ctx)
+		if ctx.Err() != nil {
+			break
 		}
+		if time.Since(start) > time.Minute {
+			backoff = 2 * time.Second // session was healthy: reset
+		}
+		wait := backoff + time.Duration(rand.Int63n(int64(backoff/2)+1))
+		x.log.Warn("dextra: session ended, reconnecting", "err", err, "in", wait.Round(time.Millisecond))
+		select {
+		case <-ctx.Done():
+		case <-time.After(wait):
+		}
+		backoff = min(backoff*2, time.Minute)
 	}
 	return ctx.Err()
 }
