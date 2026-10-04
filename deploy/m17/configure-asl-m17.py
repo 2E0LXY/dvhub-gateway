@@ -21,7 +21,10 @@ startup_macro = pppppppppp *813530471
 
 
 def configure(text: str) -> str:
-    if NODE_LINE not in text:
+    active_node = re.compile(
+        r"(?m)^1998[ \t]*=[ \t]*radio@127\.0\.0\.1/1998,NONE[ \t]*$"
+    )
+    if not active_node.search(text):
         public = "530471 = radio@127.0.0.1/530471,NONE"
         if public not in text:
             raise RuntimeError("public node 530471 is missing from [nodes]")

@@ -85,15 +85,18 @@ systemctl restart usrp2m17.service
 
 for _ in {1..20}; do
     local_nodes="$(asterisk -rx 'rpt localnodes' 2>/dev/null || true)"
-    links="$(asterisk -rx 'rpt nodes 1998' 2>/dev/null || true)"
+    private_stats="$(asterisk -rx 'rpt stats 1998' 2>/dev/null || true)"
+    public_stats="$(asterisk -rx 'rpt stats 530471' 2>/dev/null || true)"
     if systemctl is-active --quiet asterisk.service mrefd.service usrp2m17.service \
         && grep -q '1998' <<<"$local_nodes" \
-        && grep -q '530471' <<<"$links" \
+        && grep -Eq 'Nodes currently connected to us.*530471' <<<"$private_stats" \
+        && grep -Eq 'Nodes currently connected to us.*1998' <<<"$public_stats" \
         && ss -lun | grep -qE '[:.]17000[[:space:]]'; then
         trap - ERR
         echo "M17-YLH A is active through private AllStar node 1998 to node 530471"
         echo "$local_nodes"
-        echo "$links"
+        grep 'Nodes currently connected to us' <<<"$private_stats"
+        grep 'Nodes currently connected to us' <<<"$public_stats"
         exit 0
     fi
     sleep 1
