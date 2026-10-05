@@ -134,7 +134,7 @@ The gateway can supervise a permanent, bidirectional YSF 23530 ↔ FreeSTAR ↔ 
 
 When enabled, the supervisor restores the YSF2DMR service, the three DMR logins, and the protected one-talker bridge route after restarts. **Disconnect / Pause** writes `/var/lib/dvgateway/yorkshire-conference.paused`, preventing automatic reconnection until **Connect permanently** is selected. Rejected credentials are retried no more than once every five minutes.
 
-The FreeSTAR System X leg sends `TS2_1=23530;` in its protocol-options login, booking only TG23530 as the static simplex talkgroup. The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
+The FreeSTAR System X leg sends `TS2=23530;` in its HomeBrew/MMDVM protocol-options login, booking only TG23530 as the static simplex talkgroup. (`TS2_1=...` belongs to IPSC2/DMR+ and is not used on this connection.) The bridge independently checks every received frame's destination, so traffic for any other talkgroup is discarded even if a master sends it unexpectedly.
 
 The dashboard and Android app accept an optional registered DMR ID for session/node 7 with ESSID `02` for manual FreeSTAR operation; when blank they use the main configured DMR ID. Selecting a talkgroup automatically sends `TS2_1=<selected TG>;` on that separate login. The permanent conference remains isolated on node 1 using its protected server-side identity and TG23530.
 

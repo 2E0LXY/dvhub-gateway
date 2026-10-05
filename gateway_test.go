@@ -487,6 +487,15 @@ func TestConferenceRepeaterIDUsesESSIDWhereRequired(t *testing.T) {
 	}
 }
 
+func TestConferenceDMROptionsUseSystemXGrammar(t *testing.T) {
+	if got := conferenceDMROptions("FreeSTAR-SystemX-UK"); got != "TS2=23530;" {
+		t.Fatalf("FreeSTAR options = %q, want HomeBrew System X syntax", got)
+	}
+	if got := conferenceDMROptions("BrandMeister-UK-2341"); got != "" {
+		t.Fatalf("BrandMeister options = %q, want empty", got)
+	}
+}
+
 func TestParseDV30AddressAcceptsHostnameURLAndRejectsEmpty(t *testing.T) {
 	if parseDV30Address("") != nil {
 		t.Fatal("empty DV30 address was accepted")

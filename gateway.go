@@ -4048,6 +4048,15 @@ func conferenceRepeaterID(target string, dmrID, essid uint32) uint32 {
 	return dmrID
 }
 
+func conferenceDMROptions(target string) string {
+	if target == "FreeSTAR-SystemX-UK" {
+		// System X uses the HomeBrew/MMDVM options grammar. TS2_1 is the
+		// separate IPSC2/DMR+ grammar and is ignored by this master.
+		return "TS2=23530;"
+	}
+	return ""
+}
+
 func (g *Gateway) configureYorkshireSession(id int, target, password string, config YorkshireConferenceConfig) error {
 	session := g.sessionByID(id)
 	if session == nil {
@@ -4056,10 +4065,7 @@ func (g *Gateway) configureYorkshireSession(id int, target, password string, con
 	// FreeSTAR and BrandMeister identify hotspot instances using the
 	// seven-digit DMR ID followed by the configured two-digit ESSID.
 	expectedRepeaterID := conferenceRepeaterID(target, config.BridgeDMRID, config.BridgeESSID)
-	expectedOptions := ""
-	if target == "FreeSTAR-SystemX-UK" {
-		expectedOptions = "TS2_1=23530;"
-	}
+	expectedOptions := conferenceDMROptions(target)
 	session.mu.RLock()
 	ready := session.Conn != nil && session.LinkActive && session.Mode == "DMR" && session.Target == target &&
 		session.TG == 23530 && session.DMRID == config.BridgeDMRID && session.RepeaterID == expectedRepeaterID && session.Options == expectedOptions
