@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate installer
-        run: bash -n deploy/xlxd/install-xlxd.sh
+        run: |
+          bash -n deploy/xlxd/install-xlxd.sh
+          bash -n deploy/xlxd/install-dvxcode-stage.sh
       - name: Fetch pinned XLXd source
         run: |
           git init -q /tmp/xlxd
