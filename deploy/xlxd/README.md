@@ -34,6 +34,20 @@ DVxCode is the only component allowed to cross from the XLXd module into DMR.
 
 ## Installation after the gates pass
 
+Install the codec and bridge binaries for offline and shadow-test preparation:
+
+```bash
+sudo deploy/xlxd/install-dvxcode-stage.sh
+```
+
+This command installs the binaries, example configuration and disabled systemd
+unit only. It deliberately removes any stale production-validation marker and
+does not create `/etc/dvhub/dvxbridge.ini`, start a service, or send network
+traffic. The dashboard control remains fail-closed until validation is recorded.
+
+After DV30 comparison and the shadow-test configuration are ready, install the
+pinned XLXd reflector:
+
 ```bash
 sudo deploy/xlxd/install-xlxd.sh \
   --callsign XLXnnn \
