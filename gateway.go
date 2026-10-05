@@ -1032,7 +1032,10 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	if conference["operational"] == true && conference["ready"] != true {
 		conferenceStatus = "warning"
 	}
-	dstarIdentity := xlxDisplayName + " (" + xlxProtocolID + ")"
+	dstarIdentity := xlxDisplayName
+	if xlxProtocolID != xlxDisplayName {
+		dstarIdentity += " (" + xlxProtocolID + ")"
+	}
 	dstarStatus, dstarDetail := "fault", dstarIdentity+" · XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
 		if dvxBridgeHealthy() {
