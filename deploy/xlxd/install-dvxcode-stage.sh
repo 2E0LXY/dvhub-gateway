@@ -24,6 +24,11 @@ trap cleanup EXIT
     CGO_ENABLED=0 go build -trimpath -o "$work_dir/dvxbridge" ./cmd/dvxbridge
 )
 
+# Verify the dependency pair together. XLXd is intentionally not installed by
+# this staging command, but systemd must still be able to resolve the bridge's
+# Requires=/After= relationship before either unit is committed to the host.
+systemd-analyze verify "$SCRIPT_DIR/xlxd.service" "$SCRIPT_DIR/dvxbridge.service"
+
 install -d -m 0750 /etc/dvhub
 install -m 0755 "$work_dir/dvxcode" /usr/local/bin/dvxcode.new
 install -m 0755 "$work_dir/dvxbridge" /usr/local/bin/dvxbridge.new
@@ -33,7 +38,6 @@ install -m 0644 "$SCRIPT_DIR/dvxbridge.service" /etc/systemd/system/dvxbridge.se
 mv -f /usr/local/bin/dvxcode.new /usr/local/bin/dvxcode
 mv -f /usr/local/bin/dvxbridge.new /usr/local/bin/dvxbridge
 systemctl daemon-reload
-systemd-analyze verify /etc/systemd/system/dvxbridge.service
 
 # A staged installation must not inherit an obsolete production approval.
 rm -f -- /etc/dvhub/dvxcode-validation.sha256
