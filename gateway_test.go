@@ -638,3 +638,20 @@ func TestYSFGatewayEndpointAndIdentityEnrichment(t *testing.T) {
 		t.Fatalf("unexpected YSF identities: %#v", identities)
 	}
 }
+
+func TestTrafficBroadcastThrottle(t *testing.T) {
+	gateway := &Gateway{}
+	started := time.Unix(1_700_000_000, 0)
+	if !gateway.allowTrafficBroadcast("1/TGIF/2351633/42", started) {
+		t.Fatal("first frame in a stream was throttled")
+	}
+	if gateway.allowTrafficBroadcast("1/TGIF/2351633/42", started.Add(999*time.Millisecond)) {
+		t.Fatal("repeat frame inside the one-second window was broadcast")
+	}
+	if !gateway.allowTrafficBroadcast("1/TGIF/2351633/42", started.Add(time.Second)) {
+		t.Fatal("periodic stream update was not released")
+	}
+	if !gateway.allowTrafficBroadcast("1/TGIF/2351633/43", started.Add(time.Millisecond)) {
+		t.Fatal("a new stream was incorrectly throttled")
+	}
+}

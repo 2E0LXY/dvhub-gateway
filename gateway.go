@@ -269,6 +269,8 @@ type Gateway struct {
 	masterConn          *net.UDPConn
 	wsTicketMu          sync.Mutex
 	wsTickets           map[string]wsTicket
+	trafficMu           sync.Mutex
+	trafficLast         map[string]time.Time
 }
 
 type GatewayConfig struct {
@@ -3240,6 +3242,11 @@ func resolveNetworkTarget(target string) *net.UDPAddr {
 
 func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint32, sourceName string, meta DMRTrafficMeta) {
 	dmrMediaQuality.observe(fmt.Sprintf("node-%d/%s", nodeID, network), meta)
+	now := time.Now()
+	trafficKey := fmt.Sprintf("%d/%s/%d/%d", nodeID, network, sourceID, meta.StreamID)
+	if !g.allowTrafficBroadcast(trafficKey, now) {
+		return
+	}
 	g.dbMutex.RLock()
 	info, exists := g.idDB[sourceID]
 	g.dbMutex.RUnlock()
@@ -3289,6 +3296,27 @@ func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint3
 		},
 	})
 	g.broadcastText(msg)
+}
+
+func (g *Gateway) allowTrafficBroadcast(key string, now time.Time) bool {
+	g.trafficMu.Lock()
+	defer g.trafficMu.Unlock()
+	if g.trafficLast == nil {
+		g.trafficLast = make(map[string]time.Time)
+	}
+	if last, exists := g.trafficLast[key]; exists && now.Sub(last) < time.Second {
+		return false
+	}
+	g.trafficLast[key] = now
+	if len(g.trafficLast) > 512 {
+		cutoff := now.Add(-5 * time.Minute)
+		for candidate, seenAt := range g.trafficLast {
+			if seenAt.Before(cutoff) {
+				delete(g.trafficLast, candidate)
+			}
+		}
+	}
+	return true
 }
 
 // ============================================================================
