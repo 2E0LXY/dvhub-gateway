@@ -656,14 +656,14 @@ func TestTrafficBroadcastThrottle(t *testing.T) {
 	}
 }
 
-func TestDMRSessionStateReportsRecentRejection(t *testing.T) {
+func TestDMRSessionStatePersistsRejection(t *testing.T) {
 	now := time.Now()
 	session := &UserSession{Mode: "DMR", AuthStage: authDisconnected, LastRejected: now.Add(-time.Minute)}
-	if got := dmrSessionState(session, now); got != "rejected" {
+	if got := dmrSessionState(session); got != "rejected" {
 		t.Fatalf("dmrSessionState() = %q, want rejected", got)
 	}
 	session.LastRejected = now.Add(-6 * time.Minute)
-	if got := dmrSessionState(session, now); got != "disconnected" {
-		t.Fatalf("expired rejection state = %q, want disconnected", got)
+	if got := dmrSessionState(session); got != "rejected" {
+		t.Fatalf("persisted rejection state = %q, want rejected", got)
 	}
 }

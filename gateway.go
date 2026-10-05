@@ -3991,7 +3991,7 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 		if session == nil {
 			return "unavailable"
 		}
-		return dmrSessionState(session, time.Now())
+		return dmrSessionState(session)
 	}
 	g.conferenceMu.Lock()
 	until := g.conferenceUntil
@@ -4018,7 +4018,7 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 	}
 }
 
-func dmrSessionState(session *UserSession, now time.Time) string {
+func dmrSessionState(session *UserSession) string {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 	if session.Mode != "DMR" && session.LinkActive {
@@ -4030,7 +4030,7 @@ func dmrSessionState(session *UserSession, now time.Time) string {
 	if session.LinkActive {
 		return "connecting"
 	}
-	if !session.LastRejected.IsZero() && now.Sub(session.LastRejected) < 5*time.Minute {
+	if !session.LastRejected.IsZero() {
 		return "rejected"
 	}
 	return "disconnected"
@@ -4697,7 +4697,7 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	bridge := g.bridge
 	g.bridgeMu.Unlock()
 	for _, session := range g.sessions {
-		state := dmrSessionState(session, time.Now())
+		state := dmrSessionState(session)
 		session.mu.RLock()
 		nodes = append(nodes, map[string]any{
 			"id": session.ID, "state": state, "active": session.LinkActive,
