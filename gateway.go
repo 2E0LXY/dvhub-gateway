@@ -943,6 +943,15 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		return "good"
 	}
 	xlxdActive, dvxcodeActive := service("xlxd.service"), service("dvxbridge.service")
+	dmrDetail := "TG23530 · FreeSTAR · BrandMeister · TGIF"
+	conferenceDetail := "Yorkshire conference"
+	if conference["brandmeister"] == "rejected" {
+		dmrDetail = "BrandMeister authentication rejected"
+		conferenceDetail = "BrandMeister ID/password rejected"
+	} else if conference["brandmeister"] != "connected" {
+		dmrDetail = "BrandMeister disconnected"
+		conferenceDetail = "BrandMeister leg disconnected"
+	}
 	dstarStatus, dstarDetail := "inactive", "XLXd / DVxCode staged — not running"
 	if xlxdActive && dvxcodeActive {
 		dstarStatus, dstarDetail = "good", "XLXd module A · DVxCode shadow bridge"
@@ -950,7 +959,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		dstarStatus, dstarDetail = "fault", "XLXd / DVxCode service mismatch"
 	}
 	publicDashboardCache.routes = []map[string]any{
-		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": "TG23530 · FreeSTAR · BrandMeister · TGIF"},
+		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": dmrDetail},
 		{"id": "ysf", "label": "YSF", "status": status(service("ysfreflector.service"), service("ysf2dmr.service")), "detail": "Yorkshire Link reflector"},
 		{"id": "nxdn", "label": "NXDN", "status": status(service("nxdnreflector.service"), service("nxdn2dmr.service")), "detail": "Local reflector · 23530"},
 		{"id": "p25", "label": "P25", "status": status(service("p25reflector.service"), service("p252dmr.service")), "detail": "Local reflector · 23530"},
@@ -958,7 +967,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		{"id": "dstar", "label": "D-STAR", "status": dstarStatus, "detail": dstarDetail},
 		{"id": "echolink", "label": "EchoLink", "status": status(echoLink.Ready), "detail": fmt.Sprintf("Via AllStar · %d linked", len(echoLink.Connections))},
 		{"id": "allstar", "label": "AllStar", "status": status(allStar.Registered, allStar.ServicesActive), "detail": "Node 530471 · PCM bus"},
-		{"id": "conference", "label": "TG23530", "status": status(conference["ready"] == true), "detail": "Yorkshire conference"},
+		{"id": "conference", "label": "TG23530", "status": status(conference["ready"] == true), "detail": conferenceDetail},
 	}
 	publicDashboardCache.conference = conference
 	publicDashboardCache.system = map[string]any{
@@ -3982,15 +3991,7 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 		if session == nil {
 			return "unavailable"
 		}
-		session.mu.RLock()
-		defer session.mu.RUnlock()
-		if session.AuthStage == authRunning {
-			return "connected"
-		}
-		if session.LinkActive {
-			return "connecting"
-		}
-		return "disconnected"
+		return dmrSessionState(session, time.Now())
 	}
 	g.conferenceMu.Lock()
 	until := g.conferenceUntil
@@ -4015,6 +4016,24 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 			return until.UTC().Format(time.RFC3339)
 		}(),
 	}
+}
+
+func dmrSessionState(session *UserSession, now time.Time) string {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	if session.Mode != "DMR" && session.LinkActive {
+		return "connected"
+	}
+	if session.AuthStage == authRunning {
+		return "connected"
+	}
+	if session.LinkActive {
+		return "connecting"
+	}
+	if !session.LastRejected.IsZero() && now.Sub(session.LastRejected) < 5*time.Minute {
+		return "rejected"
+	}
+	return "disconnected"
 }
 
 func (g *Gateway) stopYorkshireConference(reason string, pausePermanent bool) {
@@ -4678,17 +4697,8 @@ func (g *Gateway) handleState(w http.ResponseWriter, r *http.Request) {
 	bridge := g.bridge
 	g.bridgeMu.Unlock()
 	for _, session := range g.sessions {
+		state := dmrSessionState(session, time.Now())
 		session.mu.RLock()
-		state := "disconnected"
-		if session.Mode != "DMR" && session.LinkActive {
-			state = "connected"
-		} else if session.AuthStage == authRunning {
-			state = "connected"
-		} else if session.LinkActive {
-			state = "connecting"
-		} else if !session.LastRejected.IsZero() && time.Since(session.LastRejected) < 5*time.Minute {
-			state = "rejected"
-		}
 		nodes = append(nodes, map[string]any{
 			"id": session.ID, "state": state, "active": session.LinkActive,
 			"mode": session.Mode, "network": session.Target, "talkgroup": session.TG,

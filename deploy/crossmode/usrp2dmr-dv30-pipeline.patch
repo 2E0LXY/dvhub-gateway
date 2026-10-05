@@ -1,0 +1,150 @@
+diff --git a/USRP2DMR/MBEVocoder.cpp b/USRP2DMR/MBEVocoder.cpp
+index ae6f8b0..efb9f50 100644
+--- a/USRP2DMR/MBEVocoder.cpp
++++ b/USRP2DMR/MBEVocoder.cpp
+@@ -93,6 +93,8 @@ bool MBEVocoder::exchange(uint8_t opcode, const uint8_t* input, unsigned int inp
+ 		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
+ 		if (length < 0)
+ 			return false;
++		if (length >= 2 && response[0U] == 0x7FU && response[1U] == channel)
++			return false;
+ 		if ((unsigned int)length >= outputLength + 2U && response[0U] == replyOpcode && response[1U] == channel) {
+ 			::memcpy(output, response + 2U, outputLength);
+ 			return true;
+@@ -100,6 +102,50 @@ bool MBEVocoder::exchange(uint8_t opcode, const uint8_t* input, unsigned int inp
+ 	}
+ }
+ 
++void MBEVocoder::decode_dmr_burst(const uint8_t *ambe1, const uint8_t *ambe2, const uint8_t *ambe3,
++	int16_t *pcm1, int16_t *pcm2, int16_t *pcm3)
++{
++	::memset(pcm1, 0, 320U);
++	::memset(pcm2, 0, 320U);
++	::memset(pcm3, 0, 320U);
++	if (m_socket < 0)
++		return;
++
++	const uint8_t* inputs[3U] = {ambe1, ambe2, ambe3};
++	int16_t* outputs[3U] = {pcm1, pcm2, pcm3};
++	uint8_t channels[3U];
++	bool complete[3U] = {false, false, false};
++	for (unsigned int i = 0U; i < 3U; i++) {
++		channels[i] = ++m_channel;
++		uint8_t request[11U];
++		request[0U] = 0x63U;
++		request[1U] = channels[i];
++		::memcpy(request + 2U, inputs[i], 9U);
++		if (::send(m_socket, request, sizeof(request), 0) != (ssize_t)sizeof(request))
++			return;
++	}
++
++	unsigned int completed = 0U;
++	uint8_t response[512U];
++	while (completed < 3U) {
++		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
++		if (length < 0)
++			return;
++		for (unsigned int i = 0U; i < 3U; i++) {
++			if (complete[i] || length < 2 || response[1U] != channels[i])
++				continue;
++			if (response[0U] == 0x7FU) {
++				complete[i] = true;
++				completed++;
++			} else if (length >= 322 && response[0U] == 0x64U) {
++				::memcpy(reinterpret_cast<uint8_t*>(outputs[i]), response + 2U, 320U);
++				complete[i] = true;
++				completed++;
++			}
++		}
++	}
++}
++
+ void MBEVocoder::decode_2450(int16_t *pcm, uint8_t *ambe49)
+ {
+ 	if (!exchange(0x63U, ambe49, 9U, 0x64U, reinterpret_cast<uint8_t*>(pcm), 320U))
+diff --git a/USRP2DMR/MBEVocoder.h b/USRP2DMR/MBEVocoder.h
+index 5436bfa..795393f 100644
+--- a/USRP2DMR/MBEVocoder.h
++++ b/USRP2DMR/MBEVocoder.h
+@@ -27,6 +27,7 @@
+ class MBEVocoder {
+ public:
+ 	void decode_2450(int16_t *, uint8_t *);
++	void decode_dmr_burst(const uint8_t *, const uint8_t *, const uint8_t *, int16_t *, int16_t *, int16_t *);
+ 	void encode_2450(int16_t *, uint8_t *);
+ 	void encode_dmr(int16_t *, uint8_t *);
+ 	MBEVocoder(void);
+diff --git a/USRP2DMR/ModeConv.cpp b/USRP2DMR/ModeConv.cpp
+index 8f8e8c5..9e5d873 100644
+--- a/USRP2DMR/ModeConv.cpp
++++ b/USRP2DMR/ModeConv.cpp
+@@ -518,54 +518,33 @@ void CModeConv::putDMREOT()
+ void CModeConv::putDMR(unsigned char* data)
+ {
+ 	assert(data != NULL);
+-	
+-	int16_t audio[160U];
++
++	int16_t audio[3U][160U];
+ 	int16_t audio_adjusted[160U];
+ 	uint8_t v_ambe[9U];
+-	
+-	::memset(audio, 0, sizeof(audio));
++
+ 	::memset(v_ambe, 0, sizeof(v_ambe));
+-	
+-	m_mbe->decode_2450(audio, data);
+-	
+-	for(int i = 0; i < 160; ++i){
+-		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
+-	}
+-	
+-	m_USRP.addData(&TAG_USRP_DATA, 1U);
+-	m_USRP.addData(audio_adjusted, 160U);
+-	m_usrpN += 1U;
+-	
++
++	const uint8_t* first = data;
+ 	data += 9U;
+ 	for (unsigned int i = 0U; i < 4U; i++)
+ 		v_ambe[i] = data[i];
+-	
++
+ 	v_ambe[4U] = data[4U] & 0xF0;
+ 	v_ambe[4U] |= data[10U] & 0x0F;
+-	
++
+ 	for (unsigned int i = 0U; i < 4U; i++)
+ 		v_ambe[i + 5U] = data[i + 11U];
+ 
+-	m_mbe->decode_2450(audio, v_ambe);
+-	
+-	for(int i = 0; i < 160; ++i){
+-		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
++	const uint8_t* third = data + 15U;
++	m_mbe->decode_dmr_burst(first, v_ambe, third, audio[0U], audio[1U], audio[2U]);
++	for (unsigned int frame = 0U; frame < 3U; frame++) {
++		for (unsigned int i = 0U; i < 160U; i++)
++			audio_adjusted[i] = m_dmrAttenuate ? audio[frame][i] / m_dmrGainMultiplier : audio[frame][i] * m_dmrGainMultiplier;
++		m_USRP.addData(&TAG_USRP_DATA, 1U);
++		m_USRP.addData(audio_adjusted, 160U);
++		m_usrpN += 1U;
+ 	}
+-	
+-	m_USRP.addData(&TAG_USRP_DATA, 1U);
+-	m_USRP.addData(audio_adjusted, 160U);
+-	m_usrpN += 1U;
+-	
+-	data += 15U;;
+-	m_mbe->decode_2450(audio, data);
+-	
+-	for(int i = 0; i < 160; ++i){
+-		audio_adjusted[i] = m_dmrAttenuate ? audio[i] / m_dmrGainMultiplier : audio[i] * m_dmrGainMultiplier;
+-	}
+-	
+-	m_USRP.addData(&TAG_USRP_DATA, 1U);
+-	m_USRP.addData(audio_adjusted, 160U);
+-	m_usrpN += 1U;
+ }
+ 
+ void CModeConv::putUSRPHeader()

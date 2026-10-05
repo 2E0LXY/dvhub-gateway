@@ -655,3 +655,15 @@ func TestTrafficBroadcastThrottle(t *testing.T) {
 		t.Fatal("a new stream was incorrectly throttled")
 	}
 }
+
+func TestDMRSessionStateReportsRecentRejection(t *testing.T) {
+	now := time.Now()
+	session := &UserSession{Mode: "DMR", AuthStage: authDisconnected, LastRejected: now.Add(-time.Minute)}
+	if got := dmrSessionState(session, now); got != "rejected" {
+		t.Fatalf("dmrSessionState() = %q, want rejected", got)
+	}
+	session.LastRejected = now.Add(-6 * time.Minute)
+	if got := dmrSessionState(session, now); got != "disconnected" {
+		t.Fatalf("expired rejection state = %q, want disconnected", got)
+	}
+}

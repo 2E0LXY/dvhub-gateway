@@ -41,6 +41,8 @@ git -C "$work_dir/mmdvm-cm" checkout --quiet "$MMDVM_SHA"
 
 git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2dmr-dv30.patch"
 git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2dmr-dv30.patch"
+git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2dmr-dv30-pipeline.patch"
+git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2dmr-dv30-pipeline.patch"
 git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2dmr-identity.patch"
 git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2dmr-identity.patch"
 make -C "$work_dir/mmdvm-cm/USRP2DMR" -j"$(nproc)"

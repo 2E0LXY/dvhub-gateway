@@ -1,0 +1,38 @@
+name: Cross-mode converters
+
+on:
+  push:
+    paths:
+      - "deploy/crossmode/**"
+      - ".github/workflows/crossmode.yml"
+  pull_request:
+    paths:
+      - "deploy/crossmode/**"
+      - ".github/workflows/crossmode.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  usrp2dmr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential libssl-dev
+      - name: Build pinned USRP2DMR bridge
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$work_dir"' EXIT
+          git clone --quiet https://github.com/ShaYmez/MMDVM_CM.git "$work_dir/mmdvm-cm"
+          git -C "$work_dir/mmdvm-cm" checkout --quiet 5c0a387da2cedfa47fc171fc57c48fee252c91aa
+          git -C "$work_dir/mmdvm-cm" apply --check "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-dv30.patch"
+          git -C "$work_dir/mmdvm-cm" apply "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-dv30.patch"
+          git -C "$work_dir/mmdvm-cm" apply --check "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-dv30-pipeline.patch"
+          git -C "$work_dir/mmdvm-cm" apply "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-dv30-pipeline.patch"
+          git -C "$work_dir/mmdvm-cm" apply --check "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-identity.patch"
+          git -C "$work_dir/mmdvm-cm" apply "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-identity.patch"
+          make -C "$work_dir/mmdvm-cm/USRP2DMR" -j"$(nproc)"
+          test -x "$work_dir/mmdvm-cm/USRP2DMR/USRP2DMR"

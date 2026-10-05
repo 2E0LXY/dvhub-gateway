@@ -10,6 +10,10 @@ DVHub's restricted UDP DV30 service. The VPS performs the P25 IMBE software
 decode/encode using `nostar/imbe_vocoder`; the remote DV30 performs the DMR
 AMBE+2 decode/encode. Only one direction is active at a time.
 
+`usrp2dmr-dv30-pipeline.patch` submits all three AMBE frames in a 60 ms DMR
+burst concurrently. This keeps the converter clock moving at real time over a
+WAN vocoder path instead of paying three serial network round trips per burst.
+
 Build inputs are pinned during deployment:
 
 - MMDVM_CM `5c0a387`
