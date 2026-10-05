@@ -4,14 +4,16 @@ This directory builds a pinned, D-STAR-only XLXd reflector and prepares its
 connection to the separately versioned DVxCode bridge. It does not enable or
 start either service automatically.
 
-The human-facing reflector name is **XLXYOR**. Its on-air XLX protocol
-identifier remains a separately assigned `XLXnnn` value because hotspot host
-lists and XLX interlinks use the numeric designator.
+The human-facing and on-air reflector identifier is **XLXYOR**. XLXd supports
+three alphanumeric characters after `XLX`, and the public directory contains
+other letter-based identifiers. The identifier was absent from independent
+directory mirrors when rechecked on 2026-10-05.
 
-The staged protocol identifier is **XLX471**. It was absent from the reflector
-lists exposed by three independent XLX directory mirrors when checked on
-2026-10-05. Recheck the live directory immediately before any public
-registration; a locally chosen identifier is not a reservation.
+`xlxd-callhome.timer` publishes the reflector to the upstream XLX directory
+every ten minutes. Its private ownership token is generated once at
+`/var/lib/xlxd/callinghome.key`; preserve that file across rebuilds and never
+commit or display it. The published dashboard URL is the public DVHub status
+page, which exposes no administration controls or credentials.
 
 ## Audio path
 
@@ -36,8 +38,9 @@ DVxCode is the only component allowed to cross from the XLXd module into DMR.
   deployment configuration and `VALIDATION.md` all exist.
 - The initial bridge must use a test talkgroup absent from every DVHub
   `BridgeRoute`; it must not use TG23530 during validation.
-- The XLX number must be checked against the current reflector directory. Do
-  not enable call-home for a private shadow reflector.
+- The XLX identifier must be checked against the current reflector directory
+  immediately before its first call-home; a local configuration is not a
+  reservation.
 - No credentials belong in Git. The installer writes only an example DVxCode
   configuration and the operator creates `/etc/dvhub/dvxbridge.ini` locally.
 
@@ -59,7 +62,7 @@ pinned XLXd reflector:
 
 ```bash
 sudo deploy/xlxd/install-xlxd.sh \
-  --callsign XLX471 \
+  --callsign XLXYOR \
   --listen-ip YOUR_VPS_ADDRESS \
   --with-dvxcode
 ```

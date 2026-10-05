@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh XLXYOR in the XLX reflector directory
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30s
+Persistent=true
+Unit=xlxd-callhome.service
+
+[Install]
+WantedBy=timers.target

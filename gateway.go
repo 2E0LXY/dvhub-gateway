@@ -58,7 +58,7 @@ const (
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
 	xlxDisplayName         = "XLXYOR"
-	xlxProtocolID          = "XLX471"
+	xlxProtocolID          = "XLXYOR"
 )
 
 const (

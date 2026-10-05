@@ -1,0 +1,24 @@
+[Unit]
+Description=Publish XLXYOR to the XLX reflector directory
+Documentation=https://github.com/LX3JL/xlxd
+After=network-online.target xlxd.service
+Wants=network-online.target
+Requires=xlxd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/dvhub-xlxd-callhome
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadOnlyPaths=/etc/dvhub/xlxd.env
+ReadWritePaths=/var/lib/xlxd
