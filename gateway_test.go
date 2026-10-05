@@ -667,3 +667,17 @@ func TestDMRSessionStatePersistsRejection(t *testing.T) {
 		t.Fatalf("persisted rejection state = %q, want rejected", got)
 	}
 }
+
+func TestParseSystemdUnitStates(t *testing.T) {
+	requested := []string{"running.service", "failed.service", "missing.service"}
+	states := parseSystemdUnitStates([]byte("Id=running.service\nLoadState=loaded\nActiveState=active\n\nId=failed.service\nLoadState=loaded\nActiveState=failed\n"), requested)
+	if !systemdUnitActive(states["running.service"]) || systemdUnitDetail(states["running.service"]) != "Running" {
+		t.Fatalf("running service parsed incorrectly: %+v", states["running.service"])
+	}
+	if systemdUnitActive(states["failed.service"]) || systemdUnitDetail(states["failed.service"]) != "Failed" {
+		t.Fatalf("failed service parsed incorrectly: %+v", states["failed.service"])
+	}
+	if systemdUnitActive(states["missing.service"]) || systemdUnitDetail(states["missing.service"]) != "Not installed" {
+		t.Fatalf("missing service parsed incorrectly: %+v", states["missing.service"])
+	}
+}

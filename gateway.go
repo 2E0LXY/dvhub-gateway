@@ -922,6 +922,76 @@ var publicDashboardCache struct {
 	system     map[string]any
 }
 
+type systemdUnitState struct {
+	LoadState   string
+	ActiveState string
+}
+
+var publicDashboardUnits = []string{
+	"dvhub-gateway.service", "caddy.service", "asterisk.service", "usrp2dmr.service",
+	"ysfreflector.service", "ysf2dmr.service", "nxdnreflector.service", "nxdn2dmr.service",
+	"p25reflector.service", "p252dmr.service", "mrefd.service", "usrp2m17.service",
+	"xlxd.service", "dvxbridge.service", "dvhub-deploy.timer",
+}
+
+func parseSystemdUnitStates(output []byte, requested []string) map[string]systemdUnitState {
+	states := make(map[string]systemdUnitState, len(requested))
+	for _, unit := range requested {
+		states[unit] = systemdUnitState{LoadState: "not-found", ActiveState: "inactive"}
+	}
+	normalized := strings.ReplaceAll(string(output), "\r\n", "\n")
+	for _, block := range strings.Split(normalized, "\n\n") {
+		properties := make(map[string]string, 3)
+		for _, line := range strings.Split(block, "\n") {
+			key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+			if found {
+				properties[key] = value
+			}
+		}
+		unit := properties["Id"]
+		if _, known := states[unit]; !known {
+			continue
+		}
+		state := states[unit]
+		if properties["LoadState"] != "" {
+			state.LoadState = properties["LoadState"]
+		}
+		if properties["ActiveState"] != "" {
+			state.ActiveState = properties["ActiveState"]
+		}
+		states[unit] = state
+	}
+	return states
+}
+
+func readSystemdUnitStates(units []string) map[string]systemdUnitState {
+	args := append([]string{"show", "--property=Id", "--property=LoadState", "--property=ActiveState"}, units...)
+	output, _ := exec.Command("/usr/bin/systemctl", args...).CombinedOutput()
+	return parseSystemdUnitStates(output, units)
+}
+
+func systemdUnitActive(state systemdUnitState) bool {
+	return state.LoadState == "loaded" && state.ActiveState == "active"
+}
+
+func systemdUnitDetail(state systemdUnitState) string {
+	if state.LoadState == "not-found" {
+		return "Not installed"
+	}
+	switch state.ActiveState {
+	case "active":
+		return "Running"
+	case "failed":
+		return "Failed"
+	case "activating":
+		return "Starting"
+	case "deactivating":
+		return "Stopping"
+	default:
+		return "Stopped"
+	}
+}
+
 // cachedPublicDashboardStatus prevents public polling from turning systemctl
 // and the Asterisk status helpers into load-bearing request paths.
 func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]any, map[string]any) {
@@ -933,7 +1003,8 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	conference := g.yorkshireConferenceStatus()
 	allStar := readAllStarStatus()
 	echoLink := readEchoLinkStatus()
-	service := func(name string) bool { return serviceActive(name) }
+	unitStates := readSystemdUnitStates(publicDashboardUnits)
+	service := func(name string) bool { return systemdUnitActive(unitStates[name]) }
 	status := func(required ...bool) string {
 		for _, ready := range required {
 			if !ready {
@@ -952,11 +1023,33 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		dmrDetail = "BrandMeister disconnected"
 		conferenceDetail = "BrandMeister leg disconnected"
 	}
-	dstarStatus, dstarDetail := "inactive", "XLXd / DVxCode staged — not running"
+	dstarStatus, dstarDetail := "fault", "XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
 		dstarStatus, dstarDetail = "good", "XLXd module A · DVxCode shadow bridge"
 	} else if xlxdActive || dvxcodeActive {
 		dstarStatus, dstarDetail = "fault", "XLXd / DVxCode service mismatch"
+	}
+	serviceRows := []struct {
+		Label string
+		Unit  string
+	}{
+		{"DVHub gateway", "dvhub-gateway.service"}, {"HTTPS proxy", "caddy.service"},
+		{"AllStar / Asterisk", "asterisk.service"}, {"AllStar to DMR", "usrp2dmr.service"},
+		{"YSF reflector", "ysfreflector.service"}, {"YSF to DMR", "ysf2dmr.service"},
+		{"NXDN reflector", "nxdnreflector.service"}, {"NXDN to DMR", "nxdn2dmr.service"},
+		{"P25 reflector", "p25reflector.service"}, {"P25 to DMR", "p252dmr.service"},
+		{"M17 reflector", "mrefd.service"}, {"M17 to AllStar", "usrp2m17.service"},
+		{"XLXd reflector", "xlxd.service"}, {"DVxCode bridge", "dvxbridge.service"},
+		{"Git deployment timer", "dvhub-deploy.timer"},
+	}
+	services := make([]map[string]any, 0, len(serviceRows))
+	for _, row := range serviceRows {
+		unitState := unitStates[row.Unit]
+		active := systemdUnitActive(unitState)
+		services = append(services, map[string]any{
+			"label": row.Label, "unit": row.Unit, "active": active,
+			"status": status(active), "detail": systemdUnitDetail(unitState),
+		})
 	}
 	publicDashboardCache.routes = []map[string]any{
 		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": dmrDetail},
@@ -973,6 +1066,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	publicDashboardCache.system = map[string]any{
 		"gateway": service("dvhub-gateway.service"), "proxy": service("caddy.service"),
 		"deployment_timer": service("dvhub-deploy.timer"), "revision": readSmallTextFile("/var/lib/dvgateway/deployed-sha", 128),
+		"services": services,
 	}
 	publicDashboardCache.updated = time.Now()
 	return publicDashboardCache.routes, publicDashboardCache.conference, publicDashboardCache.system
