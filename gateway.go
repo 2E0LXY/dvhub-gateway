@@ -1019,11 +1019,16 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	dmrDetail := "TG23530 · FreeSTAR · BrandMeister · TGIF"
 	conferenceDetail := "Yorkshire conference"
 	if conference["brandmeister"] == "rejected" {
-		dmrDetail = "BrandMeister authentication rejected"
-		conferenceDetail = "BrandMeister ID/password rejected"
+		dmrDetail = fmt.Sprintf("Degraded · %v/3 legs · BrandMeister rejected", conference["connected_legs"])
+		conferenceDetail = fmt.Sprintf("%v/3 connected · BrandMeister ID/password rejected", conference["connected_legs"])
 	} else if conference["brandmeister"] != "connected" {
-		dmrDetail = "BrandMeister disconnected"
-		conferenceDetail = "BrandMeister leg disconnected"
+		dmrDetail = fmt.Sprintf("Degraded · %v/3 legs · BrandMeister disconnected", conference["connected_legs"])
+		conferenceDetail = fmt.Sprintf("%v/3 connected · BrandMeister leg disconnected", conference["connected_legs"])
+	}
+	dmrStatus := status(conference["operational"] == true)
+	conferenceStatus := status(conference["ready"] == true)
+	if conference["operational"] == true && conference["ready"] != true {
+		conferenceStatus = "warning"
 	}
 	dstarStatus, dstarDetail := "fault", "XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
@@ -1060,7 +1065,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		})
 	}
 	publicDashboardCache.routes = []map[string]any{
-		{"id": "dmr", "label": "DMR", "status": status(conference["ready"] == true), "detail": dmrDetail},
+		{"id": "dmr", "label": "DMR", "status": dmrStatus, "detail": dmrDetail},
 		{"id": "ysf", "label": "YSF", "status": status(service("ysfreflector.service"), service("ysf2dmr.service")), "detail": "Yorkshire Link reflector"},
 		{"id": "nxdn", "label": "NXDN", "status": status(service("nxdnreflector.service"), service("nxdn2dmr.service")), "detail": "Local reflector · 23530"},
 		{"id": "p25", "label": "P25", "status": status(service("p25reflector.service"), service("p252dmr.service")), "detail": "Local reflector · 23530"},
@@ -1068,7 +1073,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		{"id": "dstar", "label": "D-STAR", "status": dstarStatus, "detail": dstarDetail},
 		{"id": "echolink", "label": "EchoLink", "status": status(echoLink.Ready), "detail": fmt.Sprintf("Via AllStar · %d linked", len(echoLink.Connections))},
 		{"id": "allstar", "label": "AllStar", "status": status(allStar.Registered, allStar.ServicesActive), "detail": "Node 530471 · PCM bus"},
-		{"id": "conference", "label": "TG23530", "status": status(conference["ready"] == true), "detail": conferenceDetail},
+		{"id": "conference", "label": "TG23530", "status": conferenceStatus, "detail": conferenceDetail},
 	}
 	publicDashboardCache.conference = conference
 	publicDashboardCache.system = map[string]any{
@@ -4156,10 +4161,18 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 	freeSTARStatus := nodeStatus(1)
 	brandMeisterStatus := nodeStatus(2)
 	tgifStatus := nodeStatus(4)
+	connectedLegs := 0
+	for _, state := range []string{freeSTARStatus, brandMeisterStatus, tgifStatus} {
+		if state == "connected" {
+			connectedLegs++
+		}
+	}
 	converterActive := serviceActive("ysf2dmr.service")
 	configured := route.Active && route.ANode == 1 && route.BNode == 2 && route.CNode == 4 && route.ATG == 23530 && route.BTG == 23530 && route.CTG == 23530
 	return map[string]any{
-		"active": configured, "ready": configured && converterActive && freeSTARStatus == "connected" && brandMeisterStatus == "connected" && tgifStatus == "connected",
+		"active": configured, "operational": configured && converterActive && connectedLegs >= 2,
+		"ready":          configured && converterActive && connectedLegs == 3,
+		"connected_legs": connectedLegs, "total_legs": 3,
 		"permanent":         g.conferencePermanent.Load(),
 		"server_configured": func() bool { _, err := loadYorkshireConferenceConfig(); return err == nil }(),
 		"ysf2dmr":           converterActive,
