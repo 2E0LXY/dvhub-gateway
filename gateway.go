@@ -1788,14 +1788,8 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 
 			if req["cmd"] == "node_state" {
 				nodeValue, nodeOK := jsonUint32(req["node_id"], MaxUsers)
-				mode, modeOK := req["mode"].(string)
-				target, targetOK := req["target"].(string)
 				active, _ := req["active"].(bool)
-				if !nodeOK || !modeOK || !targetOK {
-					continue
-				}
-				if mode != "DMR" {
-					g.sendClientText(client, map[string]any{"type": "network_status", "node_id": nodeValue, "state": "error", "message": "Native YSF sessions are unavailable; use the managed YSFReflector/YSF2DMR service"})
+				if !nodeOK {
 					continue
 				}
 				nodeID := int(nodeValue)
@@ -1815,13 +1809,23 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 					}
 					continue
 				}
+				if !active {
+					if session := g.sessionByID(nodeID); session != nil {
+						g.disconnectNetwork(session, "Disconnected")
+					}
+					continue
+				}
+				mode, modeOK := req["mode"].(string)
+				target, targetOK := req["target"].(string)
+				if !modeOK || !targetOK {
+					continue
+				}
+				if mode != "DMR" {
+					g.sendClientText(client, map[string]any{"type": "network_status", "node_id": nodeValue, "state": "error", "message": "Native YSF sessions are unavailable; use the managed YSFReflector/YSF2DMR service"})
+					continue
+				}
 				for _, s := range g.sessions {
 					if s.ID == nodeID {
-						if !active {
-							g.disconnectNetwork(s, "Disconnected")
-							break
-						}
-
 						s.mu.Lock()
 						s.Mode = mode
 						s.Target = target
@@ -3910,6 +3914,57 @@ func loadYorkshireConferenceConfig() (YorkshireConferenceConfig, error) {
 	return config, nil
 }
 
+func (g *Gateway) adoptBrandMeisterCredential(sourceID int) error {
+	if sourceID < 1 || sourceID > MaxUsers || sourceID == 1 || sourceID == 2 || sourceID == 4 {
+		return fmt.Errorf("select a connected manual BrandMeister session")
+	}
+	config, err := loadYorkshireConferenceConfig()
+	if err != nil {
+		return err
+	}
+	source := g.sessionByID(sourceID)
+	if source == nil {
+		return fmt.Errorf("source session is unavailable")
+	}
+	expectedRepeaterID := conferenceRepeaterID("BrandMeister-UK-2341", config.BridgeDMRID, config.BridgeESSID)
+	source.mu.RLock()
+	credential := source.UserPassword
+	validSource := source.LinkActive && source.AuthStage == authRunning && source.Mode == "DMR" &&
+		source.Target == "BrandMeister-UK-2341" && source.TG == 23530 &&
+		source.DMRID == config.BridgeDMRID && source.RepeaterID == expectedRepeaterID && credential != ""
+	source.mu.RUnlock()
+	if !validSource {
+		return fmt.Errorf("the selected session is not a matching connected BrandMeister TG23530 login")
+	}
+	payload, err := json.Marshal(map[string]string{"brandmeister_password": credential})
+	if err != nil {
+		return fmt.Errorf("unable to prepare protected credential update")
+	}
+	command := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-set-conference-credential")
+	command.Stdin = strings.NewReader(string(payload))
+	if output, updateErr := command.CombinedOutput(); updateErr != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = "protected credential update failed"
+		}
+		return fmt.Errorf("%s", message)
+	}
+
+	// The manual and conference sessions use the same repeater identity, so
+	// close the proven manual login before reconnecting the protected leg.
+	g.disconnectNetwork(source, "Moved working BrandMeister login to conference Session 2")
+	conferenceSession := g.sessionByID(2)
+	if conferenceSession == nil {
+		return fmt.Errorf("conference Session 2 is unavailable")
+	}
+	g.disconnectNetwork(conferenceSession, "Applying working BrandMeister credential")
+	conferenceSession.mu.Lock()
+	conferenceSession.LastRejected = time.Time{}
+	conferenceSession.mu.Unlock()
+	config.BrandMeisterPassword = credential
+	return g.configureYorkshireSession(2, "BrandMeister-UK-2341", credential, config)
+}
+
 func writeYSF2DMRConfig(config YorkshireConferenceConfig) error {
 	freeSTARHost, err := loadDMRHost("FreeSTAR-SystemX-UK")
 	if err != nil {
@@ -4175,6 +4230,7 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 		Callsign        string `json:"callsign"`
 		DMRID           uint32 `json:"dmr_id"`
 		DurationSeconds int    `json:"duration_seconds"`
+		SourceSession   int    `json:"source_session"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&request) != nil {
 		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
@@ -4182,6 +4238,15 @@ func (g *Gateway) handleYorkshireConference(w http.ResponseWriter, r *http.Reque
 	}
 	if request.Action == "stop" {
 		g.stopYorkshireConference("Yorkshire conference disconnected by operator", true)
+		json.NewEncoder(w).Encode(g.yorkshireConferenceStatus())
+		return
+	}
+	if request.Action == "adopt_brandmeister" {
+		if err := g.adoptBrandMeisterCredential(request.SourceSession); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusConflict)
+			return
+		}
+		time.Sleep(300 * time.Millisecond)
 		json.NewEncoder(w).Encode(g.yorkshireConferenceStatus())
 		return
 	}

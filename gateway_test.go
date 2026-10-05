@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestWebSocketRequiresOneTimeTicket(t *testing.T) {
@@ -66,6 +68,43 @@ func TestWebSocketTicketSupportsPublicReadOnlyAndIsSingleUse(t *testing.T) {
 	if user, ok := gateway.consumeWSTicket(payload.Ticket); ok {
 		t.Fatalf("ticket was reusable by %q", user)
 	}
+}
+
+func TestWebSocketDisconnectDoesNotRequireConnectionFields(t *testing.T) {
+	gateway := &Gateway{clients: make(map[*WSClient]bool), wsTickets: make(map[string]wsTicket)}
+	for index := range gateway.sessions {
+		gateway.sessions[index] = &UserSession{ID: index + 1}
+	}
+	session := gateway.sessions[2]
+	session.LinkActive = true
+	session.Mode = "DMR"
+	session.Target = "BrandMeister-UK-2341"
+
+	ticket, err := gateway.issueWSTicket("2E0LXY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(gateway.handleWS))
+	defer server.Close()
+	connection, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"?ticket="+ticket, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := connection.WriteJSON(map[string]any{"cmd": "node_state", "node_id": 3, "active": false}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		session.mu.RLock()
+		active := session.LinkActive
+		session.mu.RUnlock()
+		if !active {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("manual session remained active after a field-minimal disconnect command")
 }
 
 func TestControlRequiresAuthenticationAndCSRFHeader(t *testing.T) {

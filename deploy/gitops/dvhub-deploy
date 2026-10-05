@@ -25,6 +25,7 @@ readonly ECHOLINK_CONFIGURATOR="/usr/local/sbin/dvhub-configure-echolink"
 readonly ECHOLINK_STATUS="/usr/local/sbin/dvhub-echolink-status"
 readonly ALLSTAR_SUDOERS="/etc/sudoers.d/dvhub-allstar"
 readonly SERVICE_CONTROL="/usr/local/sbin/dvhub-service-control"
+readonly CONFERENCE_CREDENTIAL="/usr/local/sbin/dvhub-set-conference-credential"
 readonly GATEWAY_SUDOERS="/etc/sudoers.d/dvhub-gateway"
 readonly REFLECTOR_ID_REFRESH="/usr/local/sbin/dvhub-refresh-reflector-ids"
 readonly REFLECTOR_ID_UNIT="/etc/systemd/system/dvreflector-ids.service"
@@ -95,7 +96,9 @@ validate_allstar_helpers() {
         "$source_root/deploy/allstar/dvhub-echolink-status" \
         "$source_root/deploy/dvhub-service-control" \
         "$source_root/deploy/reflectors/dvhub-refresh-reflector-ids"
-    python3 -m py_compile "$source_root/deploy/allstar/dvhub-configure-echolink"
+    python3 -m py_compile \
+        "$source_root/deploy/allstar/dvhub-configure-echolink" \
+        "$source_root/deploy/dvhub-set-conference-credential"
     /usr/sbin/visudo -cf "$source_root/deploy/allstar/dvhub-allstar.sudoers" >/dev/null
     /usr/sbin/visudo -cf "$source_root/deploy/dvhub-gateway.sudoers" >/dev/null
 }
@@ -112,6 +115,7 @@ install_allstar_helpers() {
     install -m 0755 "$source_root/deploy/allstar/dvhub-echolink-status" "$ECHOLINK_STATUS.new"
     install -m 0440 "$source_root/deploy/allstar/dvhub-allstar.sudoers" "$ALLSTAR_SUDOERS.new"
     install -m 0755 "$source_root/deploy/dvhub-service-control" "$SERVICE_CONTROL.new"
+    install -m 0755 "$source_root/deploy/dvhub-set-conference-credential" "$CONFERENCE_CREDENTIAL.new"
     install -m 0440 "$source_root/deploy/dvhub-gateway.sudoers" "$GATEWAY_SUDOERS.new"
     install -m 0755 "$source_root/deploy/reflectors/dvhub-refresh-reflector-ids" "$REFLECTOR_ID_REFRESH.new"
     install -m 0644 "$source_root/deploy/reflectors/dvreflector-ids.service" "$REFLECTOR_ID_UNIT.new"
@@ -123,6 +127,7 @@ install_allstar_helpers() {
     mv -f -- "$ECHOLINK_STATUS.new" "$ECHOLINK_STATUS"
     mv -f -- "$ALLSTAR_SUDOERS.new" "$ALLSTAR_SUDOERS"
     mv -f -- "$SERVICE_CONTROL.new" "$SERVICE_CONTROL"
+    mv -f -- "$CONFERENCE_CREDENTIAL.new" "$CONFERENCE_CREDENTIAL"
     mv -f -- "$GATEWAY_SUDOERS.new" "$GATEWAY_SUDOERS"
     mv -f -- "$REFLECTOR_ID_REFRESH.new" "$REFLECTOR_ID_REFRESH"
     mv -f -- "$REFLECTOR_ID_UNIT.new" "$REFLECTOR_ID_UNIT"
@@ -141,7 +146,7 @@ if [[ "$target_sha" == "$current_sha" ]]; then
     # The deployer updates itself last. A newly added runtime helper is therefore
     # synchronised on the next timer pass even though the application SHA is
     # already current; this avoids needing an attended second deployment.
-    git -C "$REPO_DIR" archive "$target_sha" deploy/allstar deploy/reflectors deploy/dvhub-service-control deploy/dvhub-gateway.sudoers | tar -x -C "$work_dir"
+    git -C "$REPO_DIR" archive "$target_sha" deploy/allstar deploy/reflectors deploy/dvhub-service-control deploy/dvhub-set-conference-credential deploy/dvhub-gateway.sudoers | tar -x -C "$work_dir"
     validate_allstar_helpers "$work_dir"
     install_allstar_helpers "$work_dir"
     systemctl daemon-reload
@@ -230,7 +235,7 @@ fi
 for path in \
     "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
     "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS" \
-    "$SERVICE_CONTROL" "$GATEWAY_SUDOERS" \
+    "$SERVICE_CONTROL" "$CONFERENCE_CREDENTIAL" "$GATEWAY_SUDOERS" \
     "$REFLECTOR_ID_REFRESH" "$REFLECTOR_ID_UNIT" "$REFLECTOR_ID_TIMER"; do
     name="$(basename "$path")"
     if [[ -e "$path" ]]; then
@@ -257,7 +262,7 @@ rollback() {
     for path in \
         "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
         "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS" \
-        "$SERVICE_CONTROL" "$GATEWAY_SUDOERS" \
+        "$SERVICE_CONTROL" "$CONFERENCE_CREDENTIAL" "$GATEWAY_SUDOERS" \
         "$REFLECTOR_ID_REFRESH" "$REFLECTOR_ID_UNIT" "$REFLECTOR_ID_TIMER"; do
         name="$(basename "$path")"
         if [[ -e "$rollback_dir/$name.missing" ]]; then

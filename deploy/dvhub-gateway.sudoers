@@ -6,3 +6,4 @@ dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl restart ysfreflector.service
 dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl start ysf2dmr.service
 dvhub ALL=(root) NOPASSWD: /usr/bin/systemctl stop ysf2dmr.service
 dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-service-control *
+dvhub ALL=(root) NOPASSWD: /usr/local/sbin/dvhub-set-conference-credential

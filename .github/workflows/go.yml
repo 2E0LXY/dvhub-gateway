@@ -31,7 +31,9 @@ jobs:
             deploy/m17/install-m17.sh \
             deploy/dvhub-service-control \
             deploy/xlxd/install-xlxd.sh
-          python3 -m py_compile deploy/allstar/dvhub-configure-echolink
+          python3 -m py_compile \
+            deploy/allstar/dvhub-configure-echolink \
+            deploy/dvhub-set-conference-credential
           python3 -m py_compile deploy/m17/configure-asl-m17.py
           sudo visudo -cf deploy/allstar/dvhub-allstar.sudoers
           sudo visudo -cf deploy/dvhub-gateway.sudoers
