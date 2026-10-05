@@ -59,8 +59,6 @@ const (
 	ysfDescription         = "YORKSHIRE HUB"
 	xlxDisplayName         = "XLXYOR"
 	xlxProtocolID          = "XLXYOR"
-	dmrFirmwareID          = "DVHub-2.0"
-	dmrHardwareID          = "DVHub"
 )
 
 const (
@@ -2710,7 +2708,7 @@ func (g *Gateway) sendDMRConfig(s *UserSession) {
 	s.mu.RUnlock()
 	config := fmt.Sprintf("%-8.8s%09d%09d%02d%02d%8.8s%9.9s%03d%-20.20s%-19.19s%c%-124.124s%-40.40s%-40.40s",
 		callsign, 435000000, 435000000, 1, 1, "53.80000", "-1.500000", 0,
-		"Yorkshire, UK", "Yorkshire Link HUB", '4', appConfig.PublicURL, dmrFirmwareID, dmrHardwareID)
+		"Yorkshire, UK", "Yorkshire Link HUB", '4', appConfig.PublicURL, "20260722", "MMDVM")
 	packet := append([]byte("RPTC"), writeUint32BE(repeaterID)...)
 	packet = append(packet, []byte(config)...)
 	_ = g.writeNetworkPacket(s, packet)
