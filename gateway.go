@@ -1013,7 +1013,9 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		}
 		return "good"
 	}
-	xlxdActive, dvxcodeActive := service("xlxd.service"), service("dvxbridge.service")
+	xlxdState, dvxcodeState := unitStates["xlxd.service"], unitStates["dvxbridge.service"]
+	xlxdActive, dvxcodeActive := systemdUnitActive(xlxdState), systemdUnitActive(dvxcodeState)
+	xlxdInstalled, dvxcodeInstalled := xlxdState.LoadState == "loaded", dvxcodeState.LoadState == "loaded"
 	dmrDetail := "TG23530 · FreeSTAR · BrandMeister · TGIF"
 	conferenceDetail := "Yorkshire conference"
 	if conference["brandmeister"] == "rejected" {
@@ -1028,6 +1030,12 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		dstarStatus, dstarDetail = "good", "XLXd module A · DVxCode shadow bridge"
 	} else if xlxdActive || dvxcodeActive {
 		dstarStatus, dstarDetail = "fault", "XLXd / DVxCode service mismatch"
+	} else if dvxcodeInstalled && !xlxdInstalled {
+		dstarDetail = "DVxCode staged · XLXd not installed"
+	} else if xlxdInstalled && !dvxcodeInstalled {
+		dstarDetail = "XLXd installed · DVxCode not installed"
+	} else if xlxdInstalled && dvxcodeInstalled {
+		dstarDetail = "XLXd and DVxCode installed · stopped"
 	}
 	serviceRows := []struct {
 		Label string
