@@ -43,7 +43,8 @@ git -C "$work_dir/xlxd" apply --unidiff-zero "$SCRIPT_DIR/xlxd-dstar-only.patch"
 make -C "$work_dir/xlxd/src" clean all -j"$(nproc)"
 
 install -m 0755 "$work_dir/xlxd/src/xlxd" /usr/local/bin/xlxd.new
-install -d -m 0750 /etc/dvhub /etc/xlxd
+install -d -m 0750 /etc/dvhub
+install -d -m 0755 /etc/xlxd
 install -m 0644 "$SCRIPT_DIR/xlxd.whitelist" /etc/xlxd/xlxd.whitelist
 install -m 0644 "$SCRIPT_DIR/xlxd.blacklist" /etc/xlxd/xlxd.blacklist
 install -m 0644 "$SCRIPT_DIR/xlxd.interlink" /etc/xlxd/xlxd.interlink
