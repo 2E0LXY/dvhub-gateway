@@ -57,6 +57,7 @@ const (
 	gatewayConfigPath      = "/etc/dvhub/gateway.json"
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
+	xlxDisplayName         = "XLXYOR"
 )
 
 const (
@@ -1030,17 +1031,17 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	if conference["operational"] == true && conference["ready"] != true {
 		conferenceStatus = "warning"
 	}
-	dstarStatus, dstarDetail := "fault", "XLXd and DVxCode are not installed"
+	dstarStatus, dstarDetail := "fault", xlxDisplayName+" · XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
-		dstarStatus, dstarDetail = "good", "XLXd module A · DVxCode shadow bridge"
+		dstarStatus, dstarDetail = "good", xlxDisplayName+" module A · DVxCode shadow bridge"
 	} else if xlxdActive || dvxcodeActive {
-		dstarStatus, dstarDetail = "fault", "XLXd / DVxCode service mismatch"
+		dstarStatus, dstarDetail = "fault", xlxDisplayName+" · XLXd / DVxCode service mismatch"
 	} else if dvxcodeInstalled && !xlxdInstalled {
-		dstarDetail = "DVxCode staged · XLXd not installed"
+		dstarDetail = xlxDisplayName + " · DVxCode staged · XLXd not installed"
 	} else if xlxdInstalled && !dvxcodeInstalled {
-		dstarDetail = "XLXd installed · DVxCode not installed"
+		dstarDetail = xlxDisplayName + " · XLXd installed · DVxCode not installed"
 	} else if xlxdInstalled && dvxcodeInstalled {
-		dstarDetail = "XLXd and DVxCode installed · stopped"
+		dstarDetail = xlxDisplayName + " · XLXd and DVxCode installed · stopped"
 	}
 	serviceRows := []struct {
 		Label string
@@ -1052,7 +1053,7 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 		{"NXDN reflector", "nxdnreflector.service"}, {"NXDN to DMR", "nxdn2dmr.service"},
 		{"P25 reflector", "p25reflector.service"}, {"P25 to DMR", "p252dmr.service"},
 		{"M17 reflector", "mrefd.service"}, {"M17 to AllStar", "usrp2m17.service"},
-		{"XLXd reflector", "xlxd.service"}, {"DVxCode bridge", "dvxbridge.service"},
+		{xlxDisplayName + " reflector", "xlxd.service"}, {"DVxCode bridge", "dvxbridge.service"},
 		{"Git deployment timer", "dvhub-deploy.timer"},
 	}
 	services := make([]map[string]any, 0, len(serviceRows))

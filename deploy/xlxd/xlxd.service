@@ -1,5 +1,5 @@
 [Unit]
-Description=Yorkshire Link D-STAR XLXd reflector
+Description=XLXYOR Yorkshire Link D-STAR reflector
 Documentation=https://github.com/LX3JL/xlxd
 Wants=network-online.target
 After=network-online.target

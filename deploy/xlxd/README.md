@@ -4,6 +4,10 @@ This directory builds a pinned, D-STAR-only XLXd reflector and prepares its
 connection to the separately versioned DVxCode bridge. It does not enable or
 start either service automatically.
 
+The human-facing reflector name is **XLXYOR**. Its on-air XLX protocol
+identifier remains a separately assigned `XLXnnn` value because hotspot host
+lists and XLX interlinks use the numeric designator.
+
 ## Audio path
 
 ```text

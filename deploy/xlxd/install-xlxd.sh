@@ -48,7 +48,7 @@ install -m 0644 "$SCRIPT_DIR/xlxd.whitelist" /etc/xlxd/xlxd.whitelist
 install -m 0644 "$SCRIPT_DIR/xlxd.blacklist" /etc/xlxd/xlxd.blacklist
 install -m 0644 "$SCRIPT_DIR/xlxd.interlink" /etc/xlxd/xlxd.interlink
 install -m 0644 "$SCRIPT_DIR/xlxd.terminal" /etc/xlxd/xlxd.terminal
-printf 'XLX_CALLSIGN=%s\nXLX_LISTEN_IP=%s\nXLX_TRANSCODER_IP=127.0.0.1\n' \
+printf 'XLX_DISPLAY_NAME=XLXYOR\nXLX_CALLSIGN=%s\nXLX_LISTEN_IP=%s\nXLX_TRANSCODER_IP=127.0.0.1\n' \
     "$callsign" "$listen_ip" > /etc/dvhub/xlxd.env.new
 chmod 0640 /etc/dvhub/xlxd.env.new
 chown root:dvhub /etc/dvhub/xlxd.env.new
