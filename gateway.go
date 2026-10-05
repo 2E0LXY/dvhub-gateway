@@ -1035,7 +1035,11 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	dstarIdentity := xlxDisplayName + " (" + xlxProtocolID + ")"
 	dstarStatus, dstarDetail := "fault", dstarIdentity+" · XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
-		dstarStatus, dstarDetail = "good", dstarIdentity+" module A · DVxCode shadow bridge"
+		if dvxBridgeHealthy() {
+			dstarStatus, dstarDetail = "good", dstarIdentity+" module A · DVxCode DExtra + HBP linked"
+		} else {
+			dstarStatus, dstarDetail = "fault", dstarIdentity+" · services running but a DVxCode link is down"
+		}
 	} else if xlxdActive || dvxcodeActive {
 		dstarStatus, dstarDetail = "fault", dstarIdentity+" · XLXd / DVxCode service mismatch"
 	} else if dvxcodeInstalled && !xlxdInstalled {
@@ -3839,6 +3843,16 @@ func (g *Gateway) handleYSFControl(w http.ResponseWriter, r *http.Request) {
 
 func serviceActive(name string) bool {
 	return exec.Command("/usr/bin/systemctl", "is-active", "--quiet", name).Run() == nil
+}
+
+func dvxBridgeHealthy() bool {
+	client := &http.Client{Timeout: 750 * time.Millisecond}
+	response, err := client.Get("http://127.0.0.1:9180/healthz")
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	return response.StatusCode == http.StatusOK
 }
 
 var modeServices = map[string]map[string]string{
