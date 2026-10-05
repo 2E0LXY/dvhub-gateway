@@ -8,6 +8,11 @@ The human-facing reflector name is **XLXYOR**. Its on-air XLX protocol
 identifier remains a separately assigned `XLXnnn` value because hotspot host
 lists and XLX interlinks use the numeric designator.
 
+The staged protocol identifier is **XLX471**. It was absent from the reflector
+lists exposed by three independent XLX directory mirrors when checked on
+2026-10-05. Recheck the live directory immediately before any public
+registration; a locally chosen identifier is not a reservation.
+
 ## Audio path
 
 ```text
@@ -54,7 +59,7 @@ pinned XLXd reflector:
 
 ```bash
 sudo deploy/xlxd/install-xlxd.sh \
-  --callsign XLXnnn \
+  --callsign XLX471 \
   --listen-ip YOUR_VPS_ADDRESS \
   --with-dvxcode
 ```

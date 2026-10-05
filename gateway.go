@@ -58,6 +58,7 @@ const (
 	ysfNetworkName         = "YORKSHIRELINK"
 	ysfDescription         = "YORKSHIRE HUB"
 	xlxDisplayName         = "XLXYOR"
+	xlxProtocolID          = "XLX471"
 )
 
 const (
@@ -1031,17 +1032,18 @@ func (g *Gateway) cachedPublicDashboardStatus() ([]map[string]any, map[string]an
 	if conference["operational"] == true && conference["ready"] != true {
 		conferenceStatus = "warning"
 	}
-	dstarStatus, dstarDetail := "fault", xlxDisplayName+" · XLXd and DVxCode are not installed"
+	dstarIdentity := xlxDisplayName + " (" + xlxProtocolID + ")"
+	dstarStatus, dstarDetail := "fault", dstarIdentity+" · XLXd and DVxCode are not installed"
 	if xlxdActive && dvxcodeActive {
-		dstarStatus, dstarDetail = "good", xlxDisplayName+" module A · DVxCode shadow bridge"
+		dstarStatus, dstarDetail = "good", dstarIdentity+" module A · DVxCode shadow bridge"
 	} else if xlxdActive || dvxcodeActive {
-		dstarStatus, dstarDetail = "fault", xlxDisplayName+" · XLXd / DVxCode service mismatch"
+		dstarStatus, dstarDetail = "fault", dstarIdentity+" · XLXd / DVxCode service mismatch"
 	} else if dvxcodeInstalled && !xlxdInstalled {
-		dstarDetail = xlxDisplayName + " · DVxCode staged · XLXd not installed"
+		dstarDetail = dstarIdentity + " · DVxCode staged · XLXd not installed"
 	} else if xlxdInstalled && !dvxcodeInstalled {
-		dstarDetail = xlxDisplayName + " · XLXd installed · DVxCode not installed"
+		dstarDetail = dstarIdentity + " · XLXd installed · DVxCode not installed"
 	} else if xlxdInstalled && dvxcodeInstalled {
-		dstarDetail = xlxDisplayName + " · XLXd and DVxCode installed · stopped"
+		dstarDetail = dstarIdentity + " · XLXd and DVxCode installed · stopped"
 	}
 	serviceRows := []struct {
 		Label string
