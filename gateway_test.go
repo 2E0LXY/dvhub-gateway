@@ -746,3 +746,13 @@ func TestParseSystemdUnitStates(t *testing.T) {
 		t.Fatalf("missing service parsed incorrectly: %+v", states["missing.service"])
 	}
 }
+
+func TestParseQRZResponse(t *testing.T) {
+	response, err := parseQRZResponse([]byte(`<?xml version="1.0"?><QRZDatabase><Callsign><call>2E0LXY</call><fname>Daz</fname><name>Loade</name><nickname>Radio</nickname><addr2>Wakefield</addr2><country>United Kingdom</country><grid>IO93</grid><image>https://files.qrz.com/q/2e0lxy/2e0lxy.jpg</image><url>https://www.qrz.com/db/2E0LXY</url></Callsign><Session><Key>session-key</Key></Session></QRZDatabase>`))
+	if err != nil {
+		t.Fatalf("QRZ XML parse failed: %v", err)
+	}
+	if response.Session.Key != "session-key" || response.Callsign.Call != "2E0LXY" || response.Callsign.Image == "" {
+		t.Fatalf("unexpected QRZ response: %+v", response)
+	}
+}

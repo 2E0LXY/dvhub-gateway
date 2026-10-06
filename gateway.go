@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"html/template"
 	"io"
@@ -52,6 +53,7 @@ const (
 	yorkshirePausedPath    = "/var/lib/dvgateway/yorkshire-conference.paused"
 	localMasterSecretPath  = "/etc/dvhub/local-master.secret"
 	vocoderTargetsPath     = "/etc/dvhub/vocoder-targets.txt"
+	qrzSecretPath          = "/etc/dvhub/qrz.secret.json"
 	allStarSecretStagePath = "/var/lib/dvgateway/allstar-node.secret"
 	echoLinkStagePath      = "/var/lib/dvgateway/echolink.secret.json"
 	gatewayConfigPath      = "/etc/dvhub/gateway.json"
@@ -274,6 +276,7 @@ type Gateway struct {
 	trafficMu           sync.Mutex
 	trafficLast         map[string]time.Time
 	trafficHistory      []trafficHistoryEntry
+	qrz                 qrzLookupClient
 }
 
 type trafficHistoryEntry struct {
@@ -286,6 +289,65 @@ type GatewayConfig struct {
 	PublicHost       string `json:"public_host"`
 	OperatorCallsign string `json:"operator_callsign"`
 	Contact          string `json:"contact"`
+}
+
+type qrzCredentials struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type qrzXMLSession struct {
+	Key     string `xml:"Key"`
+	Error   string `xml:"Error"`
+	Message string `xml:"Message"`
+}
+
+type qrzXMLCallsign struct {
+	Call     string `xml:"call"`
+	FName    string `xml:"fname"`
+	Name     string `xml:"name"`
+	Nickname string `xml:"nickname"`
+	NameFmt  string `xml:"name_fmt"`
+	Addr2    string `xml:"addr2"`
+	State    string `xml:"state"`
+	Country  string `xml:"country"`
+	Grid     string `xml:"grid"`
+	Lat      string `xml:"lat"`
+	Lon      string `xml:"lon"`
+	Image    string `xml:"image"`
+	URL      string `xml:"url"`
+}
+
+type qrzXMLDatabase struct {
+	Session  qrzXMLSession  `xml:"Session"`
+	Callsign qrzXMLCallsign `xml:"Callsign"`
+}
+
+type qrzProfile struct {
+	Callsign string `json:"callsign"`
+	Name     string `json:"name,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	Location string `json:"location,omitempty"`
+	State    string `json:"state,omitempty"`
+	Country  string `json:"country,omitempty"`
+	Grid     string `json:"grid,omitempty"`
+	Lat      string `json:"lat,omitempty"`
+	Lon      string `json:"lon,omitempty"`
+	Image    string `json:"image,omitempty"`
+	URL      string `json:"url,omitempty"`
+	LookedUp string `json:"looked_up_at"`
+}
+
+type qrzCachedProfile struct {
+	profile qrzProfile
+	until   time.Time
+}
+
+type qrzLookupClient struct {
+	mu          sync.Mutex
+	credentials qrzCredentials
+	key         string
+	cache       map[string]qrzCachedProfile
 }
 
 type networkCounterSample struct {
@@ -389,6 +451,7 @@ func main() {
 		rejectedDMR:   make(map[uint32]time.Time),
 		masterClients: make(map[uint32]*DMRMasterClient),
 		wsTickets:     make(map[string]wsTicket),
+		qrz:           newQRZLookupClient(),
 	}
 	go gw.updateRegistriesDaily()
 	go gw.updateYSFRegistryHourly()
@@ -437,6 +500,7 @@ func main() {
 	http.HandleFunc("/api/local_master", gw.handleLocalMasterStatus)
 	http.HandleFunc("/api/allstar_config", gw.handleAllStarConfig)
 	http.HandleFunc("/api/echolink_config", gw.handleEchoLinkConfig)
+	http.HandleFunc("/api/qrz/callsign", gw.handleQRZCallsign)
 	http.HandleFunc("/talkgroups.js", gw.handleTalkgroupScript)
 	http.Handle("/", gw.dashboardStaticHandler(http.FileServer(http.Dir("/var/www/dvhub"))))
 
@@ -509,6 +573,183 @@ func loadGatewayConfig() GatewayConfig {
 	config.OperatorCallsign = strings.ToUpper(strings.TrimSpace(config.OperatorCallsign))
 	config.Contact = strings.TrimSpace(config.Contact)
 	return config
+}
+
+func loadQRZCredentials() qrzCredentials {
+	credentials := qrzCredentials{
+		Username: strings.TrimSpace(os.Getenv("QRZ_USERNAME")),
+		Password: os.Getenv("QRZ_PASSWORD"),
+	}
+	if data, err := os.ReadFile(qrzSecretPath); err == nil {
+		var fileCredentials qrzCredentials
+		if json.Unmarshal(data, &fileCredentials) == nil {
+			if strings.TrimSpace(fileCredentials.Username) != "" {
+				credentials.Username = strings.TrimSpace(fileCredentials.Username)
+			}
+			if fileCredentials.Password != "" {
+				credentials.Password = fileCredentials.Password
+			}
+		}
+	}
+	return credentials
+}
+
+func newQRZLookupClient() qrzLookupClient {
+	return qrzLookupClient{credentials: loadQRZCredentials(), cache: make(map[string]qrzCachedProfile)}
+}
+
+func parseQRZResponse(data []byte) (qrzXMLDatabase, error) {
+	var response qrzXMLDatabase
+	if err := xml.Unmarshal(data, &response); err != nil {
+		return response, err
+	}
+	return response, nil
+}
+
+func (c *qrzLookupClient) loginLocked(client *http.Client) error {
+	if c.credentials.Username == "" || c.credentials.Password == "" {
+		return fmt.Errorf("QRZ credentials are not configured")
+	}
+	values := url.Values{}
+	values.Set("username", c.credentials.Username)
+	values.Set("password", c.credentials.Password)
+	values.Set("agent", "DVHub-Gateway/2.0")
+	request, err := http.NewRequest(http.MethodGet, "https://xmldata.qrz.com/xml/current/?"+values.Encode(), nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("User-Agent", "DVHub-Gateway/2.0")
+	response, err := client.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("QRZ login returned HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	parsed, err := parseQRZResponse(data)
+	if err != nil {
+		return err
+	}
+	if parsed.Session.Key == "" {
+		if parsed.Session.Error != "" {
+			return fmt.Errorf("QRZ login failed: %s", parsed.Session.Error)
+		}
+		return fmt.Errorf("QRZ login returned no session key")
+	}
+	c.key = parsed.Session.Key
+	return nil
+}
+
+func (c *qrzLookupClient) queryLocked(client *http.Client, callsign string) (qrzProfile, bool, error) {
+	values := url.Values{}
+	values.Set("s", c.key)
+	values.Set("callsign", callsign)
+	request, err := http.NewRequest(http.MethodGet, "https://xmldata.qrz.com/xml/current/?"+values.Encode(), nil)
+	if err != nil {
+		return qrzProfile{}, false, err
+	}
+	request.Header.Set("User-Agent", "DVHub-Gateway/2.0")
+	response, err := client.Do(request)
+	if err != nil {
+		return qrzProfile{}, false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return qrzProfile{}, false, fmt.Errorf("QRZ lookup returned HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return qrzProfile{}, false, err
+	}
+	parsed, err := parseQRZResponse(data)
+	if err != nil {
+		return qrzProfile{}, false, err
+	}
+	if parsed.Session.Key == "" {
+		c.key = ""
+		if parsed.Session.Error == "" {
+			return qrzProfile{}, true, fmt.Errorf("QRZ session expired")
+		}
+		return qrzProfile{}, true, fmt.Errorf("QRZ session error: %s", parsed.Session.Error)
+	}
+	if parsed.Callsign.Call == "" {
+		if parsed.Session.Error != "" {
+			return qrzProfile{}, false, fmt.Errorf("QRZ lookup failed: %s", parsed.Session.Error)
+		}
+		return qrzProfile{}, false, fmt.Errorf("callsign not found in QRZ")
+	}
+	name := strings.TrimSpace(parsed.Callsign.NameFmt)
+	if name == "" {
+		name = strings.TrimSpace(strings.TrimSpace(parsed.Callsign.FName) + " " + strings.TrimSpace(parsed.Callsign.Name))
+	}
+	locationParts := make([]string, 0, 2)
+	if strings.TrimSpace(parsed.Callsign.Addr2) != "" {
+		locationParts = append(locationParts, strings.TrimSpace(parsed.Callsign.Addr2))
+	}
+	if strings.TrimSpace(parsed.Callsign.State) != "" {
+		locationParts = append(locationParts, strings.TrimSpace(parsed.Callsign.State))
+	}
+	profile := qrzProfile{
+		Callsign: strings.ToUpper(strings.TrimSpace(parsed.Callsign.Call)),
+		Name:     name, Nickname: strings.TrimSpace(parsed.Callsign.Nickname),
+		Location: strings.Join(locationParts, ", "), State: strings.TrimSpace(parsed.Callsign.State),
+		Country: strings.TrimSpace(parsed.Callsign.Country), Grid: strings.TrimSpace(parsed.Callsign.Grid),
+		Lat: strings.TrimSpace(parsed.Callsign.Lat), Lon: strings.TrimSpace(parsed.Callsign.Lon),
+		Image: safeQRZURL(parsed.Callsign.Image), URL: safeQRZURL(parsed.Callsign.URL),
+		LookedUp: time.Now().UTC().Format(time.RFC3339),
+	}
+	return profile, false, nil
+}
+
+func safeQRZURL(value string) string {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" {
+		return ""
+	}
+	return parsed.String()
+}
+
+func normalizeQRZCallsign(value string) string {
+	callsign := strings.ToUpper(strings.TrimSpace(value))
+	if strings.HasSuffix(callsign, "-L") || strings.HasSuffix(callsign, "-R") {
+		callsign = callsign[:len(callsign)-2]
+	}
+	return callsign
+}
+
+func (c *qrzLookupClient) lookup(callsign string) (qrzProfile, error) {
+	callsign = normalizeQRZCallsign(callsign)
+	if !validCallsign.MatchString(callsign) {
+		return qrzProfile{}, fmt.Errorf("invalid callsign")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cached, ok := c.cache[callsign]; ok && time.Now().Before(cached.until) {
+		return cached.profile, nil
+	}
+	client := &http.Client{Timeout: 8 * time.Second}
+	if c.key == "" {
+		if err := c.loginLocked(client); err != nil {
+			return qrzProfile{}, err
+		}
+	}
+	profile, retry, err := c.queryLocked(client, callsign)
+	if retry {
+		if loginErr := c.loginLocked(client); loginErr != nil {
+			return qrzProfile{}, loginErr
+		}
+		profile, _, err = c.queryLocked(client, callsign)
+	}
+	if err != nil {
+		return qrzProfile{}, err
+	}
+	c.cache[callsign] = qrzCachedProfile{profile: profile, until: time.Now().Add(10 * time.Minute)}
+	return profile, nil
 }
 
 func readCPUTimes() (idle, total uint64, err error) {
@@ -4855,6 +5096,47 @@ func (g *Gateway) handleDMRLookup(w http.ResponseWriter, r *http.Request) {
 		"count":    len(upstream.Results),
 		"results":  upstream.Results,
 	})
+}
+
+func (g *Gateway) trafficCallsignKnown(callsign string) bool {
+	callsign = normalizeQRZCallsign(callsign)
+	g.trafficMu.Lock()
+	defer g.trafficMu.Unlock()
+	for _, entry := range g.trafficHistory {
+		value, _ := entry.data["callsign"].(string)
+		if normalizeQRZCallsign(value) == callsign {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) handleQRZCallsign(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=600")
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	callsign := normalizeQRZCallsign(r.URL.Query().Get("callsign"))
+	if !validCallsign.MatchString(callsign) {
+		http.Error(w, `{"error":"Enter a valid callsign"}`, http.StatusBadRequest)
+		return
+	}
+	if !g.trafficCallsignKnown(callsign) {
+		http.Error(w, `{"error":"Callsign is not in recent live activity"}`, http.StatusNotFound)
+		return
+	}
+	profile, err := g.qrz.lookup(callsign)
+	if err != nil {
+		status := http.StatusBadGateway
+		if strings.Contains(strings.ToLower(err.Error()), "not configured") {
+			status = http.StatusServiceUnavailable
+		}
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(profile)
 }
 
 func (g *Gateway) loadLocalDBAsync() {
