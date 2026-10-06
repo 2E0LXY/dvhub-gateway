@@ -1,12 +1,8 @@
-warning: in the working copy of 'P252DMR/MBEVocoder.cpp', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'P252DMR/MBEVocoder.h', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'P252DMR/Makefile', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'P252DMR/ModeConv.cpp', LF will be replaced by CRLF the next time Git touches it
 diff --git a/P252DMR/MBEVocoder.cpp b/P252DMR/MBEVocoder.cpp
-index 3e2513c..d8091e5 100644
+index 3e2513c..7e0ef1e 100644
 --- a/P252DMR/MBEVocoder.cpp
 +++ b/P252DMR/MBEVocoder.cpp
-@@ -18,17 +18,96 @@
+@@ -18,17 +18,142 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
  #include <cstring>
@@ -98,15 +94,61 @@ index 3e2513c..d8091e5 100644
 +		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
 +		if (length < 0)
 +			return false;
++		if (length >= 2 && response[0U] == 0x7FU && response[1U] == channel)
++			return false;
 +		if ((unsigned int)length >= outputLength + 2U && response[0U] == replyOpcode && response[1U] == channel) {
 +			::memcpy(output, response + 2U, outputLength);
 +			return true;
 +		}
 +	}
++}
++
++void MBEVocoder::decode_dmr_burst(const uint8_t *ambe1, const uint8_t *ambe2, const uint8_t *ambe3,
++	int16_t *pcm1, int16_t *pcm2, int16_t *pcm3)
++{
++	::memset(pcm1, 0, 320U);
++	::memset(pcm2, 0, 320U);
++	::memset(pcm3, 0, 320U);
++	if (m_socket < 0)
++		return;
++
++	const uint8_t* inputs[3U] = {ambe1, ambe2, ambe3};
++	int16_t* outputs[3U] = {pcm1, pcm2, pcm3};
++	uint8_t channels[3U];
++	bool complete[3U] = {false, false, false};
++	for (unsigned int i = 0U; i < 3U; i++) {
++		channels[i] = ++m_channel;
++		uint8_t request[11U];
++		request[0U] = 0x63U;
++		request[1U] = channels[i];
++		::memcpy(request + 2U, inputs[i], 9U);
++		if (::send(m_socket, request, sizeof(request), 0) != (ssize_t)sizeof(request))
++			return;
++	}
++
++	unsigned int completed = 0U;
++	uint8_t response[512U];
++	while (completed < 3U) {
++		ssize_t length = ::recv(m_socket, response, sizeof(response), 0);
++		if (length < 0)
++			return;
++		for (unsigned int i = 0U; i < 3U; i++) {
++			if (complete[i] || length < 2 || response[1U] != channels[i])
++				continue;
++			if (response[0U] == 0x7FU) {
++				complete[i] = true;
++				completed++;
++			} else if (length >= 322 && response[0U] == 0x64U) {
++				::memcpy(reinterpret_cast<uint8_t*>(outputs[i]), response + 2U, 320U);
++				complete[i] = true;
++				completed++;
++			}
++		}
++	}
  }
  
  void MBEVocoder::decode_4400(int16_t *pcm, uint8_t *imbe)
-@@ -116,10 +195,12 @@ void MBEVocoder::encode_4400(int16_t *pcm, uint8_t *imbe)
+@@ -116,10 +241,12 @@ void MBEVocoder::encode_4400(int16_t *pcm, uint8_t *imbe)
  
  void MBEVocoder::decode_2450(int16_t *pcm, uint8_t *ambe49)
  {
@@ -122,11 +164,14 @@ index 3e2513c..d8091e5 100644
 +		::memcpy(ambe49, DV30_AMBE_SILENCE, 9U);
  }
 diff --git a/P252DMR/MBEVocoder.h b/P252DMR/MBEVocoder.h
-index 1201995..066d4cc 100644
+index 1201995..23c73de 100644
 --- a/P252DMR/MBEVocoder.h
 +++ b/P252DMR/MBEVocoder.h
-@@ -31,9 +31,14 @@ public:
+@@ -29,11 +29,17 @@ public:
+ 	void decode_4400(int16_t *, uint8_t *);
+ 	void encode_4400(int16_t *, uint8_t *);
  	void decode_2450(int16_t *, uint8_t *);
++	void decode_dmr_burst(const uint8_t *, const uint8_t *, const uint8_t *, int16_t *, int16_t *, int16_t *);
  	void encode_2450(int16_t *, uint8_t *);
  	MBEVocoder(void);
 +	~MBEVocoder(void);
@@ -163,10 +208,10 @@ index 814a258..5dee1b1 100644
  %.o: %.cpp
  		$(CXX) $(CFLAGS) -c -o $@ $<
 diff --git a/P252DMR/ModeConv.cpp b/P252DMR/ModeConv.cpp
-index 50becba..cfda10f 100644
+index 50becba..1ef2444 100644
 --- a/P252DMR/ModeConv.cpp
 +++ b/P252DMR/ModeConv.cpp
-@@ -466,6 +466,7 @@ m_DMR(5000U, "P252DMR")
+@@ -466,30 +466,22 @@ m_DMR(5000U, "P252DMR")
  
  CModeConv::~CModeConv()
  {
@@ -174,46 +219,65 @@ index 50becba..cfda10f 100644
  }
  
  void CModeConv::putDMR(unsigned char* data)
-@@ -473,17 +474,14 @@ void CModeConv::putDMR(unsigned char* data)
+ {
  	assert(data != NULL);
  	
- 	int16_t audio[160U];
+-	int16_t audio[160U];
 -	uint8_t ambe[9U];
++	int16_t audio[3U][160U];
++	int16_t audio_adjusted[160U];
  	uint8_t v_ambe[9U];
  	uint8_t imbe[11U];
  	
- 	::memset(audio, 0, sizeof(audio));
+-	::memset(audio, 0, sizeof(audio));
 -	::memset(ambe, 0, sizeof(ambe));
  	::memset(v_ambe, 0, sizeof(v_ambe));
  	::memset(imbe, 0, sizeof(imbe));
  	
 -	decode(data, ambe, 0U);
 -	m_mbe->decode_2450(audio, ambe);
-+	m_mbe->decode_2450(audio, data);
- 	m_mbe->encode_4400(audio, imbe);
- 	m_P25.addData(&TAG_DATA, 1U);
- 	m_P25.addData(imbe, 11U);
-@@ -500,8 +498,7 @@ void CModeConv::putDMR(unsigned char* data)
+-	m_mbe->encode_4400(audio, imbe);
+-	m_P25.addData(&TAG_DATA, 1U);
+-	m_P25.addData(imbe, 11U);
+-	//CUtils::dump(1U, "NXDN Voice:", data, 9U);
+-	m_p25N += 1U;
+-	
++	const uint8_t* first = data;
+ 	data += 9U;
+ 	for (unsigned int i = 0U; i < 4U; i++)
+ 		v_ambe[i] = data[i];
+@@ -500,22 +492,14 @@ void CModeConv::putDMR(unsigned char* data)
  	for (unsigned int i = 0U; i < 4U; i++)
  		v_ambe[i + 5U] = data[i + 11U];
  
 -	decode(v_ambe, ambe, 0U);
 -	m_mbe->decode_2450(audio, ambe);
-+	m_mbe->decode_2450(audio, v_ambe);
- 	m_mbe->encode_4400(audio, imbe);
- 	m_P25.addData(&TAG_DATA, 1U);
- 	m_P25.addData(imbe, 11U);
-@@ -509,8 +506,7 @@ void CModeConv::putDMR(unsigned char* data)
- 	m_p25N += 1U;
- 	
- 	data += 15U;;
+-	m_mbe->encode_4400(audio, imbe);
+-	m_P25.addData(&TAG_DATA, 1U);
+-	m_P25.addData(imbe, 11U);
+-	//CUtils::dump(1U, "NXDN Voice:", v_ambe, 9U);
+-	m_p25N += 1U;
+-	
+-	data += 15U;;
 -	decode(data, ambe, 0U);
 -	m_mbe->decode_2450(audio, ambe);
-+	m_mbe->decode_2450(audio, data);
- 	m_mbe->encode_4400(audio, imbe);
- 	m_P25.addData(&TAG_DATA, 1U);
- 	m_P25.addData(imbe, 11U);
-@@ -523,11 +519,9 @@ void CModeConv::putP25(unsigned char* data)
+-	m_mbe->encode_4400(audio, imbe);
+-	m_P25.addData(&TAG_DATA, 1U);
+-	m_P25.addData(imbe, 11U);
+-	//CUtils::dump(1U, "NXDN Voice:", data, 9U);
+-	m_p25N += 1U;
++	const uint8_t* third = data + 15U;
++	m_mbe->decode_dmr_burst(first, v_ambe, third, audio[0U], audio[1U], audio[2U]);
++	for (unsigned int frame = 0U; frame < 3U; frame++) {
++		m_mbe->encode_4400(audio[frame], imbe);
++		m_P25.addData(&TAG_DATA, 1U);
++		m_P25.addData(imbe, 11U);
++		m_p25N += 1U;
++	}
+ }
+ 
+ void CModeConv::putP25(unsigned char* data)
+@@ -523,11 +507,9 @@ void CModeConv::putP25(unsigned char* data)
  	assert(data != NULL);
  
  	int16_t audio[160U];
@@ -225,7 +289,7 @@ index 50becba..cfda10f 100644
  	switch (data[0U]) {
  	case 0x62U:
  		::memcpy(imbe, data + 10U, 11U);
-@@ -588,9 +582,7 @@ void CModeConv::putP25(unsigned char* data)
+@@ -588,9 +570,7 @@ void CModeConv::putP25(unsigned char* data)
  	}
  	
  	m_mbe->decode_4400(audio, imbe);
