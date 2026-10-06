@@ -273,6 +273,12 @@ type Gateway struct {
 	wsTickets           map[string]wsTicket
 	trafficMu           sync.Mutex
 	trafficLast         map[string]time.Time
+	trafficHistory      []trafficHistoryEntry
+}
+
+type trafficHistoryEntry struct {
+	key  string
+	data map[string]any
 }
 
 type GatewayConfig struct {
@@ -1120,6 +1126,7 @@ func (g *Gateway) handlePublicDashboard(w http.ResponseWriter, r *http.Request) 
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
 		"routes":       routes,
 		"conference":   conference,
+		"activity":     g.trafficHistorySnapshot(),
 		"capabilities": map[string]any{"web_comms": false, "web_comms_transport": "not_installed"},
 		"quality": map[string]any{
 			"monitoring":   map[string]any{"mode": "passive", "adds_media_load": false},
@@ -3398,34 +3405,67 @@ func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint3
 		target = fmt.Sprintf("%s %d", strings.ToUpper(meta.CallType), meta.DestinationID)
 	}
 
-	msg, _ := json.Marshal(map[string]any{
-		"type": "traffic",
-		"data": map[string]any{
-			"time":           time.Now().UTC().Format("15:04:05"),
-			"node":           nodeID,
-			"mode":           mode,
-			"raw_id":         sourceID,
-			"callsign":       callsign,
-			"name":           info.Name,
-			"city":           info.City,
-			"state":          info.State,
-			"country":        info.Country,
-			"location":       strings.Join(locationParts, ", "),
-			"network":        network,
-			"target":         target,
-			"slot":           meta.Slot,
-			"call_type":      meta.CallType,
-			"frame_type":     meta.FrameType,
-			"stream_id":      meta.StreamID,
-			"sequence":       meta.Sequence,
-			"repeater_id":    meta.RepeaterID,
-			"ber":            meta.BER,
-			"ber_available":  meta.BERAvailable,
-			"rssi":           meta.RSSI,
-			"rssi_available": meta.RSSIAvailable,
-		},
-	})
+	timestamp := time.Now().UTC()
+	data := map[string]any{
+		"date":           timestamp.Format("2006-01-02"),
+		"timestamp":      timestamp.Format(time.RFC3339),
+		"time":           timestamp.Format("15:04:05"),
+		"node":           nodeID,
+		"mode":           mode,
+		"raw_id":         sourceID,
+		"id":             sourceID,
+		"callsign":       callsign,
+		"arrival":        network,
+		"name":           info.Name,
+		"city":           info.City,
+		"state":          info.State,
+		"country":        info.Country,
+		"location":       strings.Join(locationParts, ", "),
+		"network":        network,
+		"target":         target,
+		"slot":           meta.Slot,
+		"call_type":      meta.CallType,
+		"frame_type":     meta.FrameType,
+		"stream_id":      meta.StreamID,
+		"sequence":       meta.Sequence,
+		"repeater_id":    meta.RepeaterID,
+		"ber":            meta.BER,
+		"ber_available":  meta.BERAvailable,
+		"rssi":           meta.RSSI,
+		"rssi_available": meta.RSSIAvailable,
+	}
+	g.recordTrafficHistory(trafficKey, data)
+	msg, _ := json.Marshal(map[string]any{"type": "traffic", "data": data})
 	g.broadcastText(msg)
+}
+
+func (g *Gateway) recordTrafficHistory(key string, data map[string]any) {
+	g.trafficMu.Lock()
+	defer g.trafficMu.Unlock()
+	for index := range g.trafficHistory {
+		if g.trafficHistory[index].key == key {
+			g.trafficHistory[index].data = data
+			return
+		}
+	}
+	g.trafficHistory = append([]trafficHistoryEntry{{key: key, data: data}}, g.trafficHistory...)
+	if len(g.trafficHistory) > 20 {
+		g.trafficHistory = g.trafficHistory[:20]
+	}
+}
+
+func (g *Gateway) trafficHistorySnapshot() []map[string]any {
+	g.trafficMu.Lock()
+	defer g.trafficMu.Unlock()
+	result := make([]map[string]any, 0, len(g.trafficHistory))
+	for _, entry := range g.trafficHistory {
+		copyOfData := make(map[string]any, len(entry.data))
+		for key, value := range entry.data {
+			copyOfData[key] = value
+		}
+		result = append(result, copyOfData)
+	}
+	return result
 }
 
 func (g *Gateway) allowTrafficBroadcast(key string, now time.Time) bool {

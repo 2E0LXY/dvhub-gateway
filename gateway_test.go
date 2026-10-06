@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -638,6 +639,22 @@ func TestVocoderTargetConcurrencyIsBounded(t *testing.T) {
 	}
 	for _, release := range releases {
 		release()
+	}
+}
+
+func TestTrafficHistoryKeepsTwentyDistinctCalls(t *testing.T) {
+	gateway := &Gateway{}
+	for i := 0; i < 21; i++ {
+		gateway.recordTrafficHistory(fmt.Sprintf("call-%d", i), map[string]any{"id": i})
+	}
+	rows := gateway.trafficHistorySnapshot()
+	if len(rows) != 20 || rows[0]["id"] != 20 || rows[19]["id"] != 1 {
+		t.Fatalf("unexpected bounded traffic history: %#v", rows)
+	}
+	gateway.recordTrafficHistory("call-10", map[string]any{"id": 99})
+	rows = gateway.trafficHistorySnapshot()
+	if len(rows) != 20 || rows[10]["id"] != 99 {
+		t.Fatalf("same stream was not updated in place: %#v", rows)
 	}
 }
 
