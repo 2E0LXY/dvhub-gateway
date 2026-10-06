@@ -225,7 +225,6 @@ index 50becba..1ef2444 100644
 -	int16_t audio[160U];
 -	uint8_t ambe[9U];
 +	int16_t audio[3U][160U];
-+	int16_t audio_adjusted[160U];
  	uint8_t v_ambe[9U];
  	uint8_t imbe[11U];
  	
