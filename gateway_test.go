@@ -277,8 +277,32 @@ func TestPassiveNetworkQualityReportsDeltaWithoutGeneratingTraffic(t *testing.T)
 	if snapshot["received_packets"] != uint64(999) || snapshot["dropped_packets"] != uint64(1) {
 		t.Fatalf("unexpected passive network delta: %#v", snapshot)
 	}
-	if snapshot["level"] != "warning" {
-		t.Fatalf("network quality level = %v, want warning", snapshot["level"])
+	if snapshot["level"] != "good" {
+		t.Fatalf("network quality level = %v, want good", snapshot["level"])
+	}
+}
+
+func TestQualityLevelUsesVoiceRelevantThresholds(t *testing.T) {
+	tests := []struct {
+		name      string
+		loss      float64
+		errors    uint64
+		available bool
+		want      string
+	}{
+		{"idle without sample", 0, 0, false, "idle"},
+		{"small transient stays good", 0.28, 0, true, "good"},
+		{"half percent warns", 0.5, 0, true, "warning"},
+		{"single interface error warns", 0.14, 1, true, "warning"},
+		{"two percent faults", 2, 0, true, "fault"},
+		{"repeated interface errors fault", 0.14, 5, true, "fault"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := qualityLevel(test.loss, test.errors, test.available); got != test.want {
+				t.Fatalf("qualityLevel(%v, %d, %v) = %q, want %q", test.loss, test.errors, test.available, got, test.want)
+			}
+		})
 	}
 }
 

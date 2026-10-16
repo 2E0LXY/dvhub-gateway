@@ -906,10 +906,13 @@ func qualityLevel(lossPercent float64, errors uint64, available bool) string {
 	if !available {
 		return "idle"
 	}
-	if errors > 0 || lossPercent >= 1 {
+	// Five-second passive samples are deliberately tolerant of isolated drops.
+	// A single lost packet or interface error should not turn the public status
+	// red; reserve fault for sustained, voice-affecting degradation.
+	if errors >= 5 || lossPercent >= 2 {
 		return "fault"
 	}
-	if lossPercent >= 0.1 {
+	if errors > 0 || lossPercent >= 0.5 {
 		return "warning"
 	}
 	return "good"
