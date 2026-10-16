@@ -1,40 +1,39 @@
-# Live routing connector design QA
+# Routing Tree Design QA
 
-- Source visual truth: `C:\Users\2e0lx\AppData\Local\Temp\codex-clipboard-714ea934-73af-4a94-9eda-b33117674c78.png`
-- Source pixels: 1024 × 512; desktop crop of the routing panel at 1× density.
-- Implementation: `http://127.0.0.1:4173/dashboard.html`
-- Implementation screenshot: Codex in-app browser tab 8 captures recorded inline in the task; the browser runtime did not expose a filesystem path.
-- Implementation viewport: 1280 × 720 CSS px at 1× density.
-- States checked: NXDN active input and idle/no-transmission.
+## Target
 
-## Full-view comparison evidence
+- Source reference: `C:\Users\2e0lx\AppData\Local\Temp\codex-clipboard-8ee6b2dc-6a4c-440f-bf02-4e5c96fd7501.png`
+- Source dimensions: 1536 × 1045
+- Target flow: public dashboard loads → receive source is shown above the route tree → directional paths terminate at every mode → live traffic changes the source and route states without shifting the layout.
 
-The implementation preserves the reference composition: centred source card, one-to-many curved connectors, and a three-column route-card grid. The requested change is intentionally visible: connectors render above the route-card layer with transparent base paths. In the active state, NXDN is identified with amber styling and an inward-moving amber path; the eight healthy destinations use outward-moving green paths. The idle state contains nine faint connector paths and no animated overlays.
+## Implementation evidence
 
-## Focused region comparison evidence
+- Page: `dashboard.html`
+- Desktop preview: `http://192.168.1.201:4173/`, captured in the Codex in-app browser at its default desktop viewport.
+- Mobile preview: same page captured in the Codex in-app browser at 390 × 844.
+- Screenshot artifacts were emitted directly by the in-app browser during this task; the browser backend does not expose a filesystem path for these captures.
 
-The routing panel was inspected at readable scale because connector/card intersections and route labels are the fidelity-critical region. Lines terminate at card edges, do not cover route text, and the SVG overlay has `pointer-events: none`. The source card remains above the connector layer. Computed animation offsets moved in opposite directions during a 240 ms observation: outgoing paths became more negative while the NXDN incoming path became more positive.
+## Pass 1 — desktop fidelity
 
-## Required fidelity surfaces
+- The active source is centred above the destinations with an amber receive state.
+- Nine live destinations are presented in one compact row on a wide viewport.
+- Green, red, amber and slate states are distinguishable through borders, pills, labels and route paths.
+- Curved paths terminate at the correct destination cards and preserve the existing live direction animation.
+- Loss and latency are shown where measured; other cards explicitly identify monitored, unavailable or inactive telemetry.
+- The routing panel remains visually dominant while the activity table and system-health rail retain their existing hierarchy.
 
-- Fonts and typography: existing dashboard families, weights, sizes and hierarchy are preserved.
-- Spacing and layout: source-card and three-column card geometry match the supplied reference; no visible overlap or clipping at 1280 × 720.
-- Colours and tokens: existing green/amber semantic tokens are reused; idle path opacity is 0.22.
-- Image quality and assets: no raster assets are required for this data-driven connector visualization; existing vector paths remain crisp at browser scale.
-- Copy and content: the legend now explains inbound amber, outbound green and idle transparent routes.
+## Pass 2 — responsive and runtime QA
 
-## Findings
+- At 390 × 844, the header wraps without clipping, status and Admin remain accessible, and destination cards form a readable two-column tree.
+- No horizontal page overflow was visible.
+- The live telemetry refresh updated the source and card states without layout instability.
+- Browser diagnostics reported no console errors or warnings.
+- `node --check`, `git diff --check`, and `go test ./...` passed.
 
-No actionable P0, P1 or P2 visual mismatches remain. The wider implementation viewport includes the dashboard health rail outside the narrower source crop; this is existing responsive product layout rather than design drift in the routing panel.
+## Findings and corrections
 
-## Comparison history
-
-- Initial implementation comparison: passed with no P0/P1/P2 finding, so no visual repair iteration was required.
-- Browser console: no relevant warnings or errors in active or idle mock states.
-- Interaction proof: NXDN resolved as the single origin; eight other healthy routes resolved as receivers; animation offsets advanced in opposite directions.
-
-## Follow-up polish
-
-- P3: verify an unusually narrow mobile browser during production smoke testing; the existing two-column mobile card breakpoint was preserved.
+- Initial mobile capture showed the title competing with the absolute status controls. The mobile header was changed to a two-row layout and rechecked.
+- The original three-column destination grid did not match the reference. It now uses a nine-column operations-console row on wide screens, five columns at intermediate widths, and two columns on phones.
+- Incoming traffic now draws from the origin route toward the source; outgoing traffic draws from the source toward healthy destinations.
 
 final result: passed
