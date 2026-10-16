@@ -2298,6 +2298,10 @@ func (g *Gateway) handleBrandMeisterStatus(w http.ResponseWriter, r *http.Reques
 }
 
 func loadDMRHost(target string) (DMRHostEntry, error) {
+	return loadDMRHostFromFile(dmrHostsPath, target)
+}
+
+func loadDMRHostFromFile(path, target string) (DMRHostEntry, error) {
 	configured, exists := dmrNetworkTargets[target]
 	if !exists {
 		return DMRHostEntry{}, fmt.Errorf("unknown DMR master")
@@ -2307,7 +2311,7 @@ func loadDMRHost(target string) (DMRHostEntry, error) {
 		configuredHost = host
 	}
 	wantedName := dmrNetworkHostNames[target]
-	file, err := os.Open(dmrHostsPath)
+	file, err := os.Open(path)
 	if err != nil {
 		return DMRHostEntry{}, err
 	}

@@ -575,8 +575,16 @@ func TestLocalVocoderBrokerFailsClosedWithoutHardware(t *testing.T) {
 }
 
 func TestConfiguredDMRHostsCanBeLoaded(t *testing.T) {
-	if _, err := os.Stat(dmrHostsPath); os.IsNotExist(err) {
-		t.Skip("live DMR_Hosts.txt is not installed in this test environment")
+	fixture := strings.Join([]string{
+		"FreeSTAR-SystemX-UK 0000 dmr.freestar.network passw0rd 62031",
+		"BrandMeister-UK-2341 0000 2341.master.brandmeister.network PASSWORD 62031",
+		"DMR+_IPSC2-FreeSTAR 0000 legacy.example.test PASSWORD 62031",
+		"TGIF 0000 tgif.network PASSWORD 62031",
+		"FreeDMR-UK 0000 hotspot.uk.freedmr.link passw0rd 62031",
+	}, "\n") + "\n"
+	fixturePath := t.TempDir() + "/DMR_Hosts.txt"
+	if err := os.WriteFile(fixturePath, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	wantsUserCredential := map[string]bool{
 		"FreeSTAR-SystemX-UK":  false,
@@ -586,7 +594,7 @@ func TestConfiguredDMRHostsCanBeLoaded(t *testing.T) {
 		"FreeDMR-UK":           false,
 	}
 	for target, wantUserCredential := range wantsUserCredential {
-		entry, err := loadDMRHost(target)
+		entry, err := loadDMRHostFromFile(fixturePath, target)
 		if err != nil {
 			t.Errorf("%s: %v", target, err)
 			continue
