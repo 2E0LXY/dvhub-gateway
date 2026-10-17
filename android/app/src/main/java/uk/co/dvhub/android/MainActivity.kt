@@ -11,7 +11,11 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.MotionEvent
 import android.widget.ArrayAdapter
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
+import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
@@ -50,6 +54,10 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         shell = ActivityMainBinding.inflate(layoutInflater); setContentView(shell.root)
+        runCatching { initialiseApp() }.onFailure(::showStartupFailure)
+    }
+
+    private fun initialiseApp() {
         store = CredentialsStore(this); settings = store.load()
         client = GatewayClient(this); client.configure(settings)
         voice = VoiceClient(object : VoiceClient.Listener {
@@ -81,7 +89,34 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         else { showDashboard(); client.connect(); handler.post(poll) }
     }
 
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); voice.close(); client.close(); super.onDestroy() }
+    private fun showStartupFailure(error: Throwable) {
+        Log.e("DVHub", "Application startup failed", error)
+        handler.removeCallbacksAndMessages(null)
+        shell.connectionBadge.text = "STARTUP FAULT"
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 32, 32, 32)
+            addView(TextView(context).apply {
+                text = "DVHub could not finish starting. No radio or server settings were changed.\n\n${error.javaClass.simpleName}: ${error.message ?: "No detail supplied"}"
+                textSize = 18f
+            })
+            addView(Button(context).apply {
+                text = "Reset local app settings and retry"
+                setOnClickListener {
+                    runCatching { CredentialsStore(this@MainActivity).reset() }
+                    recreate()
+                }
+            })
+        }
+        replace(panel)
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        if (::voice.isInitialized) voice.close()
+        if (::client.isInitialized) client.close()
+        super.onDestroy()
+    }
 
     private fun applyRole() {
         val admin = settings.accountType != "user"

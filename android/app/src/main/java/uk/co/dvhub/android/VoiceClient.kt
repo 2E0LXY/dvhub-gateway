@@ -59,9 +59,16 @@ class VoiceClient(private val listener: Listener) {
     private fun openSocket(ticket: String) {
         val url=settings.serverUrl.replaceFirst("https://","wss://").replaceFirst("http://","ws://")+"/voice?ticket=$ticket"
         socket=client.newWebSocket(Request.Builder().url(url).build(),object:WebSocketListener(){
-            override fun onOpen(webSocket:WebSocket,response:Response){preparePlayer();listener.onVoiceState("connected","Voice connected — listening")}
+            override fun onOpen(webSocket:WebSocket,response:Response){
+                runCatching { preparePlayer() }
+                    .onSuccess { listener.onVoiceState("connected","Voice connected — listening") }
+                    .onFailure { listener.onVoiceState("fault", "This device could not start 8 kHz voice audio: ${it.message ?: it.javaClass.simpleName}") }
+            }
             override fun onMessage(webSocket:WebSocket,text:String){runCatching{gson.fromJson(text,JsonObject::class.java)}.onSuccess{val state=it.get("state")?.asString?:"connected";listener.onVoiceState(state,it.get("reason")?.asString.orEmpty())}}
-            override fun onMessage(webSocket:WebSocket,bytes:ByteString){player?.write(bytes.toByteArray(),0,bytes.size)}
+            override fun onMessage(webSocket:WebSocket,bytes:ByteString){
+                runCatching { player?.write(bytes.toByteArray(),0,bytes.size) }
+                    .onFailure { listener.onVoiceState("fault", "Audio playback failed: ${it.message ?: it.javaClass.simpleName}") }
+            }
             override fun onFailure(webSocket:WebSocket,t:Throwable,response:Response?){listener.onVoiceState("fault",t.message?:"Voice disconnected")}
         })
     }
@@ -71,8 +78,17 @@ class VoiceClient(private val listener: Listener) {
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun startTransmit(): Boolean {
         if(socket==null||transmitting.getAndSet(true))return false
-        val min=AudioRecord.getMinBufferSize(8000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(3200)
-        recorder=AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,8000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,min).apply{startRecording()}
+        val started = runCatching {
+            val min=AudioRecord.getMinBufferSize(8000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT).coerceAtLeast(3200)
+            recorder=AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION,8000,AudioFormat.CHANNEL_IN_MONO,AudioFormat.ENCODING_PCM_16BIT,min).apply{startRecording()}
+        }
+        if (started.isFailure) {
+            transmitting.set(false)
+            runCatching { recorder?.release() }; recorder = null
+            val error = started.exceptionOrNull()
+            listener.onVoiceState("fault", "Microphone start failed: ${error?.message ?: error?.javaClass?.simpleName ?: "unknown error"}")
+            return false
+        }
         socket?.send("{\"type\":\"ptt_start\"}")
         Thread({val frame=ByteArray(320);while(transmitting.get()){var read=0;while(read<frame.size&&transmitting.get()){val count=recorder?.read(frame,read,frame.size-read)?:-1;if(count>0)read+=count else break};if(read==frame.size)socket?.send(frame.toByteString())}},"dvhub-audio-tx").start();return true
     }

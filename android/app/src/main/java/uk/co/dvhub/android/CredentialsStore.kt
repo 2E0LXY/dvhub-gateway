@@ -34,14 +34,32 @@ class CredentialsStore(context: Context) {
     }
 
     fun load(): GatewaySettings {
-        val blob = prefs.getString("blob", null) ?: return GatewaySettings()
         return runCatching {
+            val blob = prefs.getString("blob", null) ?: return GatewaySettings()
             val bytes = Base64.decode(blob, Base64.NO_WRAP)
+            require(bytes.size > 12) { "Invalid encrypted settings" }
             val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply {
                 init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
             }
             val parts = String(cipher.doFinal(bytes.copyOfRange(12, bytes.size)), Charsets.UTF_8).split("\u001f")
+            require(parts.size >= 6) { "Unsupported settings format" }
             GatewaySettings(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts.getOrElse(6) { "" }, parts.getOrElse(7) { "admin" })
-        }.getOrElse { GatewaySettings() }
+        }.getOrElse {
+            // Preferences and Android Keystore entries can become unreadable after an
+            // app upgrade, device restore or lock-screen change. Discard only the
+            // unusable local credentials so startup can recover to the setup screen.
+            reset()
+            GatewaySettings()
+        }
+    }
+
+    fun reset() {
+        prefs.edit().remove("blob").commit()
+        runCatching {
+            KeyStore.getInstance("AndroidKeyStore").apply {
+                load(null)
+                if (containsAlias(alias)) deleteEntry(alias)
+            }
+        }
     }
 }
