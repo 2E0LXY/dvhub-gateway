@@ -277,6 +277,9 @@ type Gateway struct {
 	trafficMu           sync.Mutex
 	trafficLast         map[string]time.Time
 	trafficHistory      []trafficHistoryEntry
+	trafficHistoryPath  string
+	trafficSaveMu       sync.Mutex
+	trafficSaveRequests chan struct{}
 	qrz                 qrzLookupClient
 	clientAccess        *clientAccess
 }
@@ -455,6 +458,7 @@ func main() {
 		wsTickets:     make(map[string]wsTicket),
 		qrz:           newQRZLookupClient(),
 	}
+	gw.startTrafficHistoryPersistence("/var/lib/dvgateway/traffic-history.json")
 	go gw.updateRegistriesDaily()
 	go gw.updateYSFRegistryHourly()
 	go gw.broadcastYSFDashboardLoop()
@@ -550,6 +554,9 @@ func main() {
 		if shutdownErr := server.Shutdown(shutdownContext); shutdownErr != nil {
 			log.Printf("[SYS] HTTP shutdown: %v", shutdownErr)
 		}
+	}
+	if err := gw.persistTrafficHistory(); err != nil {
+		log.Printf("[ACTIVITY] Final history save: %v", err)
 	}
 }
 
@@ -3731,6 +3738,7 @@ func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint3
 func (g *Gateway) recordTrafficHistory(key string, data map[string]any) {
 	g.trafficMu.Lock()
 	defer g.trafficMu.Unlock()
+	defer g.requestTrafficHistorySave()
 	for index := range g.trafficHistory {
 		if g.trafficHistory[index].key == key {
 			g.trafficHistory[index].data = data
