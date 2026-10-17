@@ -1,0 +1,31 @@
+diff --git a/USRP2DMR/USRP2DMR.cpp b/USRP2DMR/USRP2DMR.cpp
+--- a/USRP2DMR/USRP2DMR.cpp
++++ b/USRP2DMR/USRP2DMR.cpp
+@@ -278,1 +278,3 @@
+ 		unsigned int ms = stopWatch.elapsed();
++		stopWatch.start();
++		networkWatchdog.clock(ms);
+@@ -481,1 +483,3 @@
+-		while (m_dmrNetwork->read(tx_dmrdata) > 0U) {
++		// Return to the paced output loop after each input frame, including
++		// synthetic missing frames, rather than starving output indefinitely.
++		for (unsigned int budget = 0U; budget < 1U && m_dmrNetwork->read(tx_dmrdata) > 0U; ++budget) {
+@@ -557,1 +561,0 @@
+-				networkWatchdog.clock(ms);
+@@ -633,1 +636,0 @@
+-		stopWatch.start();
+diff --git a/P252DMR/P252DMR.cpp b/P252DMR/P252DMR.cpp
+--- a/P252DMR/P252DMR.cpp
++++ b/P252DMR/P252DMR.cpp
+@@ -358,1 +358,3 @@
+ 		unsigned int ms = stopWatch.elapsed();
++		stopWatch.start();
++		networkWatchdog.clock(ms);
+@@ -572,1 +574,2 @@
+-		while (m_dmrNetwork->read(tx_dmrdata) > 0U) {
++		// Keep receive/concealment work bounded so paced output can run.
++		for (unsigned int budget = 0U; budget < 1U && m_dmrNetwork->read(tx_dmrdata) > 0U; ++budget) {
+@@ -647,1 +650,0 @@
+-				networkWatchdog.clock(ms);
+@@ -787,1 +789,0 @@
+-		stopWatch.start();

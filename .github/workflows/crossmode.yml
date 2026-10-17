@@ -34,5 +34,7 @@ jobs:
           git -C "$work_dir/mmdvm-cm" apply "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-dv30-pipeline.patch"
           git -C "$work_dir/mmdvm-cm" apply --check "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-identity.patch"
           git -C "$work_dir/mmdvm-cm" apply "$GITHUB_WORKSPACE/deploy/crossmode/usrp2dmr-identity.patch"
+          git -C "$work_dir/mmdvm-cm" apply --check --unidiff-zero "$GITHUB_WORKSPACE/deploy/crossmode/converter-receive-budget.patch"
+          git -C "$work_dir/mmdvm-cm" apply --unidiff-zero "$GITHUB_WORKSPACE/deploy/crossmode/converter-receive-budget.patch"
           make -C "$work_dir/mmdvm-cm/USRP2DMR" -j"$(nproc)"
           test -x "$work_dir/mmdvm-cm/USRP2DMR/USRP2DMR"

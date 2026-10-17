@@ -45,6 +45,8 @@ git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2dmr-dv30-pipeline.pa
 git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2dmr-dv30-pipeline.patch"
 git -C "$work_dir/mmdvm-cm" apply --check "$script_dir/usrp2dmr-identity.patch"
 git -C "$work_dir/mmdvm-cm" apply "$script_dir/usrp2dmr-identity.patch"
+git -C "$work_dir/mmdvm-cm" apply --check --unidiff-zero "$script_dir/converter-receive-budget.patch"
+git -C "$work_dir/mmdvm-cm" apply --unidiff-zero "$script_dir/converter-receive-budget.patch"
 make -C "$work_dir/mmdvm-cm/USRP2DMR" -j"$(nproc)"
 
 git -C "$work_dir/mmdvm-cm" apply --check "$repo_root/deploy/m17/usrp2m17-debian13.patch"
