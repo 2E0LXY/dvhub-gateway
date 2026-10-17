@@ -3195,6 +3195,10 @@ var dv30HardwareFrames atomic.Uint64
 var dv30HardwareFailures atomic.Uint64
 var dv30TargetCursor atomic.Uint64
 
+// Includes the WAN round trip and bounded serial service time. This is a
+// maximum wait, not a playout delay: a completed frame returns immediately.
+const dv30ExchangeTimeout = 100 * time.Millisecond
+
 func vocoderMode(session *UserSession) string {
 	if !session.UseHWVocoder.Load() {
 		return "disabled"
@@ -3240,9 +3244,9 @@ func acquireVocoderTarget(target *net.UDPAddr) (func(), bool) {
 
 // Every local cross-mode converter uses the same bounded endpoint slots. With
 // two configured devices, frames are spread across both. The total hardware
-// attempt is capped to one 40 ms deadline and never falls back to fake AMBE.
+// attempt is capped to one shared deadline and never falls back to fake AMBE.
 func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr) []byte {
-	deadline := time.Now().Add(40 * time.Millisecond)
+	deadline := time.Now().Add(dv30ExchangeTimeout)
 	for _, target := range orderedVocoderTargets(targets) {
 		release, acquired := acquireVocoderTarget(target)
 		if !acquired {
@@ -3266,7 +3270,7 @@ func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr) []byte {
 	if bytes.Equal(ambe, []byte{0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b}) {
 		return make([]byte, 320)
 	}
-	deadline := time.Now().Add(40 * time.Millisecond)
+	deadline := time.Now().Add(dv30ExchangeTimeout)
 	for _, target := range orderedVocoderTargets(targets) {
 		release, acquired := acquireVocoderTarget(target)
 		if !acquired {
@@ -3530,7 +3534,7 @@ func encodeDV30(pcm []byte, target *net.UDPAddr, _ int) []byte {
 }
 
 func encodeDV30Hardware(pcm []byte, target *net.UDPAddr) ([]byte, bool) {
-	return encodeDV30HardwareUntil(pcm, target, time.Now().Add(40*time.Millisecond))
+	return encodeDV30HardwareUntil(pcm, target, time.Now().Add(dv30ExchangeTimeout))
 }
 
 func encodeDV30HardwareUntil(pcm []byte, target *net.UDPAddr, deadline time.Time) ([]byte, bool) {
@@ -3555,7 +3559,7 @@ func decodeDV30(ambe []byte, target *net.UDPAddr, _ int) []byte {
 }
 
 func decodeDV30Hardware(ambe []byte, target *net.UDPAddr) ([]byte, bool) {
-	return decodeDV30HardwareUntil(ambe, target, time.Now().Add(40*time.Millisecond))
+	return decodeDV30HardwareUntil(ambe, target, time.Now().Add(dv30ExchangeTimeout))
 }
 
 func decodeDV30HardwareUntil(ambe []byte, target *net.UDPAddr, deadline time.Time) ([]byte, bool) {

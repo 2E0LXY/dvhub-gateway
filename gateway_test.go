@@ -858,7 +858,7 @@ func TestVocoderFailoverSharesOneFrameDeadline(t *testing.T) {
 	if encoded := encodeVocoderFrame(make([]byte, 320), targets); encoded != nil {
 		t.Fatal("silent hardware endpoints unexpectedly returned audio")
 	}
-	if elapsed := time.Since(started); elapsed > 70*time.Millisecond {
+	if elapsed := time.Since(started); elapsed > dv30ExchangeTimeout+30*time.Millisecond {
 		t.Fatalf("hardware failover exceeded the frame deadline: %v", elapsed)
 	}
 }
