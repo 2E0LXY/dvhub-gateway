@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,16 +20,34 @@ import (
 	"time"
 )
 
-const defaultGeminiModel = "gemini-2.5-flash"
+const defaultGeminiModel = "gemini-3.8-flash"
 
 var aiSchedulePath = "/var/lib/dvgateway/ai-schedules.json"
+var aiAPIKeyPath = "/var/lib/dvgateway/gemini-api-key"
+var aiModelPath = "/var/lib/dvgateway/gemini-model"
+
+type geminiModelOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Tier  string `json:"tier"`
+}
+
+var geminiModelOptions = []geminiModelOption{
+	{ID: "gemini-3.8-flash", Label: "Gemini 3.8 Flash — recommended best overall", Tier: "recommended"},
+	{ID: "gemini-3.1-pro-preview", Label: "Gemini 3.1 Pro Preview — highest reasoning / most expensive", Tier: "paid"},
+	{ID: "gemini-2.5-pro", Label: "Gemini 2.5 Pro — legacy advanced / paid", Tier: "paid"},
+	{ID: "gemini-3.5-flash-lite", Label: "Gemini 3.5 Flash-Lite — current low-cost / free tier", Tier: "free"},
+	{ID: "gemini-2.5-flash", Label: "Gemini 2.5 Flash — legacy balanced / free tier", Tier: "free"},
+	{ID: "gemini-2.5-flash-lite", Label: "Gemini 2.5 Flash-Lite — legacy cheapest / free tier", Tier: "free"},
+}
 
 type aiOperator struct {
-	gateway *Gateway
-	client  *http.Client
-	apiKey  string
-	model   string
-	baseURL string
+	gateway   *Gateway
+	client    *http.Client
+	apiKey    string
+	keySource string
+	model     string
+	baseURL   string
 
 	mu        sync.Mutex
 	plans     map[string]pendingAIPlan
@@ -75,18 +94,17 @@ type aiScheduledAction struct {
 }
 
 func newAIOperator(gateway *Gateway) *aiOperator {
-	model := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	if model == "" {
-		model = defaultGeminiModel
-	}
+	model := loadGeminiModel()
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("GEMINI_API_BASE_URL")), "/")
 	if baseURL == "" {
 		baseURL = "https://generativelanguage.googleapis.com"
 	}
+	apiKey, keySource := loadGeminiAPIKey()
 	return &aiOperator{
 		gateway:   gateway,
 		client:    &http.Client{Timeout: 35 * time.Second},
-		apiKey:    strings.TrimSpace(os.Getenv("GEMINI_API_KEY")),
+		apiKey:    apiKey,
+		keySource: keySource,
 		model:     model,
 		baseURL:   baseURL,
 		plans:     make(map[string]pendingAIPlan),
@@ -101,10 +119,58 @@ func (o *aiOperator) registerHandlers() {
 	http.HandleFunc("/api/ai/chat", o.handleChat)
 	http.HandleFunc("/api/ai/execute", o.handleExecute)
 	http.HandleFunc("/api/ai/schedules", o.handleSchedules)
+	http.HandleFunc("/api/ai/settings", o.handleSettings)
 }
 
 func (o *aiOperator) enabled() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	return len(o.apiKey) >= 20
+}
+
+func loadGeminiAPIKey() (string, string) {
+	if data, err := os.ReadFile(aiAPIKeyPath); err == nil {
+		if key := strings.TrimSpace(string(data)); len(key) >= 20 {
+			return key, "dashboard"
+		}
+	}
+	if key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY")); len(key) >= 20 {
+		return key, "environment"
+	}
+	return "", "none"
+}
+
+func validGeminiModel(model string) bool {
+	for _, option := range geminiModelOptions {
+		if option.ID == model {
+			return true
+		}
+	}
+	return false
+}
+
+func loadGeminiModel() string {
+	if data, err := os.ReadFile(aiModelPath); err == nil {
+		if model := strings.TrimSpace(string(data)); validGeminiModel(model) {
+			return model
+		}
+	}
+	if model := strings.TrimSpace(os.Getenv("GEMINI_MODEL")); validGeminiModel(model) {
+		return model
+	}
+	return defaultGeminiModel
+}
+
+func (o *aiOperator) keySnapshot() (string, string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.apiKey, o.keySource
+}
+
+func (o *aiOperator) settingsSnapshot() (string, string, string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.apiKey, o.keySource, o.model
 }
 
 func requireAdminRead(w http.ResponseWriter, r *http.Request) bool {
@@ -125,10 +191,13 @@ func (o *aiOperator) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireAdminRead(w, r) {
 		return
 	}
+	key, source, model := o.settingsSnapshot()
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"enabled":               o.enabled(),
+		"enabled":               len(key) >= 20,
+		"key_source":            source,
 		"provider":              "Google Gemini",
-		"model":                 o.model,
+		"model":                 model,
+		"model_options":         geminiModelOptions,
 		"confirmation_required": true,
 		"direct_shell_access":   false,
 		"safeguards": []string{
@@ -141,6 +210,133 @@ func (o *aiOperator) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"schedules": o.scheduleSnapshot(),
 	})
+}
+
+func (o *aiOperator) handleSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if !requireControlAuth(w, r) {
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		var request struct {
+			APIKey string `json:"api_key"`
+			Model  string `json:"model"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		if decoder.Decode(&request) != nil {
+			http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
+			return
+		}
+		currentKey, currentSource, currentModel := o.settingsSnapshot()
+		key := strings.TrimSpace(request.APIKey)
+		if key == "" {
+			key = currentKey
+		}
+		if len(key) < 20 || len(key) > 256 || strings.IndexFunc(key, func(r rune) bool { return r <= ' ' || r > '~' }) >= 0 {
+			http.Error(w, `{"error":"Enter a valid Gemini API key"}`, http.StatusBadRequest)
+			return
+		}
+		model := strings.TrimSpace(request.Model)
+		if model == "" {
+			model = currentModel
+		}
+		if !validGeminiModel(model) {
+			http.Error(w, `{"error":"Choose a supported Gemini model"}`, http.StatusBadRequest)
+			return
+		}
+		if err := o.validateGeminiKey(key, model); err != nil {
+			log.Printf("[AI] Gemini key validation failed: %v", err)
+			http.Error(w, `{"error":"Google rejected the key or could not validate it"}`, http.StatusBadRequest)
+			return
+		}
+		if request.APIKey != "" {
+			if err := persistPrivateSetting(aiAPIKeyPath, key); err != nil {
+				log.Printf("[AI] Gemini key save failed: %v", err)
+				http.Error(w, `{"error":"Unable to save the key securely"}`, http.StatusInternalServerError)
+				return
+			}
+			currentSource = "dashboard"
+		}
+		if err := persistPrivateSetting(aiModelPath, model); err != nil {
+			log.Printf("[AI] Gemini model save failed: %v", err)
+			http.Error(w, `{"error":"Unable to save the model securely"}`, http.StatusInternalServerError)
+			return
+		}
+		o.mu.Lock()
+		o.apiKey = key
+		o.keySource = currentSource
+		o.model = model
+		o.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "key_source": currentSource, "model": model})
+	case http.MethodDelete:
+		_, source := o.keySnapshot()
+		if source != "dashboard" {
+			http.Error(w, `{"error":"No dashboard-managed key is installed"}`, http.StatusConflict)
+			return
+		}
+		if err := os.Remove(aiAPIKeyPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("[AI] Gemini key removal failed: %v", err)
+			http.Error(w, `{"error":"Unable to remove the stored key"}`, http.StatusInternalServerError)
+			return
+		}
+		fallbackKey, fallbackSource := loadGeminiAPIKey()
+		o.mu.Lock()
+		o.apiKey = fallbackKey
+		o.keySource = fallbackSource
+		o.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": len(fallbackKey) >= 20, "key_source": fallbackSource})
+	default:
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func persistPrivateSetting(path, value string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".dvhub-private-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.WriteString(value + "\n"); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
+}
+
+func (o *aiOperator) validateGeminiKey(key, model string) error {
+	endpoint := o.baseURL + "/v1beta/models/" + url.PathEscape(model)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-goog-api-key", key)
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Gemini returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (o *aiOperator) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -371,6 +567,7 @@ func dmrSessionStateLocked(session *UserSession) string {
 }
 
 func (o *aiOperator) askGemini(message string, history []aiChatMessage, state map[string]any) (aiPlan, error) {
+	apiKey, _, model := o.settingsSnapshot()
 	stateJSON, err := json.Marshal(state)
 	if err != nil {
 		return aiPlan{}, err
@@ -398,13 +595,13 @@ func (o *aiOperator) askGemini(message string, history []aiChatMessage, state ma
 		},
 	}
 	body, _ := json.Marshal(payload)
-	endpoint := o.baseURL + "/v1beta/models/" + url.PathEscape(o.model) + ":generateContent"
+	endpoint := o.baseURL + "/v1beta/models/" + url.PathEscape(model) + ":generateContent"
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return aiPlan{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", o.apiKey)
+	req.Header.Set("x-goog-api-key", apiKey)
 	resp, err := o.client.Do(req)
 	if err != nil {
 		return aiPlan{}, err

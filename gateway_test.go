@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -366,6 +368,68 @@ func TestGeminiStructuredPlanUsesHeaderKeyAndParsesActions(t *testing.T) {
 	}
 	if plan.Reply != "YSF bridge is stopped." || len(plan.Actions) != 1 || plan.Actions[0].Kind != "service" {
 		t.Fatalf("unexpected Gemini plan: %+v", plan)
+	}
+}
+
+func TestAISettingsValidatesAndStoresKeyWithoutReturningIt(t *testing.T) {
+	temporary := t.TempDir()
+	previousKeyPath, previousModelPath := aiAPIKeyPath, aiModelPath
+	aiAPIKeyPath = filepath.Join(temporary, "gemini-api-key")
+	aiModelPath = filepath.Join(temporary, "gemini-model")
+	t.Cleanup(func() { aiAPIKeyPath, aiModelPath = previousKeyPath, previousModelPath })
+
+	const secret = "test-gemini-key-value-12345"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta/models/gemini-3.8-flash" {
+			t.Errorf("validation request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("x-goog-api-key") != secret {
+			t.Error("validation request did not use the submitted key header")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	operator := newAIOperator(&Gateway{})
+	operator.baseURL = server.URL
+	operator.client = server.Client()
+	body := `{"api_key":"` + secret + `","model":"gemini-3.8-flash"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/ai/settings", strings.NewReader(body))
+	request.Header.Set("X-DVHub-Authenticated-User", "2E0LXY")
+	request.Header.Set("X-DVHub-Control", "1")
+	recorder := httptest.NewRecorder()
+	operator.handleSettings(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("settings returned %d: %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), secret) {
+		t.Fatal("settings response exposed the API key")
+	}
+	stored, err := os.ReadFile(aiAPIKeyPath)
+	if err != nil || strings.TrimSpace(string(stored)) != secret {
+		t.Fatalf("stored key mismatch or read failed: %v", err)
+	}
+	info, err := os.Stat(aiAPIKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
+		t.Fatalf("stored key mode = %v, want 0600", info.Mode().Perm())
+	}
+	if operator.model != "gemini-3.8-flash" || !operator.enabled() {
+		t.Fatalf("operator settings not activated: model=%q enabled=%v", operator.model, operator.enabled())
+	}
+}
+
+func TestAISettingsRejectsUnapprovedModel(t *testing.T) {
+	operator := newAIOperator(&Gateway{})
+	request := httptest.NewRequest(http.MethodPost, "/api/ai/settings", strings.NewReader(`{"api_key":"test-gemini-key-value-12345","model":"arbitrary-model"}`))
+	request.Header.Set("X-DVHub-Authenticated-User", "2E0LXY")
+	request.Header.Set("X-DVHub-Control", "1")
+	recorder := httptest.NewRecorder()
+	operator.handleSettings(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("unapproved model returned %d, want 400", recorder.Code)
 	}
 }
 

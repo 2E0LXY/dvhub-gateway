@@ -35,16 +35,25 @@ Create `/etc/dvhub/gemini.env` outside Git:
 
 ```text
 GEMINI_API_KEY=your-google-ai-studio-key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 Set ownership to `root:dvhub`, mode `0600`, then restart
 `dvhub-gateway.service`. The Admin AI Operator tab reports `READY` only when a
 key is available to the service.
 
-The optional `GEMINI_MODEL` setting allows an approved newer model to be used
-without changing application code. Requests are sent directly from the VPS to
-Google's Gemini API with the key in the `x-goog-api-key` header.
+Administrators can instead add or replace the key from **Admin → AI Operator**.
+The masked field validates it directly with Google before writing it to
+`/var/lib/dvgateway/gemini-api-key` with mode `0600`. The stored value is never
+returned to the browser. The allowlisted model dropdown writes the selection to
+`/var/lib/dvgateway/gemini-model`; changing models does not require re-entering
+an already stored key.
+
+The optional `GEMINI_MODEL` environment setting remains available for
+externally managed installations. Dashboard-managed settings take precedence.
+The recommended default is Gemini 3.8 Flash, followed by higher-cost reasoning
+models and then free-tier/low-cost choices. Requests are sent directly from the
+VPS to Google's Gemini API with the key in the `x-goog-api-key` header.
 
 ## Operating flow
 
