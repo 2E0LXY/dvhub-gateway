@@ -1,0 +1,2 @@
+# DV30 FT230X: keep short audio replies from waiting for the 16 ms FTDI timer.
+ACTION=="add", SUBSYSTEM=="usb-serial", ATTRS{serial}=="DO02LOO7", ATTR{latency_timer}="1"

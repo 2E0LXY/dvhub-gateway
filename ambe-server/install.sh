@@ -10,6 +10,8 @@ fi
 install -d -m 0755 /opt/dvhub-ambe-server /etc/dvhub
 install -m 0755 dvhub_ambe_server.py /opt/dvhub-ambe-server/dvhub_ambe_server.py
 install -m 0644 dvhub-ambe-server.service /etc/systemd/system/dvhub-ambe-server.service
+install -m 0644 99-dvhub-dv30.rules /etc/udev/rules.d/99-dvhub-dv30.rules
+udevadm control --reload-rules
 if ! getent group dvhub-ambe >/dev/null 2>&1; then
     groupadd --system dvhub-ambe
 fi

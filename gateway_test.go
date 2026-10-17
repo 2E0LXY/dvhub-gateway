@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -456,6 +457,21 @@ func TestPassiveVocoderQualityFlagsDeadlineMiss(t *testing.T) {
 	}
 	if snapshot["level"] != "fault" {
 		t.Fatalf("vocoder quality level = %v, want fault", snapshot["level"])
+	}
+}
+
+func TestKnownDMRSilenceDoesNotUseHardware(t *testing.T) {
+	before := dv30HardwareFailures.Load()
+	pcm := decodeVocoderFrame([]byte{0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b}, nil)
+	if len(pcm) != 320 || !bytes.Equal(pcm, make([]byte, 320)) {
+		t.Fatal("known DMR silence must produce one 20 ms PCM silence frame")
+	}
+	if dv30HardwareFailures.Load() != before {
+		t.Fatal("silence must not attempt hardware")
+	}
+	changed := []byte{0xb8, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b}
+	if decodeVocoderFrame(changed, nil) != nil {
+		t.Fatal("other frames must still require hardware")
 	}
 }
 

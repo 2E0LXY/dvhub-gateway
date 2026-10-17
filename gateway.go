@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
@@ -3259,6 +3260,12 @@ func encodeVocoderFrame(pcm []byte, targets []*net.UDPAddr) []byte {
 }
 
 func decodeVocoderFrame(ambe []byte, targets []*net.UDPAddr) []byte {
+	// MMDVM inserts this exact standard DMR silence frame during concealment.
+	// Preserve its 20 ms duration without queueing a needless USB transaction.
+	// Do not classify arbitrary quiet speech or other codec frames as silence.
+	if bytes.Equal(ambe, []byte{0xb9, 0xe8, 0x81, 0x52, 0x61, 0x73, 0x00, 0x2a, 0x6b}) {
+		return make([]byte, 320)
+	}
 	deadline := time.Now().Add(40 * time.Millisecond)
 	for _, target := range orderedVocoderTargets(targets) {
 		release, acquired := acquireVocoderTarget(target)
