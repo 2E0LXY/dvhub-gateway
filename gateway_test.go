@@ -306,6 +306,69 @@ func TestQualityLevelUsesVoiceRelevantThresholds(t *testing.T) {
 	}
 }
 
+func TestAIActionValidationRejectsDangerousControls(t *testing.T) {
+	tests := []aiAction{
+		{Kind: "allstar", Operation: "connect", Node: 530471, Reason: "self link"},
+		{Kind: "dmr_disconnect", Operation: "disconnect", Session: 2, Reason: "protected conference leg"},
+		{Kind: "service", Mode: "asterisk", Component: "service", Operation: "restart", Reason: "not allowlisted"},
+		{Kind: "service", Mode: "ysf", Component: "bridge", Operation: "shell", Reason: "arbitrary command"},
+		{Kind: "conference", Operation: "start", DurationSeconds: 10, Reason: "too short"},
+		{Kind: "service", Mode: "m17", Component: "bridge", Operation: "start", DelaySeconds: 8 * 24 * 60 * 60, Reason: "too far away"},
+	}
+	for _, action := range tests {
+		if _, err := validateAIAction(action); err == nil {
+			t.Errorf("unsafe action was accepted: %+v", action)
+		}
+	}
+}
+
+func TestAIPlanDropsConflictsAndKeepsAllowlistedAction(t *testing.T) {
+	operator := newAIOperator(&Gateway{})
+	plan := operator.sanitisePlan(aiPlan{
+		Reply: "Plan",
+		Actions: []aiAction{
+			{Kind: "service", Mode: "YSF", Component: "bridge", Operation: "start", Reason: "restore route"},
+			{Kind: "service", Mode: "ysf", Component: "bridge", Operation: "stop", Reason: "contradiction"},
+			{Kind: "dmr_disconnect", Operation: "disconnect", Session: 2, Reason: "protected"},
+		},
+	}, nil)
+	if len(plan.Actions) != 1 {
+		t.Fatalf("got %d accepted actions, want 1: %+v", len(plan.Actions), plan.Actions)
+	}
+	if plan.Actions[0].Mode != "ysf" || plan.Actions[0].Operation != "start" {
+		t.Fatalf("unexpected accepted action: %+v", plan.Actions[0])
+	}
+	if len(plan.Warnings) != 2 {
+		t.Fatalf("got %d safety warnings, want 2: %+v", len(plan.Warnings), plan.Warnings)
+	}
+}
+
+func TestGeminiStructuredPlanUsesHeaderKeyAndParsesActions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-goog-api-key"); got != "test-gemini-key-value-12345" {
+			t.Errorf("Gemini API key header = %q", got)
+		}
+		if r.URL.Path != "/v1beta/models/gemini-test:generateContent" {
+			t.Errorf("request path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"{\"reply\":\"YSF bridge is stopped.\",\"diagnosis\":[\"Service inactive\"],\"warnings\":[],\"actions\":[{\"kind\":\"service\",\"mode\":\"ysf\",\"component\":\"bridge\",\"operation\":\"start\",\"reason\":\"Restore the route\"}]}"}]}}]}`))
+	}))
+	defer server.Close()
+	operator := newAIOperator(&Gateway{})
+	operator.apiKey = "test-gemini-key-value-12345"
+	operator.model = "gemini-test"
+	operator.baseURL = server.URL
+	operator.client = server.Client()
+	plan, err := operator.askGemini("diagnose YSF", nil, map[string]any{"routes": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Reply != "YSF bridge is stopped." || len(plan.Actions) != 1 || plan.Actions[0].Kind != "service" {
+		t.Fatalf("unexpected Gemini plan: %+v", plan)
+	}
+}
+
 func TestPassiveDMRQualityDetectsSequenceGap(t *testing.T) {
 	quality := passiveDMRQuality{flows: make(map[string]dmrFlowQuality)}
 	quality.observe("test", DMRTrafficMeta{StreamID: 42, RepeaterID: 7, Sequence: 10})

@@ -203,7 +203,7 @@ git -C "$REPO_DIR" archive "$target_sha" | tar -x -C "$work_dir"
 pushd "$work_dir" >/dev/null
 go test ./...
 go vet ./...
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dvhub-gateway ./gateway.go
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dvhub-gateway .
 bash -n deploy/gitops/dvhub-deploy deploy/gitops/install.sh
 validate_allstar_helpers "$work_dir"
 DVHUB_PASSWORD_HASH='$2a$14$P5LqhL5moJlgYzNdw9PeH.U.U4gCiQZl7WfxWJI5fKoh85QBWK0xW' \

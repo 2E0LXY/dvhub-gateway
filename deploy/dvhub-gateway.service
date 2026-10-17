@@ -12,6 +12,7 @@ User=dvhub
 Group=www-data
 SupplementaryGroups=dvhub
 WorkingDirectory=/opt/dvhub-gateway
+EnvironmentFile=-/etc/dvhub/gemini.env
 RuntimeDirectory=dvhub
 RuntimeDirectoryMode=0750
 ExecStart=/usr/local/bin/dvhub-gateway

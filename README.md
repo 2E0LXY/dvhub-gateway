@@ -187,6 +187,12 @@ dmrNetworkTargets := map[string]string{
 
 ```caddy
 Use the repository `Caddyfile`, set `DVHUB_PASSWORD_HASH`, and add the `caddy` service account to the `dvhub` group. On Linux the Go service listens only on `/run/dvhub/gateway.sock`; Caddy authenticates protected routes and proxies through that group-restricted socket.
+
+The authenticated Admin interface also includes an optional Google Gemini AI
+Operator for system explanation, fault diagnosis and reviewable connection or
+repair plans. It has no shell access and can execute only gateway-enforced,
+allowlisted actions after explicit confirmation. See
+[`docs/AI_OPERATOR.md`](docs/AI_OPERATOR.md) for configuration and safeguards.
 ```
 
 Auto HTTPS via Let's Encrypt - no certificates needed!

@@ -478,6 +478,9 @@ func main() {
 	go gw.runLocalVocoderBroker("127.0.0.1:2461")
 	go gw.runVocoderHealthMonitor()
 	go gw.runYorkshireConferenceSupervisor()
+	ai := newAIOperator(gw)
+	ai.restoreSchedules()
+	ai.registerHandlers()
 
 	http.HandleFunc("/ws", gw.handleWS)
 	http.HandleFunc("/api/ws_ticket", gw.handleWSTicket)
