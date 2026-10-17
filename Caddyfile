@@ -77,6 +77,11 @@
         handle /talkgroups.js {
             reverse_proxy unix//run/dvhub/gateway.sock
         }
+        handle /client.webmanifest {
+            header Content-Type "application/manifest+json"
+            root * /var/www/dvhub
+            file_server
+        }
         handle / {
             header Cache-Control "no-store, no-cache, must-revalidate"
             reverse_proxy unix//run/dvhub/gateway.sock
