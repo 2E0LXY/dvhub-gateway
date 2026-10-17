@@ -1,13 +1,14 @@
 package uk.co.dvhub.android
 
 data class GatewaySettings(
-    val serverUrl: String = "",
+    val serverUrl: String = "https://dvhub.2e0lxy.uk",
     val username: String = "2E0LXY",
     val password: String = "",
     val callsign: String = "2E0LXY",
     val dmrId: String = "2344399",
     val essid: String = "01",
-    val manualDmrId: String = ""
+    val manualDmrId: String = "",
+    val accountType: String = "admin"
 )
 
 data class Network(val nodeId: Int, val label: String, val apiName: String, val target: String, val requiresUserPassword: Boolean = false) {

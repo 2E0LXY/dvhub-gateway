@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#061426">
+  <meta name="description" content="Secure Yorkshire Link HUB voice client">
+  <link rel="manifest" href="/client.webmanifest">
+  <title>Yorkshire Link HUB Voice</title>
+  <style>
+    :root{color-scheme:dark;--bg:#040d18;--panel:#09192b;--line:#173756;--text:#e8f3ff;--muted:#8ca8c4;--blue:#1da1ff;--green:#2ee58b;--amber:#ffbd3c;--red:#ff4964}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 50% -20%,#123a64 0,transparent 42%),var(--bg);font:15px/1.45 system-ui,sans-serif;color:var(--text)}
+    header{display:flex;gap:18px;align-items:center;padding:18px max(18px,calc((100vw - 960px)/2));border-bottom:1px solid var(--line);background:#061426dd;backdrop-filter:blur(16px)}
+    .brand{flex:1}.brand b{display:block;font-size:20px;letter-spacing:.05em}.brand span{color:var(--muted);font-size:12px;letter-spacing:.14em}.badge{color:var(--muted);font-weight:700}.badge.online{color:var(--green)}
+    main{max-width:960px;margin:auto;padding:22px;display:grid;gap:18px}.card{background:linear-gradient(145deg,#0a1c30,#071321);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 18px 50px #0007}
+    h1,h2,p{margin-top:0}h1{font-size:24px;margin-bottom:8px}h2{font-size:15px;letter-spacing:.1em;text-transform:uppercase;color:#bcd7ef}.help{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}label{display:grid;gap:6px;color:#b9cee2;font-size:13px}input{width:100%;border:1px solid #284761;background:#04101e;color:var(--text);padding:13px;border-radius:9px;font:inherit}input:focus{outline:2px solid #178eda}
+    button,.button{appearance:none;border:1px solid #2b5b7d;background:#0d2940;color:var(--text);padding:12px 16px;border-radius:10px;font:700 14px system-ui;cursor:pointer;text-decoration:none;text-align:center}button.primary{background:#087dcc;border-color:#18a9ff}button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    #voiceCard[hidden],#loginCard[hidden]{display:none}.identity{display:flex;justify-content:space-between;gap:16px;align-items:center;padding-bottom:18px;border-bottom:1px solid var(--line)}.identity strong{font-size:20px}.identity span{display:block;color:var(--muted)}
+    .meter{height:10px;background:#02101c;border-radius:10px;overflow:hidden;margin:22px 0}.meter i{display:block;height:100%;width:2%;background:var(--green);transition:width .08s}
+    .ptt{display:block;width:min(240px,75vw);aspect-ratio:1;margin:22px auto;border-radius:50%;border:4px solid #1d6592;background:radial-gradient(circle at 35% 25%,#1a91d1,#073353 70%);box-shadow:0 0 0 10px #0b2942,0 20px 40px #000a;color:white;font-size:30px;letter-spacing:.08em;touch-action:none;user-select:none}.ptt.live{background:radial-gradient(circle at 35% 25%,#ff7a51,#a70d2d 70%);border-color:#ff8a6a;box-shadow:0 0 0 10px #421228,0 0 45px #ff244977}
+    .status{text-align:center;font-weight:700;color:var(--muted)}.status.ok{color:var(--green)}.status.warn{color:var(--amber)}.status.fault{color:var(--red)}.notice{border-left:3px solid var(--blue);padding:10px 12px;background:#081b2e;color:var(--muted);margin-top:16px}.foot{text-align:center;color:var(--muted);font-size:12px}.admin{border-color:#684f18;background:#2d230d}
+    @media(max-width:620px){header{padding:14px}.brand b{font-size:17px}.grid{grid-template-columns:1fr}main{padding:14px}.card{padding:16px}}
+  </style>
+</head>
+<body>
+<header><div class="brand"><b>YORKSHIRE LINK HUB</b><span>SECURE VOICE CLIENT</span></div><div id="connectionBadge" class="badge">OFFLINE</div></header>
+<main>
+  <section id="loginCard" class="card">
+    <h1>Connect your radio identity</h1>
+    <p class="help">Use the client password issued by the hub administrator. This is not your BrandMeister, EchoLink or QRZ password.</p>
+    <div class="grid">
+      <label>Callsign<input id="callsign" autocomplete="username" maxlength="10" autocapitalize="characters"></label>
+      <label>Registered 7-digit DMR ID<input id="dmrId" inputmode="numeric" maxlength="7"></label>
+      <label style="grid-column:1/-1">Client password<input id="password" type="password" autocomplete="current-password"></label>
+    </div>
+    <div class="actions"><button id="login" class="primary">Sign in for voice</button><a class="button admin" href="/admin">Administrator sign in</a></div>
+    <p id="loginStatus" class="status"></p>
+  </section>
+  <section id="voiceCard" class="card" hidden>
+    <div class="identity"><div><strong id="identityCall">—</strong><span id="identityId">DMR ID —</span></div><button id="logout">Sign out</button></div>
+    <h2 style="margin-top:20px">Voice TX / RX</h2>
+    <p class="help">Audio joins the managed TG23530 conference through a private AllStar node. Hold the button to talk; release it to listen.</p>
+    <div class="meter"><i id="meter"></i></div>
+    <button id="ptt" class="ptt" disabled>PTT</button>
+    <p id="voiceStatus" class="status">Preparing secure audio…</p>
+    <div class="notice">Only one station can transmit at a time. A two-second audio watchdog and three-minute call limit prevent stuck or looping transmissions.</div>
+    <div class="actions"><a class="button" href="/">Open live dashboard</a><a class="button admin" href="/admin">Admin, AI &amp; system controls</a></div>
+  </section>
+  <p class="foot">Install this page from your browser menu for a Windows or Debian 13 desktop app. Android users can use either this installable client or the native APK.</p>
+</main>
+<script src="/client.js" defer></script>
+</body></html>

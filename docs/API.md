@@ -1,6 +1,6 @@
 # DVHub gateway API
 
-Caddy protects all control endpoints and `/ws` with Basic Authentication. State-changing HTTP requests also require `X-DVHub-Control: 1`. The only anonymous API is the public, read-only YSF dashboard feed.
+Caddy protects administrator controls and the admin `/ws` ticket route with Basic Authentication. State-changing administrator requests also require `X-DVHub-Control: 1`. Public status feeds are read-only; client login and ticket endpoints accept only the restricted voice-account credentials described below.
 
 The Go service listens on `/run/dvhub/gateway.sock` on Linux. Clients must use the HTTPS reverse proxy; forged identity headers sent by unrelated local processes cannot reach the socket unless that process has membership of the `dvhub` group.
 
@@ -12,7 +12,7 @@ Connect to `/ws` on the configured HTTPS origin. Supported text commands include
 {"cmd":"node_state","node_id":2,"active":true,"mode":"DMR","target":"BrandMeister-UK-2341","tg":23530,"callsign":"M0ABC","dmr_id":2350000,"repeater_id":235000000,"password":"session-only credential","options":""}
 ```
 
-Only `mode: "DMR"` is accepted for generic sessions. Native YSF sessions, binary browser audio and `tx_start` are denied. Use the managed reflector/converter services for voice.
+Only `mode: "DMR"` is accepted for generic admin sessions. Native YSF sessions and legacy `tx_start` are denied. User voice uses the separate authenticated `/voice` transport and private AllStar node 1997.
 
 ```json
 {"cmd":"set_dv30","count":1,"addr1":"100.64.0.10:2468","addr2":""}
@@ -40,5 +40,18 @@ Vocoder targets must appear in `/etc/dvhub/vocoder-targets.txt`; `sw` and `hybri
   These counters observe live traffic without generating test audio.
 - `GET /api/vocoder/health` — cached DV30 identity/availability. The server's
   idle-only worker owns probing; dashboard requests never probe the hardware.
+
+### Voice-client endpoints
+
+- `POST /api/client/login` — exchanges an enabled callsign, registered DMR ID
+  and client password for a 12-hour bearer session.
+- `GET /api/client/session` — validates the current bearer session.
+- `POST /api/client/voice_ticket` — issues a one-use, 30-second WebSocket
+  ticket.
+- `GET /voice?ticket=…` — authenticated binary PCM16LE voice WebSocket. Text
+  messages `ptt_start` and `ptt_stop` control half-duplex TX; binary messages
+  contain exactly 160 8 kHz mono samples (320 bytes).
+- `GET|POST|DELETE /api/client/users` — administrator-only voice-account
+  management. Mutations require `X-DVHub-Control: 1`; hashes are never returned.
 
 Passwords and API tokens are accepted only for the relevant control operation and are never returned by a status endpoint.

@@ -9,7 +9,7 @@
         X-Frame-Options "SAMEORIGIN"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "geolocation=(), microphone=(), camera=()"
+        Permissions-Policy "geolocation=(), microphone=(self), camera=()"
         -Server
     }
 
@@ -43,6 +43,20 @@
 
         handle /api/ws_ticket {
             reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /api/client/login {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /api/client/session {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /api/client/voice_ticket {
+            reverse_proxy unix//run/dvhub/gateway.sock
+        }
+        handle /voice {
+            reverse_proxy unix//run/dvhub/gateway.sock {
+                flush_interval -1
+            }
         }
         handle /api/public/* {
             reverse_proxy unix//run/dvhub/gateway.sock

@@ -57,7 +57,7 @@ Access dashboard at `http://localhost:8080`
 
 ### Android remote
 
-The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls and DV30/DV3000 configuration. Native app audio and PTT are disabled; voice uses the managed gateway services.
+The native Android controller is in [`android/`](android/). It provides secure gateway control, live status and activity, network/talkgroup selection, YSF management, bridge-matrix controls and DV30/DV3000 configuration. Version 1.1.0 adds authenticated half-duplex voice RX/TX through the managed TG23530 conference.
 
 **[Download the latest Yorkshire Link HUB APK](https://github.com/2E0LXY/dvhub-gateway/releases)**
 
@@ -239,17 +239,20 @@ Auto HTTPS via Let's Encrypt - no certificates needed!
 5. **Click "CONNECT LINK"**
 6. **Use the managed radio/reflector services for live voice**
 
-Browser and Android PTT/RX are disabled. The dashboard is a control and
+The public dashboard remains read-only. Authenticated browser and Android voice
+clients use a dedicated private AllStar node; the dashboard is also a control and
 monitoring surface; it never constructs native DMR/YSF voice frames.
 
 ## 🏗️ Architecture
 
 ```
 Browser / Android
-  └─ authenticated HTTPS + WebSocket control
+  ├─ administrator: authenticated HTTPS + WebSocket control
+  └─ voice user: expiring bearer session + one-use voice ticket
        └─ Caddy
             └─ /run/dvhub/gateway.sock
                  ├─ dashboard, identities, status and service control
+                 ├─ 8 kHz PCM ─ USRP ─ private AllStar 1997 ─ 530471
                  ├─ YSFReflector / YSF2DMR
                  ├─ P25 / NXDN / AllStar converters
                  └─ bounded DV30/DV3000 hardware broker
@@ -258,6 +261,20 @@ Browser / Android
 ### Voice pipeline
 
 The local UDP broker accepts PCM/AMBE requests only when allowlisted AMBE hardware is available. It returns an error when every hardware device is busy, late or offline. There is no private software codec or browser-native protocol framer in the runtime.
+
+### Installable secure voice client
+
+Open `/client.html` in Chrome or Edge and choose **Install app** for Windows or
+Debian 13. Android users can install the native APK or use the same browser
+client. Administrators create voice-only accounts under **Admin → Voice
+Users**. Every account must match its RadioID callsign and seven-digit DMR ID;
+passwords are bcrypt-hashed and never returned by the API.
+
+The client sends and receives 160-sample, 20 ms PCM16LE frames. Private
+AllStar node 1997 permanently links this audio to node 530471 and the supervised
+TG23530 conference. A single-talker lock, two-second missing-audio watchdog and
+three-minute maximum call prevent stuck or looping transmissions. Voice users
+cannot access AI, network controls or system settings.
 
 ## 🔧 API Reference
 

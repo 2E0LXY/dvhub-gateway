@@ -1,10 +1,15 @@
 package uk.co.dvhub.android
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
+import android.view.MotionEvent
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -23,6 +28,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
     private lateinit var shell: ActivityMainBinding
     private lateinit var store: CredentialsStore
     private lateinit var client: GatewayClient
+    private lateinit var voice: VoiceClient
     private var settings = GatewaySettings()
     private val handler = Handler(Looper.getMainLooper())
     private val activityAdapter = ActivityAdapter()
@@ -46,6 +52,20 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
         shell = ActivityMainBinding.inflate(layoutInflater); setContentView(shell.root)
         store = CredentialsStore(this); settings = store.load()
         client = GatewayClient(this); client.configure(settings)
+        voice = VoiceClient(object : VoiceClient.Listener {
+            override fun onVoiceState(state: String, message: String) = runOnUiThread {
+                val text = when (state) {
+                    "connected", "receiving" -> "Voice online — listening"
+                    "transmitting" -> "Transmitting to TG23530"
+                    "busy" -> "Channel busy — another station is transmitting"
+                    "denied", "fault" -> message.ifBlank { "Voice connection failed" }
+                    else -> message.ifBlank { state }
+                }
+                link?.linkStatus?.text = text
+                link?.pttButton?.isEnabled = state in listOf("connected", "receiving", "transmitting")
+                shell.connectionBadge.text = if (state in listOf("connected", "receiving", "transmitting")) "VOICE ONLINE" else state.uppercase()
+            }
+        }); voice.configure(settings)
         shell.navigation.setOnItemSelectedListener {
             when (it.itemId) {
                 R.id.nav_dashboard -> showDashboard()
@@ -56,15 +76,25 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                 else -> false
             }
         }
-        showDashboard(); client.connect(); handler.post(poll)
+        applyRole()
+        if (settings.accountType == "user") { showLink(); voice.connect() }
+        else { showDashboard(); client.connect(); handler.post(poll) }
     }
 
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); client.close(); super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacksAndMessages(null); voice.close(); client.close(); super.onDestroy() }
+
+    private fun applyRole() {
+        val admin = settings.accountType != "user"
+        shell.navigation.menu.findItem(R.id.nav_dashboard).isVisible = admin
+        shell.navigation.menu.findItem(R.id.nav_conference).isVisible = admin
+        shell.navigation.menu.findItem(R.id.nav_activity).isVisible = admin
+    }
 
     private fun replace(view: View) { shell.content.removeAllViews(); shell.content.addView(view) }
 
     private fun showDashboard(): Boolean {
         val b = ViewDashboardBinding.inflate(layoutInflater); dashboard = b; replace(b.root)
+        b.openAdminAi.setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(settings.serverUrl.trimEnd('/') + "/admin"))) }
         b.ysfStart.setOnClickListener { ysfControl("start") }; b.ysfRestart.setOnClickListener { ysfControl("restart") }
         b.ysfStop.setOnClickListener { ysfControl("stop") }
         b.allstarRegister.setOnClickListener { configureAllStar(b) }
@@ -97,7 +127,25 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
                 b.linkStatus.text = if (requested) "Connection requested…" else "Disconnection requested…"
             }
         }
-		b.pttButton.isEnabled = false
+        if (settings.accountType == "user") {
+            b.networkSpinner.visibility = View.GONE; b.talkgroupSpinner.visibility = View.GONE
+            b.networkPassword.visibility = View.GONE; b.dmrOptions.visibility = View.GONE; b.linkButton.visibility = View.GONE
+            b.linkStatus.text = "Connecting secure voice…"
+        }
+        b.pttButton.isEnabled = false
+        b.pttButton.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 4107)
+                        toast("Allow microphone access, then hold PTT again")
+                    } else if (voice.startTransmit()) b.pttButton.text = "TRANSMITTING — RELEASE"
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { voice.stopTransmit(); b.pttButton.text = "HOLD TO TALK"; true }
+                else -> true
+            }
+        }
         loadTalkgroups(currentNetwork, b); updateLinkUi(b); return true
     }
 
@@ -171,6 +219,8 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
 
     private fun showSettings(): Boolean {
         val b = ViewSettingsBinding.inflate(layoutInflater); settingsView = b; replace(b.root)
+        b.accountType.adapter = darkAdapter(listOf("Administrator — AI and all system controls", "Radio user — voice TX/RX only"))
+        b.accountType.setSelection(if (settings.accountType == "user") 1 else 0)
         b.serverUrl.setText(settings.serverUrl); b.username.setText(settings.username); b.password.setText(settings.password)
         b.callsign.setText(settings.callsign); b.dmrId.setText(settings.dmrId); b.essid.setText(settings.essid); b.manualDmrId.setText(settings.manualDmrId)
         b.dv30Count.adapter = darkAdapter(listOf("One DV30 / DV3000", "Two DV30 / DV3000"))
@@ -182,7 +232,7 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             b.vocoderStatus.text = if (ok) "Hardware vocoder selected · $count device(s)" else "Gateway WebSocket is offline"
         }
         b.saveSettings.setOnClickListener { saveSettings(b, true) }
-        b.testSettings.setOnClickListener { saveSettings(b, false); client.get("/api/system") { result -> runOnUiThread {
+        b.testSettings.setOnClickListener { saveSettings(b, false); if (settings.accountType == "user") { voice.configure(settings); voice.connect(); b.settingsStatus.text = "Testing voice account…" } else client.get("/api/system") { result -> runOnUiThread {
             b.settingsStatus.text = if (result.isSuccess) "Connection successful — gateway authenticated" else "Connection failed: ${result.exceptionOrNull()?.message}"
         } } }
         return true
@@ -196,12 +246,15 @@ class MainActivity : AppCompatActivity(), GatewayClient.Listener {
             b.callsign.text.toString().uppercase(Locale.UK),
             b.dmrId.text.toString(),
             b.essid.text.toString().padStart(2, '0'),
-            b.manualDmrId.text.toString()
+            b.manualDmrId.text.toString(),
+            if (b.accountType.selectedItemPosition == 1) "user" else "admin"
         )
         if (!candidate.serverUrl.startsWith("https://") || candidate.password.isBlank() || candidate.dmrId.length != 7) {
             b.settingsStatus.text = "Use an HTTPS URL, gateway password and valid 7-digit DMR ID"; return
         }
-        settings = candidate; if (persist) store.save(settings); client.configure(settings); client.connect()
+        settings = candidate; if (persist) store.save(settings); applyRole()
+        if (settings.accountType == "user") { client.close(); voice.configure(settings); voice.connect() }
+        else { voice.close(); client.configure(settings); client.connect() }
         b.settingsStatus.text = if (persist) "Saved encrypted and connecting…" else "Testing…"
     }
 

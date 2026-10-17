@@ -41,8 +41,22 @@ class GatewayClient(private val listener: Listener) {
             listener.onConnection(false, "Enter the gateway password in Settings")
             return
         }
-        val wsUrl = settings.serverUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/ws"
-        val req = Request.Builder().url(wsUrl).header("Authorization", Credentials.basic(settings.username, settings.password)).build()
+        client.newCall(request("/api/ws_ticket")).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: java.io.IOException) = listener.onConnection(false, e.message ?: "Ticket request failed")
+            override fun onResponse(call: Call, response: Response) { response.use {
+                val text = it.body.string()
+                if (!it.isSuccessful) { listener.onConnection(false, "Authentication failed (${it.code})"); return }
+                val ticket = runCatching { gson.fromJson(text, JsonObject::class.java).get("ticket").asString }.getOrElse {
+                    listener.onConnection(false, "Invalid WebSocket ticket"); return
+                }
+                openSocket(ticket)
+            } }
+        })
+    }
+
+    private fun openSocket(ticket: String) {
+        val wsUrl = settings.serverUrl.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://") + "/ws?ticket=$ticket"
+        val req = Request.Builder().url(wsUrl).build()
         socket = client.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = listener.onConnection(true, "Connected")
             override fun onMessage(webSocket: WebSocket, text: String) {

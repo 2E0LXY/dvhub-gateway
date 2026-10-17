@@ -1,0 +1,83 @@
+#!/usr/bin/python3
+"""Install the private USRP app-audio node and link it to public node 530471."""
+
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+RPT = Path("/etc/asterisk/rpt.conf")
+BACKUP = Path("/var/lib/dvgateway/rpt.conf.before-client-node")
+NODE_LINE = "1997 = radio@127.0.0.1/1997,NONE"
+NODE_BLOCK = """[1997](node-main)
+rxchannel = USRP/127.0.0.1:34018:32018
+duplex = 0
+linktolink = yes
+telemdefault = 0
+nounkeyct = 1
+idrecording = |i2E0LXY
+idtime = 0
+startup_macro = pppppppppp *813530471
+"""
+
+
+def configure(text: str) -> str:
+    active = re.compile(r"(?m)^1997[ \t]*=[ \t]*radio@127\.0\.0\.1/1997,NONE[ \t]*$")
+    if not active.search(text):
+        public = "530471 = radio@127.0.0.1/530471,NONE"
+        if public not in text:
+            raise RuntimeError("public node 530471 is missing from [nodes]")
+        text = text.replace(public, public + "\n" + NODE_LINE, 1)
+    permanent = re.compile(r"(?m)^;[ \t]*813[ \t]*=[ \t]*ilink,13.*$")
+    if permanent.search(text):
+        text = permanent.sub("813 = ilink,13                    ; Permanently connect specified link -- transceive", text, count=1)
+    elif not re.search(r"(?m)^813[ \t]*=[ \t]*ilink,13(?:[ \t;]|$)", text):
+        raise RuntimeError("app_rpt permanent-link function 813 is unavailable")
+    node = re.compile(r"(?ms)^\[1997\]\(node-main\)\n.*?(?=\n\[|\Z)")
+    if node.search(text):
+        return node.sub(NODE_BLOCK.rstrip() + "\n", text, count=1)
+    return text.rstrip() + "\n\n" + NODE_BLOCK
+
+
+def command(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+
+def healthy() -> bool:
+    local = command("/usr/sbin/asterisk", "-rx", "rpt localnodes")
+    stats = command("/usr/sbin/asterisk", "-rx", "rpt stats 1997")
+    return local.returncode == 0 and "1997" in local.stdout and "530471" in stats.stdout
+
+
+def main() -> int:
+    if healthy():
+        print("Private voice node 1997 is active and linked to 530471")
+        return 0
+    original = RPT.read_text(encoding="utf-8")
+    updated = configure(original)
+    BACKUP.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(RPT, BACKUP)
+    temporary = RPT.with_name(RPT.name + ".dvhub-client-new")
+    temporary.write_text(updated, encoding="utf-8")
+    temporary.chmod(RPT.stat().st_mode)
+    temporary.replace(RPT)
+    restart = command("/usr/bin/systemctl", "restart", "asterisk.service")
+    if restart.returncode == 0:
+        for _ in range(20):
+            if healthy():
+                print("Private voice node 1997 is active and linked to 530471")
+                return 0
+            time.sleep(1)
+    shutil.copy2(BACKUP, RPT)
+    command("/usr/bin/systemctl", "restart", "asterisk.service")
+    raise RuntimeError("client voice node failed its health check; restored the previous rpt.conf")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        print(f"Client voice node setup failed: {exc}", file=sys.stderr)
+        raise SystemExit(1)

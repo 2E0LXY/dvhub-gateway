@@ -1,0 +1,4 @@
+class DVHubTX extends AudioWorkletProcessor{
+  constructor(options){super();this.inputRate=options.processorOptions.inputRate||sampleRate;this.ratio=this.inputRate/8000;this.phase=0;this.buffer=[]}
+  process(inputs){const input=inputs[0]?.[0];if(!input)return true;let sum=0;for(const value of input)sum+=value*value;let position=this.phase;while(position<input.length){const i=Math.min(input.length-1,Math.floor(position)),next=Math.min(input.length-1,i+1),mix=position-i;this.buffer.push(input[i]*(1-mix)+input[next]*mix);position+=this.ratio}this.phase=position-input.length;while(this.buffer.length>=160){const frame=new ArrayBuffer(320),view=new DataView(frame);for(let i=0;i<160;i++){const sample=Math.max(-1,Math.min(1,this.buffer[i]));view.setInt16(i*2,sample<0?sample*32768:sample*32767,true)}this.buffer.splice(0,160);this.port.postMessage({pcm:frame,level:Math.sqrt(sum/input.length)},[frame])}return true}
+}registerProcessor('dvhub-tx',DVHubTX);

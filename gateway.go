@@ -277,6 +277,7 @@ type Gateway struct {
 	trafficLast         map[string]time.Time
 	trafficHistory      []trafficHistoryEntry
 	qrz                 qrzLookupClient
+	clientAccess        *clientAccess
 }
 
 type trafficHistoryEntry struct {
@@ -481,6 +482,13 @@ func main() {
 	ai := newAIOperator(gw)
 	ai.restoreSchedules()
 	ai.registerHandlers()
+	gw.clientAccess = newClientAccess(gw)
+	gw.clientAccess.registerHandlers()
+	if err := gw.clientAccess.startVoice(); err != nil {
+		log.Printf("[CLIENT] Voice service unavailable: %v", err)
+	} else {
+		fmt.Printf("[CLIENT] Voice service listening on %s for private AllStar node 1997\n", clientVoiceListenAddr)
+	}
 
 	http.HandleFunc("/ws", gw.handleWS)
 	http.HandleFunc("/api/ws_ticket", gw.handleWSTicket)

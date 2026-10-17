@@ -23,6 +23,7 @@ readonly ALLSTAR_STATUS="/usr/local/sbin/dvhub-allstar-status"
 readonly ALLSTAR_CONTROL="/usr/local/sbin/dvhub-allstar-control"
 readonly ECHOLINK_CONFIGURATOR="/usr/local/sbin/dvhub-configure-echolink"
 readonly ECHOLINK_STATUS="/usr/local/sbin/dvhub-echolink-status"
+readonly CLIENT_NODE_CONFIGURATOR="/usr/local/sbin/dvhub-configure-client-node"
 readonly ALLSTAR_SUDOERS="/etc/sudoers.d/dvhub-allstar"
 readonly SERVICE_CONTROL="/usr/local/sbin/dvhub-service-control"
 readonly CONFERENCE_CREDENTIAL="/usr/local/sbin/dvhub-set-conference-credential"
@@ -98,6 +99,7 @@ validate_allstar_helpers() {
         "$source_root/deploy/reflectors/dvhub-refresh-reflector-ids"
     python3 -m py_compile \
         "$source_root/deploy/allstar/dvhub-configure-echolink" \
+        "$source_root/deploy/allstar/dvhub-configure-client-node" \
         "$source_root/deploy/dvhub-set-conference-credential"
     /usr/sbin/visudo -cf "$source_root/deploy/allstar/dvhub-allstar.sudoers" >/dev/null
     /usr/sbin/visudo -cf "$source_root/deploy/dvhub-gateway.sudoers" >/dev/null
@@ -113,6 +115,7 @@ install_allstar_helpers() {
     install -m 0755 "$source_root/deploy/allstar/dvhub-allstar-control" "$ALLSTAR_CONTROL.new"
     install -m 0755 "$source_root/deploy/allstar/dvhub-configure-echolink" "$ECHOLINK_CONFIGURATOR.new"
     install -m 0755 "$source_root/deploy/allstar/dvhub-echolink-status" "$ECHOLINK_STATUS.new"
+    install -m 0755 "$source_root/deploy/allstar/dvhub-configure-client-node" "$CLIENT_NODE_CONFIGURATOR.new"
     install -m 0440 "$source_root/deploy/allstar/dvhub-allstar.sudoers" "$ALLSTAR_SUDOERS.new"
     install -m 0755 "$source_root/deploy/dvhub-service-control" "$SERVICE_CONTROL.new"
     install -m 0755 "$source_root/deploy/dvhub-set-conference-credential" "$CONFERENCE_CREDENTIAL.new"
@@ -125,6 +128,7 @@ install_allstar_helpers() {
     mv -f -- "$ALLSTAR_CONTROL.new" "$ALLSTAR_CONTROL"
     mv -f -- "$ECHOLINK_CONFIGURATOR.new" "$ECHOLINK_CONFIGURATOR"
     mv -f -- "$ECHOLINK_STATUS.new" "$ECHOLINK_STATUS"
+    mv -f -- "$CLIENT_NODE_CONFIGURATOR.new" "$CLIENT_NODE_CONFIGURATOR"
     mv -f -- "$ALLSTAR_SUDOERS.new" "$ALLSTAR_SUDOERS"
     mv -f -- "$SERVICE_CONTROL.new" "$SERVICE_CONTROL"
     mv -f -- "$CONFERENCE_CREDENTIAL.new" "$CONFERENCE_CREDENTIAL"
@@ -225,6 +229,13 @@ install -d -m 0750 "$rollback_dir/web"
 [[ -e "$BINARY" ]] && cp -a -- "$BINARY" "$rollback_dir/dvhub-gateway"
 [[ -e "$WEB_ROOT/dashboard.html" ]] && cp -a -- "$WEB_ROOT/dashboard.html" "$rollback_dir/web/dashboard.html"
 [[ -e "$WEB_ROOT/ysf-status.html" ]] && cp -a -- "$WEB_ROOT/ysf-status.html" "$rollback_dir/web/ysf-status.html"
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js; do
+    if [[ -e "$WEB_ROOT/$web_file" ]]; then
+        cp -a -- "$WEB_ROOT/$web_file" "$rollback_dir/web/$web_file"
+    else
+        : >"$rollback_dir/web/$web_file.missing"
+    fi
+done
 [[ -e "$UNIT" ]] && cp -a -- "$UNIT" "$rollback_dir/dvhub-gateway.service"
 if [[ "$DEPLOY_CADDY" == "1" && -e "$CADDYFILE" ]]; then
     cp -a -- "$CADDYFILE" "$rollback_dir/Caddyfile"
@@ -235,6 +246,7 @@ fi
 for path in \
     "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
     "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS" \
+    "$CLIENT_NODE_CONFIGURATOR" \
     "$SERVICE_CONTROL" "$CONFERENCE_CREDENTIAL" "$GATEWAY_SUDOERS" \
     "$REFLECTOR_ID_REFRESH" "$REFLECTOR_ID_UNIT" "$REFLECTOR_ID_TIMER"; do
     name="$(basename "$path")"
@@ -252,6 +264,13 @@ rollback() {
     [[ -e "$rollback_dir/dvhub-gateway" ]] && install -m 0755 "$rollback_dir/dvhub-gateway" "$BINARY"
     [[ -e "$rollback_dir/web/dashboard.html" ]] && install -m 0644 "$rollback_dir/web/dashboard.html" "$WEB_ROOT/dashboard.html"
     [[ -e "$rollback_dir/web/ysf-status.html" ]] && install -m 0644 "$rollback_dir/web/ysf-status.html" "$WEB_ROOT/ysf-status.html"
+    for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js; do
+        if [[ -e "$rollback_dir/web/$web_file.missing" ]]; then
+            rm -f -- "$WEB_ROOT/$web_file"
+        elif [[ -e "$rollback_dir/web/$web_file" ]]; then
+            install -m 0644 "$rollback_dir/web/$web_file" "$WEB_ROOT/$web_file"
+        fi
+    done
     [[ -e "$rollback_dir/dvhub-gateway.service" ]] && install -m 0644 "$rollback_dir/dvhub-gateway.service" "$UNIT"
     if [[ "$DEPLOY_CADDY" == "1" && -e "$rollback_dir/Caddyfile" ]]; then
         install -m 0644 "$rollback_dir/Caddyfile" "$CADDYFILE"
@@ -262,6 +281,7 @@ rollback() {
     for path in \
         "$ALLSTAR_CONFIGURATOR" "$ALLSTAR_STATUS" "$ALLSTAR_CONTROL" \
         "$ECHOLINK_CONFIGURATOR" "$ECHOLINK_STATUS" "$ALLSTAR_SUDOERS" \
+        "$CLIENT_NODE_CONFIGURATOR" \
         "$SERVICE_CONTROL" "$CONFERENCE_CREDENTIAL" "$GATEWAY_SUDOERS" \
         "$REFLECTOR_ID_REFRESH" "$REFLECTOR_ID_UNIT" "$REFLECTOR_ID_TIMER"; do
         name="$(basename "$path")"
@@ -284,6 +304,9 @@ install -d -m 0755 "$WEB_ROOT"
 install -m 0755 "$work_dir/dvhub-gateway" "$BINARY.new"
 install -m 0644 "$work_dir/dashboard.html" "$WEB_ROOT/dashboard.html.new"
 install -m 0644 "$work_dir/ysf-status.html" "$WEB_ROOT/ysf-status.html.new"
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js; do
+    install -m 0644 "$work_dir/$web_file" "$WEB_ROOT/$web_file.new"
+done
 install -m 0644 "$work_dir/deploy/dvhub-gateway.service" "$UNIT.new"
 if [[ "$DEPLOY_CADDY" == "1" ]]; then
     install -m 0644 "$work_dir/Caddyfile" "$CADDYFILE.new"
@@ -294,6 +317,9 @@ install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.timer" "$DEPLOY_TIMER.new"
 mv -f -- "$BINARY.new" "$BINARY"
 mv -f -- "$WEB_ROOT/dashboard.html.new" "$WEB_ROOT/dashboard.html"
 mv -f -- "$WEB_ROOT/ysf-status.html.new" "$WEB_ROOT/ysf-status.html"
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js; do
+    mv -f -- "$WEB_ROOT/$web_file.new" "$WEB_ROOT/$web_file"
+done
 mv -f -- "$UNIT.new" "$UNIT"
 if [[ "$DEPLOY_CADDY" == "1" ]]; then
     mv -f -- "$CADDYFILE.new" "$CADDYFILE"
