@@ -817,18 +817,18 @@ func TestVocoderTargetConcurrencyIsBounded(t *testing.T) {
 	}
 }
 
-func TestTrafficHistoryKeepsTwentyDistinctCalls(t *testing.T) {
+func TestTrafficHistoryKeepsFiftyDistinctCalls(t *testing.T) {
 	gateway := &Gateway{}
-	for i := 0; i < 21; i++ {
+	for i := 0; i < 51; i++ {
 		gateway.recordTrafficHistory(fmt.Sprintf("call-%d", i), map[string]any{"id": i})
 	}
 	rows := gateway.trafficHistorySnapshot()
-	if len(rows) != 20 || rows[0]["id"] != 20 || rows[19]["id"] != 1 {
+	if len(rows) != 50 || rows[0]["id"] != 50 || rows[49]["id"] != 1 {
 		t.Fatalf("unexpected bounded traffic history: %#v", rows)
 	}
 	gateway.recordTrafficHistory("call-10", map[string]any{"id": 99})
 	rows = gateway.trafficHistorySnapshot()
-	if len(rows) != 20 || rows[10]["id"] != 99 {
+	if len(rows) != 50 || rows[40]["id"] != 99 {
 		t.Fatalf("same stream was not updated in place: %#v", rows)
 	}
 }

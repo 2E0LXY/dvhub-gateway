@@ -3704,6 +3704,25 @@ func (g *Gateway) pushTrafficWS(nodeID int, mode, network string, sourceID uint3
 		"rssi":           meta.RSSI,
 		"rssi_available": meta.RSSIAvailable,
 	}
+	// A master may stamp the receiving connection's ID onto routed packets.
+	// Retain the raw field but never present our own login as the RF origin.
+	data["origin_status"] = "unverified"
+	if meta.RepeaterID == 0 {
+		data["origin_status"] = "unknown"
+	} else {
+		for _, session := range g.sessions {
+			if session == nil {
+				continue
+			}
+			session.mu.RLock()
+			ownID := session.RepeaterID
+			session.mu.RUnlock()
+			if ownID != 0 && ownID == meta.RepeaterID {
+				data["origin_status"] = "receiving_connection"
+				break
+			}
+		}
+	}
 	g.recordTrafficHistory(trafficKey, data)
 	msg, _ := json.Marshal(map[string]any{"type": "traffic", "data": data})
 	g.broadcastText(msg)
@@ -3719,8 +3738,8 @@ func (g *Gateway) recordTrafficHistory(key string, data map[string]any) {
 		}
 	}
 	g.trafficHistory = append([]trafficHistoryEntry{{key: key, data: data}}, g.trafficHistory...)
-	if len(g.trafficHistory) > 20 {
-		g.trafficHistory = g.trafficHistory[:20]
+	if len(g.trafficHistory) > 50 {
+		g.trafficHistory = g.trafficHistory[:50]
 	}
 }
 
