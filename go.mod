@@ -2,7 +2,7 @@ module dvhub-gateway
 
 go 1.21
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require github.com/gorilla/websocket v1.5.3
 

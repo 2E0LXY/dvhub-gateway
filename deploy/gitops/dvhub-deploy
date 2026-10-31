@@ -229,7 +229,7 @@ install -d -m 0750 "$rollback_dir/web"
 [[ -e "$BINARY" ]] && cp -a -- "$BINARY" "$rollback_dir/dvhub-gateway"
 [[ -e "$WEB_ROOT/dashboard.html" ]] && cp -a -- "$WEB_ROOT/dashboard.html" "$rollback_dir/web/dashboard.html"
 [[ -e "$WEB_ROOT/ysf-status.html" ]] && cp -a -- "$WEB_ROOT/ysf-status.html" "$rollback_dir/web/ysf-status.html"
-for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html; do
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html mode-status.css mode-status.js dmr-status.html nxdn-status.html p25-status.html m17-status.html dstar-status.html xlx-status.html echolink-status.html allstar-status.html conference-status.html; do
     if [[ -e "$WEB_ROOT/$web_file" ]]; then
         cp -a -- "$WEB_ROOT/$web_file" "$rollback_dir/web/$web_file"
     else
@@ -264,7 +264,7 @@ rollback() {
     [[ -e "$rollback_dir/dvhub-gateway" ]] && install -m 0755 "$rollback_dir/dvhub-gateway" "$BINARY"
     [[ -e "$rollback_dir/web/dashboard.html" ]] && install -m 0644 "$rollback_dir/web/dashboard.html" "$WEB_ROOT/dashboard.html"
     [[ -e "$rollback_dir/web/ysf-status.html" ]] && install -m 0644 "$rollback_dir/web/ysf-status.html" "$WEB_ROOT/ysf-status.html"
-    for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html; do
+    for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html mode-status.css mode-status.js dmr-status.html nxdn-status.html p25-status.html m17-status.html dstar-status.html xlx-status.html echolink-status.html allstar-status.html conference-status.html; do
         if [[ -e "$rollback_dir/web/$web_file.missing" ]]; then
             rm -f -- "$WEB_ROOT/$web_file"
         elif [[ -e "$rollback_dir/web/$web_file" ]]; then
@@ -304,7 +304,7 @@ install -d -m 0755 "$WEB_ROOT"
 install -m 0755 "$work_dir/dvhub-gateway" "$BINARY.new"
 install -m 0644 "$work_dir/dashboard.html" "$WEB_ROOT/dashboard.html.new"
 install -m 0644 "$work_dir/ysf-status.html" "$WEB_ROOT/ysf-status.html.new"
-for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html; do
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html mode-status.css mode-status.js dmr-status.html nxdn-status.html p25-status.html m17-status.html dstar-status.html xlx-status.html echolink-status.html allstar-status.html conference-status.html; do
     install -m 0644 "$work_dir/$web_file" "$WEB_ROOT/$web_file.new"
 done
 install -m 0644 "$work_dir/deploy/dvhub-gateway.service" "$UNIT.new"
@@ -317,7 +317,7 @@ install -m 0644 "$work_dir/deploy/gitops/dvhub-deploy.timer" "$DEPLOY_TIMER.new"
 mv -f -- "$BINARY.new" "$BINARY"
 mv -f -- "$WEB_ROOT/dashboard.html.new" "$WEB_ROOT/dashboard.html"
 mv -f -- "$WEB_ROOT/ysf-status.html.new" "$WEB_ROOT/ysf-status.html"
-for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html; do
+for web_file in client.html client.js voice-worklet.js client.webmanifest client-icon.svg client-sw.js DVHub-Remote.html mode-dashboards.html mode-status.css mode-status.js dmr-status.html nxdn-status.html p25-status.html m17-status.html dstar-status.html xlx-status.html echolink-status.html allstar-status.html conference-status.html; do
     mv -f -- "$WEB_ROOT/$web_file.new" "$WEB_ROOT/$web_file"
 done
 mv -f -- "$UNIT.new" "$UNIT"

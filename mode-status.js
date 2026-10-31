@@ -1,0 +1,24 @@
+(function(root){'use strict';
+const definitions={
+dmr:{label:'DMR',identity:'Local Homebrew master | shared TG23530',directory:'Yorkshire Link',url:'https://dvref.com/dmr/?q=Yorkshire',units:['dvhub-gateway.service'],modes:['DMR']},
+nxdn:{label:'NXDN',identity:'NXDN reflector | TG23530 | UDP 41400',directory:'NXDN 23530',url:'https://dvref.com/nxdn/?q=23530',units:['nxdnreflector.service','nxdn2dmr.service'],modes:['NXDN']},
+p25:{label:'P25',identity:'P25 reflector | TG23530 | UDP 41000',directory:'P25 23530',url:'https://dvref.com/p25/?q=23530',units:['p25reflector.service','p252dmr.service'],modes:['P25']},
+m17:{label:'M17',identity:'M17-YLH | module A | UDP 17000',directory:'M17-YLH',url:'https://dvref.com/mrefd/m17-ylh',units:['mrefd.service','usrp2m17.service'],modes:['M17']},
+dstar:{label:'D-STAR / XLX',identity:'XLXYOR | module A | DVxCode bridge',directory:'XLXYOR (listing unverified)',units:['xlxd.service','dvxbridge.service'],modes:['DSTAR','D-STAR','XLX']},
+echolink:{label:'EchoLink',identity:'2E0LXY-L | node 621907 | via AllStar 530471',directory:'EchoLink station directory',units:['asterisk.service','usrp2dmr.service'],modes:['ECHOLINK']},
+allstar:{label:'AllStar',identity:'AllStar node 530471 | conference PCM bus',directory:'AllStar node 530471',units:['asterisk.service','usrp2dmr.service'],modes:['ALLSTAR']},
+conference:{label:'TG23530',identity:'Yorkshire conference | shared cross-mode routing',directory:'Yorkshire Link',units:['dvhub-gateway.service','usrp2dmr.service','ysf2dmr.service'],modes:[]}
+};
+function matchingCalls(activity,id){const def=definitions[id];if(!def)return[];return(activity||[]).filter(x=>id==='conference'?String(x.target||'').includes('23530'):def.modes.includes(String(x.mode||'').toUpperCase())).slice(0,50)}
+function routeFor(data,id){return Array.isArray(data.routes)?data.routes.find(x=>x.id===id):undefined}
+if(typeof module!=='undefined'&&module.exports){module.exports={definitions,matchingCalls,routeFor};return}
+const $=id=>document.getElementById(id),slug=location.pathname.split('/').pop().replace('-status.html',''),id=slug==='xlx'?'dstar':slug,def=definitions[id];if(!def){$('status').textContent='UNKNOWN MODE';return}
+$('identity').textContent=def.identity;
+function link(container,label,url){const a=document.createElement('a');a.textContent=label;a.href=url;container.append(a);return a}
+if(def.url){const a=link($('directory'),def.directory,def.url);a.target='_blank';a.rel='noopener'}else $('directory').textContent=def.directory;
+link($('nav'),'YSF','/ysf-status.html');for(const [key,d]of Object.entries(definitions))link($('nav'),d.label,'/'+key+'-status.html');
+function row(body,values){const tr=document.createElement('tr');for(const value of values){const td=document.createElement('td');td.textContent=value??'Not supplied';tr.append(td)}body.append(tr)}
+function render(data){if(!Array.isArray(data.routes)||!Array.isArray(data.system?.services))throw Error('Invalid telemetry');const route=routeFor(data,id);$('status').textContent=route?({good:'SERVICES READY',warning:'DEGRADED',fault:'FAULT'}[route.status]||'UNKNOWN'):'NO MODE TELEMETRY';$('status').className='pill '+(route?.status==='good'?'running':route?.status==='warning'?'warning':'fault');$('detail').textContent=route?.detail||'Mode status not supplied';$('updated').textContent=data.generated_at||'Timestamp not supplied';const calls=matchingCalls(data.activity,id);$('count').textContent=calls.length+' of '+(data.activity||[]).length+' retained';const tbody=$('heard');tbody.replaceChildren();for(const x of calls)row(tbody,[x.timestamp||[x.date,x.time].filter(Boolean).join(' '),x.arrival||x.network,x.callsign||x.raw_id,x.id||x.raw_id,x.name,x.target]);if(!calls.length)row(tbody,['No matching records in retained history.','','','','','']);const services=$('services');services.replaceChildren();for(const unit of def.units){const state=data.system.services.find(x=>x.unit===unit);row(services,[state?.label||unit,state?state.active?'Running':'Not running':'Unknown',state?.detail||'Status not supplied'])}}
+let busy=false;async function refresh(){if(busy||document.hidden)return;busy=true;try{const response=await fetch('/api/public/dashboard',{cache:'no-store',signal:AbortSignal.timeout(8000)});if(!response.ok)throw Error('HTTP '+response.status);render(await response.json())}catch{$('status').textContent='TELEMETRY UNAVAILABLE';$('status').className='pill fault';$('detail').textContent='Refresh failed. Any previous rows below are stale, not live status.'}finally{busy=false}}
+refresh();setInterval(refresh,10000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
+})(typeof globalThis!=='undefined'?globalThis:this);

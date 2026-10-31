@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26.9'
+          go-version: '1.26.10'
           check-latest: true
           cache: true
       - run: go test -race ./...
@@ -56,5 +56,9 @@ jobs:
           node --check /tmp/dvhub-dashboard.js
       - name: Verify standalone voice client safety
         run: node remote_client.test.cjs
+      - name: Verify public mode dashboards
+        run: |
+          node --check mode-status.js
+          node mode_status.test.cjs
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
