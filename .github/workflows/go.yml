@@ -60,5 +60,6 @@ jobs:
         run: |
           node --check mode-status.js
           node mode_status.test.cjs
+          node dashboard_navigation.test.cjs
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
