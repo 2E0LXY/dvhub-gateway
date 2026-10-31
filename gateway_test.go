@@ -296,7 +296,7 @@ func TestQualityLevelUsesVoiceRelevantThresholds(t *testing.T) {
 		{"idle without sample", 0, 0, false, "idle"},
 		{"small transient stays good", 0.28, 0, true, "good"},
 		{"half percent warns", 0.5, 0, true, "warning"},
-		{"single interface error warns", 0.14, 1, true, "warning"},
+		{"single interface error stays good", 0.14, 1, true, "good"},
 		{"two percent faults", 2, 0, true, "fault"},
 		{"repeated interface errors fault", 0.14, 5, true, "fault"},
 	}
@@ -442,8 +442,8 @@ func TestPassiveDMRQualityDetectsSequenceGap(t *testing.T) {
 	if snapshot["missing_packets"] != uint64(1) {
 		t.Fatalf("missing packets = %v, want 1", snapshot["missing_packets"])
 	}
-	if snapshot["level"] != "fault" {
-		t.Fatalf("DMR quality level = %v, want fault", snapshot["level"])
+	if snapshot["level"] != "good" {
+		t.Fatalf("isolated DMR gap level = %v, want good", snapshot["level"])
 	}
 }
 
@@ -455,8 +455,8 @@ func TestPassiveVocoderQualityFlagsDeadlineMiss(t *testing.T) {
 	if snapshot["failures"] != uint64(1) {
 		t.Fatalf("vocoder failures = %v, want 1", snapshot["failures"])
 	}
-	if snapshot["level"] != "fault" {
-		t.Fatalf("vocoder quality level = %v, want fault", snapshot["level"])
+	if snapshot["level"] != "warning" {
+		t.Fatalf("sparse vocoder failure level = %v, want warning rather than fault", snapshot["level"])
 	}
 }
 

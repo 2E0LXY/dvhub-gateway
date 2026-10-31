@@ -907,7 +907,8 @@ func (quality *passiveNetworkQuality) observe(sample networkCounterSample) {
 	quality.previous = sample
 	quality.interfaceID = sample.Interface
 	quality.updated = sample.At
-	if previous.Interface != sample.Interface || previous.At.IsZero() || sample.Packets < previous.Packets || sample.Dropped < previous.Dropped {
+	if previous.Interface != sample.Interface || previous.At.IsZero() || sample.Packets < previous.Packets || sample.Dropped < previous.Dropped || sample.Errors < previous.Errors {
+		quality.hasDelta = false
 		return
 	}
 	quality.packets = sample.Packets - previous.Packets
@@ -931,21 +932,37 @@ func qualityLevel(lossPercent float64, errors uint64, available bool) string {
 	if errors >= 5 || lossPercent >= 2 {
 		return "fault"
 	}
-	if errors > 0 || lossPercent >= 0.5 {
+	if errors >= 3 || lossPercent >= 0.5 {
 		return "warning"
 	}
 	return "good"
 }
 
+// Percentages alone make tiny samples look catastrophic. Keep isolated drops
+// visible in the counters, but require several events before alerting.
+func sampledLossLevel(lossPercent float64, errors, received, missing uint64, available bool) string {
+	if !available || received+missing == 0 && errors == 0 {
+		return "idle"
+	}
+	level := qualityLevel(lossPercent, errors, true)
+	if level == "fault" && missing < 5 && errors < 5 {
+		level = "warning"
+	}
+	if level == "warning" && missing < 3 && errors < 3 {
+		level = "good"
+	}
+	return level
+}
+
 func (quality *passiveNetworkQuality) snapshot() map[string]any {
 	quality.mu.RLock()
 	defer quality.mu.RUnlock()
-	available := quality.hasDelta && !quality.updated.IsZero()
+	available := quality.hasDelta && !quality.updated.IsZero() && time.Since(quality.updated) < 20*time.Second
 	return map[string]any{
 		"mode": "passive", "interface": quality.interfaceID, "available": available,
 		"sample_seconds": 5, "received_packets": quality.packets, "dropped_packets": quality.dropped,
 		"errors": quality.errors, "loss_percent": quality.lossPercent,
-		"level": qualityLevel(quality.lossPercent, quality.errors, available),
+		"level": sampledLossLevel(quality.lossPercent, quality.errors, quality.packets, quality.dropped, available),
 	}
 }
 
@@ -958,24 +975,20 @@ func (quality *passiveDMRQuality) observe(route string, meta DMRTrafficMeta) {
 	quality.mu.Lock()
 	defer quality.mu.Unlock()
 	event := dmrQualityEvent{At: now, Received: 1}
-	advanceSequence := true
 	if previous, exists := quality.flows[key]; exists && now.Sub(previous.SeenAt) < 2*time.Second {
 		delta := int(uint8(meta.Sequence - previous.Sequence))
+		// Duplicates and reordered frames do not measure new playout gaps.
+		if delta == 0 || delta >= 128 {
+			return
+		}
 		if delta > 1 && delta < 128 {
 			event.Missing = uint64(delta - 1)
-		}
-		// A backwards delta is a reordered/late duplicate, not evidence that
-		// the entire wraparound range was lost. Keep the newest sequence.
-		if delta >= 128 {
-			advanceSequence = false
 		}
 		intervalMS := float64(now.Sub(previous.SeenAt).Microseconds()) / 1000
 		event.JitterMS = math.Abs(intervalMS - 60)
 		event.Stutter = event.Missing > 0 || intervalMS > 120
 	}
-	if advanceSequence {
-		quality.flows[key] = dmrFlowQuality{Sequence: meta.Sequence, SeenAt: now}
-	}
+	quality.flows[key] = dmrFlowQuality{Sequence: meta.Sequence, SeenAt: now}
 	quality.events = append(quality.events, event)
 	if now.Sub(quality.lastPrune) >= 30*time.Second {
 		quality.lastPrune = now
@@ -999,7 +1012,7 @@ func (quality *passiveDMRQuality) snapshot() map[string]any {
 	quality.mu.Lock()
 	events := append([]dmrQualityEvent(nil), quality.events...)
 	quality.mu.Unlock()
-	cutoff := time.Now().Add(-5 * time.Minute)
+	cutoff := time.Now().Add(-30 * time.Second)
 	var received, missing, stutters uint64
 	jitters := make([]float64, 0, len(events))
 	var lastSeen time.Time
@@ -1029,11 +1042,14 @@ func (quality *passiveDMRQuality) snapshot() map[string]any {
 	lossLevel := "idle"
 	stutterLevel := "idle"
 	if received > 0 {
-		lossLevel = qualityLevel(lossPercent, 0, true)
+		lossLevel = sampledLossLevel(lossPercent, 0, received, missing, true)
 		stutterLevel = "good"
-		if p95Jitter >= 40 || stutters >= 3 {
+		stutterRate := 100 * float64(stutters) / float64(received)
+		// Jitter is arrival variation, not latency or proof of audible stutter.
+		// Require repeated actual gaps as well as a meaningful event rate.
+		if stutters >= 5 && stutterRate >= 5 {
 			stutterLevel = "fault"
-		} else if p95Jitter >= 20 || stutters > 0 {
+		} else if stutters >= 3 && stutterRate >= 1 {
 			stutterLevel = "warning"
 		}
 	}
@@ -1042,7 +1058,7 @@ func (quality *passiveDMRQuality) snapshot() map[string]any {
 		overallLevel = stutterLevel
 	}
 	return map[string]any{
-		"mode": "passive", "window_seconds": 300, "active": active, "received_packets": received,
+		"mode": "passive", "window_seconds": 30, "active": active, "received_packets": received,
 		"missing_packets": missing, "loss_percent": lossPercent, "jitter_p95_ms": p95Jitter,
 		"stutter_events": stutters, "loss_level": lossLevel, "stutter_level": stutterLevel, "level": overallLevel,
 	}
@@ -1091,16 +1107,17 @@ func (quality *passiveVocoderQuality) snapshot() map[string]any {
 	quality.mu.Lock()
 	samples := append([]vocoderQualitySample(nil), quality.samples...)
 	quality.mu.Unlock()
-	cutoff := time.Now().Add(-5 * time.Minute)
+	cutoff := time.Now().Add(-30 * time.Second)
 	latencies := make([]float64, 0, len(samples))
 	var failures uint64
 	for _, sample := range samples {
 		if sample.At.Before(cutoff) {
 			continue
 		}
-		latencies = append(latencies, sample.LatencyMS)
 		if !sample.Success {
 			failures++
+		} else {
+			latencies = append(latencies, sample.LatencyMS)
 		}
 	}
 	sort.Float64s(latencies)
@@ -1110,20 +1127,21 @@ func (quality *passiveVocoderQuality) snapshot() map[string]any {
 		maxLatency = latencies[len(latencies)-1]
 	}
 	failurePercent := 0.0
-	if len(latencies) > 0 {
-		failurePercent = 100 * float64(failures) / float64(len(latencies))
+	total := uint64(len(latencies)) + failures
+	if total > 0 {
+		failurePercent = 100 * float64(failures) / float64(total)
 	}
 	level := "idle"
-	if len(latencies) > 0 {
+	if total > 0 {
 		level = "good"
-		if failurePercent >= 2 || p95 >= 40 {
+		if failures >= 3 && failurePercent >= 2 || len(latencies) >= 20 && p95 >= 300 {
 			level = "fault"
-		} else if failurePercent > 0 || p95 >= 20 {
+		} else if failures >= 2 && failurePercent >= 0.5 || failures > 0 && failurePercent >= 10 || len(latencies) >= 20 && p95 >= 150 {
 			level = "warning"
 		}
 	}
 	return map[string]any{
-		"mode": "passive", "window_seconds": 300, "samples": len(latencies), "failures": failures,
+		"mode": "passive", "window_seconds": 30, "samples": total, "successful_samples": len(latencies), "failures": failures,
 		"failure_percent": failurePercent, "latency_p95_ms": p95, "latency_max_ms": maxLatency,
 		"level": level,
 	}
