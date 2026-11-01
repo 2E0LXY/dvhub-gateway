@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),{models,escape,flowEvidence}=require('./public-mode-details.js');
+const m=models({routes:[{id:'m17',status:'good',detail:'Ready'}],activity:[{mode:'M17',callsign:'TEST'},{mode:'DMR',target:'GROUP 23530'}],system:{services:[]}});
+assert.equal(m.length,9);assert.equal(m.find(x=>x.id==='m17').last.callsign,'TEST');assert.equal(m.find(x=>x.id==='ysf').status,'inactive');assert.equal(m.find(x=>x.id==='conference').calls.length,1);assert.equal(m.find(x=>x.id==='m17').services[0].detail,'Not supplied');assert.equal(escape('<script>'), '&lt;script&gt;');
+assert.equal(flowEvidence('good',false,'dmr','dmr'),'idle');assert.equal(flowEvidence('good',true,'ysf',''),'unknown-source');assert.equal(flowEvidence('good',true,'ysf','dmr'),'eligible');assert.equal(flowEvidence('good',true,'dmr','dmr'),'origin');assert.equal(flowEvidence('fault',true,'ysf','dmr'),'unavailable');console.log('PASS: all modes, missing telemetry, mode-only history, escaped text and honest flow evidence');
+const fs=require('node:fs'),vm=require('node:vm'),html=fs.readFileSync('dashboard.html','utf8'),script=fs.readFileSync('public-mode-details.js','utf8');
+assert.ok(html.includes('<script src="/public-mode-details.js"></script>'),'Helper must actually be loaded by the page');
+assert.ok(html.includes('window.publicFlowEvidence?.('));assert.ok(html.includes('id="public-mode-details"'));
+const holder={innerHTML:''},context={window:{},document:{getElementById:()=>holder,hidden:false},AbortSignal,Date,fetch:async(url,options)=>{assert.equal(url,'/api/public/ysf_dashboard');assert.ok(!options.method||options.method==='GET');return{ok:true,json:async()=>({connected_count:0,connected_gateways:[]})}}};
+vm.runInNewContext(script,context);context.window.renderPublicModeDetails({routes:[{id:'m17',status:'good'}],system:{services:[]},activity:[{mode:'M17',callsign:'<script>evil</script>'}]});
+for(const mode of ['dmr','ysf','nxdn','p25','m17','dstar','echolink','allstar','conference'])assert.ok(holder.innerHTML.includes('id="details-'+mode+'"'));
+assert.ok(holder.innerHTML.includes('&lt;script&gt;evil&lt;/script&gt;'));assert.ok(!holder.innerHTML.includes('<script>evil'));
+context.window.publicModeDetailsUnavailable();assert.ok(holder.innerHTML.includes('UNKNOWN'));console.log('PASS: actual helper wiring, nine rendered panels, GET-only data, escaped activity and stale state');

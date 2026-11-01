@@ -62,5 +62,7 @@ jobs:
           node mode_status.test.cjs
           node dashboard_navigation.test.cjs
           node health_display.test.cjs
+          node --check public-mode-details.js
+          node public_mode_details.test.cjs
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
