@@ -1,0 +1,13 @@
+name: ShipProof Portfolio
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inventory:
+    uses: 2E0LXY/Advanced-IP-Analyser/.github/workflows/shipproof-portfolio-reusable.yml@a6f19df261bbbe95b3abdf1302f93eac784a8b3a
+    permissions:
+      contents: read
