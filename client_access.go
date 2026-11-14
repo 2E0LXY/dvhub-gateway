@@ -178,39 +178,39 @@ func jsonResponse(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func (a *clientAccess) allowLogin(remote string) bool {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		host = remote
-	}
+func (a *clientAccess) allowLogin(key string) bool {
 	now := time.Now()
 	cutoff := now.Add(-time.Minute)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	recent := a.loginAttempts[host][:0]
-	for _, attempt := range a.loginAttempts[host] {
+	for host, attempts := range a.loginAttempts {
+		if len(attempts) == 0 || !attempts[len(attempts)-1].After(cutoff) {
+			delete(a.loginAttempts, host)
+		}
+	}
+	recent := a.loginAttempts[key][:0]
+	for _, attempt := range a.loginAttempts[key] {
 		if attempt.After(cutoff) {
 			recent = append(recent, attempt)
 		}
 	}
 	if len(recent) >= 8 {
-		a.loginAttempts[host] = recent
+		a.loginAttempts[key] = recent
 		return false
 	}
-	a.loginAttempts[host] = append(recent, now)
+	a.loginAttempts[key] = append(recent, now)
 	return true
 }
+
+// dummyPasswordHash equalises timing when the account does not exist.
+var dummyPasswordHash, _ = bcrypt.GenerateFromPassword([]byte("dvhub-dummy-password"), bcrypt.DefaultCost)
 
 func (a *clientAccess) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, map[string]string{"error": "Method not allowed"})
 		return
 	}
-	remote := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
-	if remote == "" {
-		remote = r.RemoteAddr
-	}
-	if !a.allowLogin(remote) {
+	if !a.allowLogin(requestClientKey(r)) {
 		jsonResponse(w, http.StatusTooManyRequests, map[string]string{"error": "Too many login attempts"})
 		return
 	}
@@ -219,7 +219,7 @@ func (a *clientAccess) handleLogin(w http.ResponseWriter, r *http.Request) {
 		DMRID    uint32 `json:"dmr_id"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&request); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
 		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "Invalid request"})
 		return
 	}
@@ -227,7 +227,12 @@ func (a *clientAccess) handleLogin(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	user, ok := a.users[request.Callsign]
 	a.mu.Unlock()
-	if !ok || !user.Enabled || user.DMRID != request.DMRID || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(request.Password)) != nil {
+	hash := []byte(user.PasswordHash)
+	if !ok {
+		hash = dummyPasswordHash
+	}
+	passwordErr := bcrypt.CompareHashAndPassword(hash, []byte(request.Password))
+	if !ok || !user.Enabled || user.DMRID != request.DMRID || passwordErr != nil {
 		time.Sleep(150 * time.Millisecond)
 		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "Invalid callsign, DMR ID or password"})
 		return

@@ -26,6 +26,13 @@ ProtectSystem=strict
 # every reflector/converter package has created its configuration directory.
 ReadWritePaths=-/var/lib/dvgateway -/var/log/ysf2dmr -/etc/asterisk -/etc/dvhub -/etc/ysfreflector -/etc/ysf2dmr
 RestrictSUIDSGID=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

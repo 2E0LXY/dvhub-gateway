@@ -84,7 +84,7 @@ func TestWebSocketDisconnectDoesNotRequireConnectionFields(t *testing.T) {
 	session.Mode = "DMR"
 	session.Target = "BrandMeister-UK-2341"
 
-	ticket, err := gateway.issueWSTicket("2E0LXY")
+	ticket, err := gateway.issueWSTicket("2E0LXY", "")
 	if err != nil {
 		t.Fatal(err)
 	}
