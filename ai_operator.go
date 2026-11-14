@@ -883,7 +883,7 @@ func (o *aiOperator) executeAction(action aiAction) (string, error) {
 			return "", fmt.Errorf("AllStar node %d is already connected", action.Node)
 		}
 		if output, commandErr := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-control", action.Operation, remote).CombinedOutput(); commandErr != nil {
-			_ = output
+			log.Printf("[AI] allstar control failed: %v: %s", commandErr, strings.TrimSpace(string(output)))
 			return "", fmt.Errorf("AllStar link control failed")
 		}
 		return fmt.Sprintf("AllStar node %d %s completed", action.Node, action.Operation), nil
