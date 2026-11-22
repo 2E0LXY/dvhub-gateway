@@ -2595,10 +2595,13 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		repeaterID := masterControlID(data)
 		g.masterMu.Lock()
 		client := g.masterClients[repeaterID]
-		if client != nil && sameUDPAddress(client.Address, address) {
-			client.Stage = masterRunning
-			client.LastSeen = time.Now()
+		if client == nil || client.Stage < masterWaitingConfig || !sameUDPAddress(client.Address, address) {
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
 		}
+		client.Stage = masterRunning
+		client.LastSeen = time.Now()
 		g.masterMu.Unlock()
 		g.writeMasterPacket(address, []byte("RPTACK"))
 		return true
