@@ -2564,6 +2564,15 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		g.writeMasterPacket(address, []byte("RPTACK"))
 		return true
 
+	case len(data) >= 9 && string(data[:5]) == "RPTCL":
+		repeaterID := binary.BigEndian.Uint32(data[5:9])
+		g.masterMu.Lock()
+		if client := g.masterClients[repeaterID]; client != nil && sameUDPAddress(client.Address, address) {
+			delete(g.masterClients, repeaterID)
+		}
+		g.masterMu.Unlock()
+		return true
+
 	case len(data) >= 8 && string(data[:4]) == "RPTC":
 		repeaterID := masterControlID(data)
 		g.masterMu.Lock()
@@ -2586,10 +2595,13 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		repeaterID := masterControlID(data)
 		g.masterMu.Lock()
 		client := g.masterClients[repeaterID]
-		if client != nil && sameUDPAddress(client.Address, address) {
-			client.Stage = masterRunning
-			client.LastSeen = time.Now()
+		if client == nil || client.Stage < masterWaitingConfig || !sameUDPAddress(client.Address, address) {
+			g.masterMu.Unlock()
+			g.rejectMaster(address, repeaterID)
+			return true
 		}
+		client.Stage = masterRunning
+		client.LastSeen = time.Now()
 		g.masterMu.Unlock()
 		g.writeMasterPacket(address, []byte("RPTACK"))
 		return true
@@ -2610,12 +2622,6 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		}
 		return true
 
-	case len(data) >= 9 && string(data[:5]) == "RPTCL":
-		repeaterID := binary.BigEndian.Uint32(data[5:9])
-		g.masterMu.Lock()
-		delete(g.masterClients, repeaterID)
-		g.masterMu.Unlock()
-		return true
 	}
 	return false
 }
