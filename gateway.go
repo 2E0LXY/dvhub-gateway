@@ -6,6 +6,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
@@ -97,7 +98,40 @@ type WSMessage struct {
 
 type wsTicket struct {
 	user      string
+	key       string
 	expiresAt time.Time
+}
+
+const (
+	wsTicketLifetime         = 30 * time.Second
+	wsTicketMaxAuthenticated = 128
+	wsTicketMaxAnonymous     = 128
+	wsTicketMaxPerKey        = 16
+	wsMaxMessageBytes        = 64 << 10
+	wsPongWait               = 60 * time.Second
+	wsPingInterval           = 25 * time.Second
+)
+
+// proxySecret, when set via DVHUB_PROXY_SECRET, must be presented by the
+// reverse proxy in X-DVHub-Proxy-Secret before the identity header is trusted.
+var proxySecret = os.Getenv("DVHUB_PROXY_SECRET")
+
+// requestClientKey identifies the caller for rate limiting. Caddy overwrites
+// X-Real-IP with the real remote host; direct socket access has no address.
+func requestClientKey(r *http.Request) string {
+	if value := strings.TrimSpace(r.Header.Get("X-Real-IP")); value != "" {
+		return value
+	}
+	// Older Caddyfiles only set X-Forwarded-For; Caddy replaces it with the real
+	// remote host, so the last element is the address the proxy saw.
+	if forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ","); strings.TrimSpace(forwarded[len(forwarded)-1]) != "" {
+		return strings.TrimSpace(forwarded[len(forwarded)-1])
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 type UserSession struct {
@@ -1562,7 +1596,7 @@ func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-allstar-control", request.Action, strconv.Itoa(request.Node)).CombinedOutput(); err != nil {
-			_ = output
+			log.Printf("[ALLSTAR] link control failed: %v: %s", err, strings.TrimSpace(string(output)))
 			http.Error(w, `{"error":"AllStar link control failed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -1583,7 +1617,7 @@ func (g *Gateway) handleAllStarConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		defer os.Remove(allStarSecretStagePath)
 		if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-configure-allstar-node").CombinedOutput(); err != nil {
-			_ = output
+			log.Printf("[ALLSTAR] password install failed: %v: %s", err, strings.TrimSpace(string(output)))
 			http.Error(w, `{"error":"AllStar password could not be installed"}`, http.StatusInternalServerError)
 			return
 		}
@@ -1718,7 +1752,7 @@ func (g *Gateway) handleEchoLinkConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.Remove(echoLinkStagePath)
 	if output, err := exec.Command("/usr/bin/sudo", "-n", "/usr/local/sbin/dvhub-configure-echolink").CombinedOutput(); err != nil {
-		_ = output
+		log.Printf("[ECHOLINK] configure failed: %v: %s", err, strings.TrimSpace(string(output)))
 		http.Error(w, `{"error":"EchoLink configuration could not be installed"}`, http.StatusInternalServerError)
 		return
 	}
@@ -1874,10 +1908,13 @@ func (client *WSClient) shutdown() {
 }
 
 func authenticatedUser(r *http.Request) string {
+	if proxySecret != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-DVHub-Proxy-Secret")), []byte(proxySecret)) != 1 {
+		return ""
+	}
 	return strings.ToUpper(strings.TrimSpace(r.Header.Get("X-DVHub-Authenticated-User")))
 }
 
-func (g *Gateway) issueWSTicket(user string) (string, error) {
+func (g *Gateway) issueWSTicket(user, key string) (string, error) {
 	random := make([]byte, 32)
 	if _, err := cryptorand.Read(random); err != nil {
 		return "", err
@@ -1889,15 +1926,28 @@ func (g *Gateway) issueWSTicket(user string) (string, error) {
 	if g.wsTickets == nil {
 		g.wsTickets = make(map[string]wsTicket)
 	}
+	authenticated, anonymous, perKey := 0, 0, 0
 	for existing, ticket := range g.wsTickets {
 		if !ticket.expiresAt.After(now) {
 			delete(g.wsTickets, existing)
+			continue
+		}
+		if ticket.user == "" {
+			anonymous++
+		} else {
+			authenticated++
+		}
+		if key != "" && ticket.key == key {
+			perKey++
 		}
 	}
-	if len(g.wsTickets) >= 256 {
+	if perKey >= wsTicketMaxPerKey {
+		return "", fmt.Errorf("too many pending WebSocket tickets for this client")
+	}
+	if (user == "" && anonymous >= wsTicketMaxAnonymous) || (user != "" && authenticated >= wsTicketMaxAuthenticated) {
 		return "", fmt.Errorf("too many pending WebSocket connections")
 	}
-	g.wsTickets[token] = wsTicket{user: user, expiresAt: now.Add(30 * time.Second)}
+	g.wsTickets[token] = wsTicket{user: user, key: key, expiresAt: now.Add(wsTicketLifetime)}
 	return token, nil
 }
 
@@ -1907,12 +1957,12 @@ func (g *Gateway) dashboardStaticHandler(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			user := authenticatedUser(r)
-			page, err := os.ReadFile("/var/www/dvhub/dashboard.html")
+			page, err := g.dashboardPage("/var/www/dvhub/dashboard.html")
 			if err != nil {
 				http.Error(w, "dashboard unavailable", http.StatusInternalServerError)
 				return
 			}
-			ticket, err := g.issueWSTicket(user)
+			ticket, err := g.issueWSTicket(user, requestClientKey(r))
 			if err != nil {
 				http.Error(w, "WebSocket capacity unavailable", http.StatusServiceUnavailable)
 				return
@@ -1927,6 +1977,33 @@ func (g *Gateway) dashboardStaticHandler(next http.Handler) http.Handler {
 	})
 }
 
+var dashboardCache struct {
+	sync.Mutex
+	path  string
+	mtime time.Time
+	size  int64
+	data  []byte
+}
+
+// dashboardPage returns the dashboard template, re-reading only when the file changes.
+func (g *Gateway) dashboardPage(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	dashboardCache.Lock()
+	defer dashboardCache.Unlock()
+	if dashboardCache.data != nil && dashboardCache.path == path && dashboardCache.mtime.Equal(info.ModTime()) && dashboardCache.size == info.Size() {
+		return append([]byte(nil), dashboardCache.data...), nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	dashboardCache.path, dashboardCache.mtime, dashboardCache.size, dashboardCache.data = path, info.ModTime(), info.Size(), data
+	return append([]byte(nil), data...), nil
+}
+
 func (g *Gateway) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -1935,7 +2012,7 @@ func (g *Gateway) handleWSTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := authenticatedUser(r)
-	token, err := g.issueWSTicket(user)
+	token, err := g.issueWSTicket(user, requestClientKey(r))
 	if err != nil {
 		http.Error(w, `{"error":"Unable to create WebSocket ticket"}`, http.StatusInternalServerError)
 		return
@@ -2055,6 +2132,12 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	conn.SetReadLimit(wsMaxMessageBytes)
+	_ = conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	})
+
 	client := &WSClient{
 		conn: conn,
 		user: user,
@@ -2068,10 +2151,16 @@ func (g *Gateway) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		defer client.shutdown()
+		pinger := time.NewTicker(wsPingInterval)
+		defer pinger.Stop()
 		for {
 			select {
 			case <-client.done:
 				return
+			case <-pinger.C:
+				if err := client.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(2*time.Second)); err != nil {
+					return
+				}
 			case msg := <-client.send:
 				_ = client.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 				if err := client.conn.WriteMessage(msg.messageType, msg.data); err != nil {
@@ -3846,15 +3935,43 @@ func (g *Gateway) updateYSFRegistryHourly() {
 	}
 }
 
+var ysfIDPattern = regexp.MustCompile(`^[0-9]{5}$`)
+
 func writeAtomicFile(dest string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+	dir := filepath.Dir(dest)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create destination directory: %w", err)
 	}
-	tmpDest := dest + ".tmp"
-	if err := os.WriteFile(tmpDest, data, mode); err != nil {
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(dest)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmpDest, dest)
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
 
 // downloadYSFRegistry prefers DVRef's authenticated v2 directory API, falls
@@ -4131,11 +4248,11 @@ func (g *Gateway) handleYSFIdentity(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		ID string `json:"id"`
 	}
-	if json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&request) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&request) != nil {
 		http.Error(w, `{"error":"Invalid request"}`, http.StatusBadRequest)
 		return
 	}
-	if !regexp.MustCompile(`^[0-9]{5}$`).MatchString(request.ID) || request.ID <= "00005" || request.ID == "99999" {
+	if !ysfIDPattern.MatchString(request.ID) || request.ID <= "00005" || request.ID == "99999" {
 		http.Error(w, `{"error":"Choose five digits; 00000-00005 and 99999 are reserved"}`, http.StatusBadRequest)
 		return
 	}
