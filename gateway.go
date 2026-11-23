@@ -2564,6 +2564,17 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		g.writeMasterPacket(address, []byte("RPTACK"))
 		return true
 
+	// RPTCL must be matched before RPTC: "RPTC" is a prefix of "RPTCL".
+	case len(data) >= 9 && string(data[:5]) == "RPTCL":
+		repeaterID := binary.BigEndian.Uint32(data[5:9])
+		g.masterMu.Lock()
+		// Only the address that owns the session may close it.
+		if client := g.masterClients[repeaterID]; client != nil && sameUDPAddress(client.Address, address) {
+			delete(g.masterClients, repeaterID)
+		}
+		g.masterMu.Unlock()
+		return true
+
 	case len(data) >= 8 && string(data[:4]) == "RPTC":
 		repeaterID := masterControlID(data)
 		g.masterMu.Lock()
@@ -2586,12 +2597,19 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		repeaterID := masterControlID(data)
 		g.masterMu.Lock()
 		client := g.masterClients[repeaterID]
-		if client != nil && sameUDPAddress(client.Address, address) {
+		// Options are only valid after the key exchange (RPTK) has succeeded;
+		// RPTO must never promote a client that has not authenticated.
+		valid := client != nil && client.Stage >= masterWaitingConfig && sameUDPAddress(client.Address, address)
+		if valid {
 			client.Stage = masterRunning
 			client.LastSeen = time.Now()
 		}
 		g.masterMu.Unlock()
-		g.writeMasterPacket(address, []byte("RPTACK"))
+		if valid {
+			g.writeMasterPacket(address, []byte("RPTACK"))
+		} else {
+			g.rejectMaster(address, repeaterID)
+		}
 		return true
 
 	case len(data) >= 11 && string(data[:7]) == "RPTPING":
@@ -2610,12 +2628,6 @@ func (g *Gateway) handleMasterControl(data []byte, address *net.UDPAddr) bool {
 		}
 		return true
 
-	case len(data) >= 9 && string(data[:5]) == "RPTCL":
-		repeaterID := binary.BigEndian.Uint32(data[5:9])
-		g.masterMu.Lock()
-		delete(g.masterClients, repeaterID)
-		g.masterMu.Unlock()
-		return true
 	}
 	return false
 }
