@@ -39,6 +39,9 @@ const BasePort = 62031
 const MaxUsers = 8
 const LocalMasterPort = 62030
 
+// LocalMasterTG is the only talkgroup the local DMR master bridges.
+const LocalMasterTG = 23530
+
 const gatewaySocketPath = "/run/dvhub/gateway.sock"
 
 const (
@@ -226,9 +229,12 @@ type YSFIdentity struct {
 }
 
 type YorkshireConferenceConfig struct {
-	Enabled              bool   `json:"enabled"`
-	Callsign             string `json:"callsign"`
-	YSFDMRID             uint32 `json:"ysf_dmr_id"`
+	Enabled  bool   `json:"enabled"`
+	Callsign string `json:"callsign"`
+	YSFDMRID uint32 `json:"ysf_dmr_id"`
+	// YSFEnabled controls the YSF2DMR converter leg. It defaults to true when
+	// omitted; set false on hosts that run only the DMR master and bridge.
+	YSFEnabled           *bool  `json:"ysf_enabled,omitempty"`
 	BridgeDMRID          uint32 `json:"bridge_dmr_id"`
 	BridgeESSID          uint32 `json:"bridge_essid"`
 	BrandMeisterPassword string `json:"brandmeister_password"`
@@ -2742,7 +2748,7 @@ func (g *Gateway) handleLocalMasterStatus(w http.ResponseWriter, r *http.Request
 	running := g.masterConn != nil && localMasterSecret() != ""
 	g.masterMu.Unlock()
 	sort.Slice(clients, func(i, j int) bool { return clients[i]["repeater_id"].(uint32) < clients[j]["repeater_id"].(uint32) })
-	json.NewEncoder(w).Encode(map[string]any{"running": running, "port": LocalMasterPort, "talkgroup": 23530, "clients": clients})
+	json.NewEncoder(w).Encode(map[string]any{"running": running, "port": LocalMasterPort, "talkgroup": LocalMasterTG, "clients": clients})
 }
 
 func dmrDestination(data []byte) uint32 {
@@ -2787,6 +2793,10 @@ func (g *Gateway) forwardBridgeFrameFrom(sourceNode int, sourceTG uint32, source
 		return
 	}
 	if dmrDestination(data) == 0 {
+		g.bridgeMu.Unlock()
+		return
+	}
+	if sourceNode == -1 && dmrDestination(data) != LocalMasterTG {
 		g.bridgeMu.Unlock()
 		return
 	}
@@ -4296,18 +4306,27 @@ func (g *Gateway) handleModeControl(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"mode": request.Mode, "component": request.Component, "action": request.Action, "active": serviceActive(unit), "modes": status()})
 }
 
+func (config YorkshireConferenceConfig) ysfEnabled() bool {
+	return config.YSFEnabled == nil || *config.YSFEnabled
+}
+
 func loadYorkshireConferenceConfig() (YorkshireConferenceConfig, error) {
-	var config YorkshireConferenceConfig
 	data, err := os.ReadFile(yorkshireConfigPath)
 	if err != nil {
-		return config, err
+		return YorkshireConferenceConfig{}, err
 	}
+	return parseYorkshireConferenceConfig(data)
+}
+
+func parseYorkshireConferenceConfig(data []byte) (YorkshireConferenceConfig, error) {
+	var config YorkshireConferenceConfig
 	if len(data) > 16*1024 || json.Unmarshal(data, &config) != nil {
 		return config, fmt.Errorf("invalid Yorkshire conference configuration")
 	}
 	config.Callsign = strings.ToUpper(strings.TrimSpace(config.Callsign))
-	if !validCallsign.MatchString(config.Callsign) || config.YSFDMRID < 1000000 || config.YSFDMRID > 9999999 ||
-		config.BridgeDMRID < 1000000 || config.BridgeDMRID > 9999999 || config.YSFDMRID == config.BridgeDMRID ||
+	ysfInvalid := config.ysfEnabled() && (config.YSFDMRID < 1000000 || config.YSFDMRID > 9999999 || config.YSFDMRID == config.BridgeDMRID)
+	if !validCallsign.MatchString(config.Callsign) || ysfInvalid ||
+		config.BridgeDMRID < 1000000 || config.BridgeDMRID > 9999999 ||
 		config.BridgeESSID > 99 || strings.TrimSpace(config.BrandMeisterPassword) == "" || strings.TrimSpace(config.TGIFPassword) == "" {
 		return config, fmt.Errorf("yorkshire conference configuration is incomplete")
 	}
@@ -4485,12 +4504,14 @@ func (g *Gateway) ensurePermanentYorkshireConference() error {
 	if !config.Enabled {
 		return fmt.Errorf("permanent Yorkshire conference is disabled in server configuration")
 	}
-	if err := writeYSF2DMRConfig(config); err != nil {
-		return err
-	}
-	if !serviceActive("ysf2dmr.service") {
-		if output, startErr := exec.Command("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", "ysf2dmr.service").CombinedOutput(); startErr != nil {
-			return fmt.Errorf("YSF converter failed: %s", strings.TrimSpace(string(output)))
+	if config.ysfEnabled() {
+		if err := writeYSF2DMRConfig(config); err != nil {
+			return err
+		}
+		if !serviceActive("ysf2dmr.service") {
+			if output, startErr := exec.Command("/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", "ysf2dmr.service").CombinedOutput(); startErr != nil {
+				return fmt.Errorf("YSF converter failed: %s", strings.TrimSpace(string(output)))
+			}
 		}
 	}
 	legs := []struct {
@@ -4561,6 +4582,10 @@ func (g *Gateway) yorkshireConferenceStatus() map[string]any {
 		}
 	}
 	converterActive := serviceActive("ysf2dmr.service")
+	if conferenceConfig, configErr := loadYorkshireConferenceConfig(); configErr == nil && !conferenceConfig.ysfEnabled() {
+		// DMR-only deployment: there is no YSF converter to wait for.
+		converterActive = true
+	}
 	configured := route.Active && route.ANode == 1 && route.BNode == 2 && route.CNode == 4 && route.ATG == 23530 && route.BTG == 23530 && route.CTG == 23530
 	return map[string]any{
 		"active": configured, "operational": configured && converterActive && connectedLegs >= 2,
